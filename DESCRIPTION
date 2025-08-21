@@ -1,0 +1,14 @@
+Package: edgemodelr
+Type: Package
+Title: Local Language Model Inference via llama.cpp
+Version: 0.1.0
+Authors@R: c(person(given = "Pawan Rama", family = "Mali", role = c("aut","cre"), email = "prm@outlook.in"))
+Description: Enables R users to run language models locally using GGUF files and llama.cpp as the inference engine. Provides seamless integration for on-device inference without requiring cloud APIs or internet connectivity, ensuring privacy and control over data processing.
+License: MIT + file LICENSE
+LinkingTo: Rcpp
+Imports: Rcpp
+SystemRequirements: C++17 compiler, llama.cpp (GGUF models)
+URL: https://github.com/PawanRamaMali/edgemodelr
+BugReports: https://github.com/PawanRamaMali/edgemodelr/issues
+RoxygenNote: 7.2.3
+Encoding: UTF-8

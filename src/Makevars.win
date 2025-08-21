@@ -1,0 +1,30 @@
+PKG_CPPFLAGS = -I../inst/include -I./llama -I./ggml -I./ggml/ggml-cpu
+PKG_CXXFLAGS = -std=gnu++17 -O2 -DNDEBUG -DNOMINMAX -D_USE_MATH_DEFINES -DGGML_USE_LLAMAFILE
+PKG_LIBS = 
+
+# Main package objects  
+OBJECTS = bindings.o RcppExports.o
+
+# Include ALL llama.cpp source files
+LLAMA_SOURCES = $(wildcard llama/*.cpp)
+LLAMA_OBJS = $(LLAMA_SOURCES:.cpp=.o)
+
+# Include core GGML source files (avoiding architecture-specific ones)
+GGML_SOURCES = ggml/ggml.c ggml/ggml-alloc.c ggml/ggml-backend.cpp ggml/ggml-backend-reg.cpp \
+               ggml/ggml-quants.c ggml/ggml-threading.cpp ggml/ggml-opt.cpp ggml/gguf.cpp
+GGML_OBJS = $(GGML_SOURCES:.cpp=.o)
+GGML_OBJS := $(GGML_OBJS:.c=.o)
+
+OBJECTS += $(LLAMA_OBJS) $(GGML_OBJS)
+
+all: $(SHLIB)
+
+clean:
+	rm -f $(OBJECTS) $(SHLIB)
+
+# Compilation rules
+%.o: %.c
+	$(CC) $(ALL_CPPFLAGS) $(ALL_CFLAGS) -c $< -o $@
+
+%.o: %.cpp  
+	$(CXX) $(ALL_CPPFLAGS) $(ALL_CXXFLAGS) -c $< -o $@

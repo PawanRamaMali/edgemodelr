@@ -1,0 +1,33 @@
+PKG_CPPFLAGS = -I../inst/include -I./llama -I./ggml -I./ggml/ggml-cpu
+PKG_CXXFLAGS = -std=gnu++17 -O3 -fPIC -DNDEBUG -DGGML_USE_LLAMAFILE -DGGML_NO_K_QUANTS -DGGML_NO_IQ -DGGML_NO_TQ
+PKG_LIBS = -lpthread
+
+# Main package objects
+OBJECTS = bindings.o RcppExports.o
+
+# ALL llama.cpp source files
+OBJECTS += llama/llama.o llama/llama-io.o llama/llama-mmap.o llama/llama-impl.o \
+           llama/llama-vocab.o llama/llama-model-loader.o llama/llama-model-saver.o \
+           llama/llama-batch.o llama/llama-context.o llama/llama-arch.o \
+           llama/llama-model.o llama/llama-graph.o llama/llama-adapter.o \
+           llama/llama-kv-cache.o llama/llama-kv-cache-iswa.o \
+           llama/llama-memory.o llama/llama-memory-hybrid.o llama/llama-memory-recurrent.o \
+           llama/llama-hparams.o llama/llama-cparams.o llama/llama-quant.o \
+           llama/llama-chat.o llama/unicode.o llama/unicode-data.o
+
+# Essential GGML source files
+OBJECTS += ggml/ggml.o ggml/ggml-alloc.o ggml/ggml-backend.o ggml/ggml-backend-reg.o \
+           ggml/ggml-quants.o ggml/ggml-threading.o ggml/ggml-opt.o ggml/gguf.o
+
+# Build rules
+all: $(SHLIB)
+
+clean:
+	rm -f $(OBJECTS) $(SHLIB)
+
+# Ensure proper compilation flags
+%.o: %.c
+	$(CC) $(ALL_CPPFLAGS) $(ALL_CFLAGS) -c $< -o $@
+
+%.o: %.cpp
+	$(CXX) $(ALL_CPPFLAGS) $(ALL_CXXFLAGS) -c $< -o $@

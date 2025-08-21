@@ -1,0 +1,255 @@
+#' Load a local GGUF model for inference
+#'
+#' @param model_path Path to a .gguf model file
+#' @param n_ctx Maximum context length (default: 2048)
+#' @param n_gpu_layers Number of layers to offload to GPU (default: 0, CPU-only)
+#' @return External pointer to the loaded model context
+#' 
+#' @examples
+#' \dontrun{
+#' # Load a TinyLlama model
+#' model_path <- "~/models/TinyLlama-1.1B-Chat.Q4_K_M.gguf"
+#' ctx <- edge_load_model(model_path, n_ctx = 2048)
+#' 
+#' # Generate completion
+#' result <- edge_completion(ctx, "Explain R data.frame:", n_predict = 100)
+#' cat(result)
+#' 
+#' # Free model when done
+#' edge_free_model(ctx)
+#' }
+#' @export
+edge_load_model <- function(model_path, n_ctx = 2048L, n_gpu_layers = 0L) {
+  if (!file.exists(model_path)) {
+    # Provide helpful suggestions for missing models
+    cat("📁 Model file not found:", model_path, "\n")
+    cat("💡 Try these options:\n")
+    cat("   1. Download a model: edge_download_model('TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF', 'tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf')\n")
+    cat("   2. Quick setup: edge_quick_setup('TinyLlama-1.1B')\n")
+    cat("   3. List models: edge_list_models()\n")
+    stop("Model file does not exist: ", model_path)
+  }
+  
+  if (!grepl("\\.gguf$", model_path, ignore.case = TRUE)) {
+    warning("Model file should have .gguf extension for optimal compatibility")
+  }
+  
+  # Try to load the model
+  tryCatch({
+    .Call(`_edgemodelr_edge_load_model`, 
+          normalizePath(model_path), 
+          as.integer(n_ctx),
+          as.integer(n_gpu_layers))
+  }, error = function(e) {
+    # Provide more context about what went wrong
+    if (grepl("llama_load_model_from_file", e$message)) {
+      cat("\n🎯 Model found but llama.cpp not available for loading.\n")
+      cat("📦 Install llama.cpp system-wide, then:\n")
+      cat("   devtools::load_all()  # Rebuild package\n")
+      cat("   ctx <- edge_load_model('", basename(model_path), "')\n")
+    }
+    stop(e$message)
+  })
+}
+
+#' Generate text completion using loaded model
+#'
+#' @param ctx Model context from edge_load_model()
+#' @param prompt Input text prompt
+#' @param n_predict Maximum tokens to generate (default: 128)
+#' @param temperature Sampling temperature (default: 0.8)
+#' @param top_p Top-p sampling parameter (default: 0.95)
+#' @return Generated text as character string
+#' 
+#' @examples
+#' \dontrun{
+#' ctx <- edge_load_model("model.gguf")
+#' result <- edge_completion(ctx, "The capital of France is", n_predict = 50)
+#' cat(result)
+#' }
+#' @export
+edge_completion <- function(ctx, prompt, n_predict = 128L, temperature = 0.8, top_p = 0.95) {
+  if (!is.character(prompt) || length(prompt) != 1L) {
+    stop("Prompt must be a single character string")
+  }
+  
+  .Call(`_edgemodelr_edge_completion`, 
+        ctx, 
+        prompt, 
+        as.integer(n_predict),
+        as.numeric(temperature),
+        as.numeric(top_p))
+}
+
+#' Free model context and release memory
+#'
+#' @param ctx Model context from edge_load_model()
+#' @return NULL (invisibly)
+#' 
+#' @examples
+#' \dontrun{
+#' ctx <- edge_load_model("model.gguf")
+#' # ... use model ...
+#' edge_free_model(ctx)  # Clean up
+#' }
+#' @export
+edge_free_model <- function(ctx) {
+  invisible(.Call(`_edgemodelr_edge_free_model`, ctx))
+}
+
+#' Check if model context is valid
+#'
+#' @param ctx Model context to check
+#' @return Logical indicating if context is valid
+#' @export
+is_valid_model <- function(ctx) {
+  tryCatch({
+    .Call(`_edgemodelr_is_valid_model`, ctx)
+  }, error = function(e) FALSE)
+}
+
+#' Download a GGUF model from Hugging Face
+#'
+#' @param model_id Hugging Face model identifier (e.g., "TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF")
+#' @param filename Specific GGUF file to download
+#' @param cache_dir Directory to store downloaded models (default: "~/.cache/edgemodelr")
+#' @param force_download Force re-download even if file exists
+#' @return Path to the downloaded model file
+#' 
+#' @examples
+#' \dontrun{
+#' # Download TinyLlama model
+#' model_path <- edge_download_model(
+#'   model_id = "TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF",
+#'   filename = "tinyllama-1.1b-chat-v1.0.q4_k_m.gguf"
+#' )
+#' 
+#' # Use the downloaded model
+#' ctx <- edge_load_model(model_path)
+#' response <- edge_completion(ctx, "Hello, how are you?")
+#' edge_free_model(ctx)
+#' }
+#' @export
+edge_download_model <- function(model_id, filename, cache_dir = NULL, force_download = FALSE) {
+  # Set default cache directory
+  if (is.null(cache_dir)) {
+    cache_dir <- file.path(path.expand("~"), ".cache", "edgemodelr")
+  }
+  
+  # Create cache directory if it doesn't exist
+  if (!dir.exists(cache_dir)) {
+    dir.create(cache_dir, recursive = TRUE)
+    cat("Created cache directory:", cache_dir, "\n")
+  }
+  
+  # Construct local file path
+  local_path <- file.path(cache_dir, basename(filename))
+  
+  # Check if file already exists
+  if (file.exists(local_path) && !force_download) {
+    cat("Model already exists:", local_path, "\n")
+    return(local_path)
+  }
+  
+  # Construct Hugging Face URL
+  base_url <- "https://huggingface.co"
+  download_url <- file.path(base_url, model_id, "resolve", "main", filename)
+  
+  cat("Downloading model...\n")
+  cat("From:", download_url, "\n")
+  cat("To:  ", local_path, "\n")
+  
+  # Download the file
+  tryCatch({
+    utils::download.file(download_url, local_path, mode = "wb", method = "auto")
+    cat("✅ Download completed successfully!\n")
+    cat("Model size:", round(file.info(local_path)$size / (1024^2), 1), "MB\n")
+    return(local_path)
+  }, error = function(e) {
+    stop("Failed to download model: ", e$message, 
+         "\n\nTry downloading manually with:\nwget ", download_url)
+  })
+}
+
+#' List popular pre-configured models
+#'
+#' @return Data frame with model information
+#' @export
+edge_list_models <- function() {
+  models <- data.frame(
+    name = c("TinyLlama-1.1B", "TinyLlama-OpenOrca", "Llama-2-7B", "CodeLlama-7B", "Mistral-7B"),
+    size = c("~700MB", "~700MB", "~3.8GB", "~3.8GB", "~4.1GB"),
+    model_id = c(
+      "TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF",
+      "TheBloke/TinyLlama-1.1B-1T-OpenOrca-GGUF",
+      "TheBloke/Llama-2-7B-Chat-GGUF", 
+      "TheBloke/CodeLlama-7B-Instruct-GGUF",
+      "TheBloke/Mistral-7B-Instruct-v0.1-GGUF"
+    ),
+    filename = c(
+      "tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf",
+      "tinyllama-1.1b-1t-openorca.Q4_K_M.gguf",
+      "llama-2-7b-chat.Q4_K_M.gguf",
+      "codellama-7b-instruct.Q4_K_M.gguf", 
+      "mistral-7b-instruct-v0.1.Q4_K_M.gguf"
+    ),
+    use_case = c("Testing", "Better Chat", "General", "Code", "Quality"),
+    stringsAsFactors = FALSE
+  )
+  
+  return(models)
+}
+
+#' Quick setup for a popular model
+#'
+#' @param model_name Name of the model from edge_list_models()
+#' @param cache_dir Directory to store downloaded models
+#' @return List with model path and context (if llama.cpp is available)
+#' 
+#' @examples
+#' \dontrun{
+#' # Quick setup with TinyLlama
+#' setup <- edge_quick_setup("TinyLlama-1.1B")
+#' ctx <- setup$context
+#' 
+#' if (!is.null(ctx)) {
+#'   response <- edge_completion(ctx, "Hello!")
+#'   cat("Response:", response, "\n")
+#'   edge_free_model(ctx)
+#' }
+#' }
+#' @export  
+edge_quick_setup <- function(model_name, cache_dir = NULL) {
+  models <- edge_list_models()
+  model_info <- models[models$name == model_name, ]
+  
+  if (nrow(model_info) == 0) {
+    stop("Model '", model_name, "' not found. Available models:\n", 
+         paste(models$name, collapse = ", "))
+  }
+  
+  cat("Setting up", model_name, "...\n")
+  
+  # Download model
+  model_path <- edge_download_model(
+    model_id = model_info$model_id,
+    filename = model_info$filename,
+    cache_dir = cache_dir
+  )
+  
+  # Try to load model (will show helpful error if llama.cpp not available)
+  ctx <- tryCatch({
+    edge_load_model(model_path)
+  }, error = function(e) {
+    cat("ℹ️  Model downloaded but llama.cpp not available for inference.\n")
+    cat("   Model path:", model_path, "\n")
+    cat("   Install llama.cpp system-wide to use for inference.\n")
+    NULL
+  })
+  
+  return(list(
+    model_path = model_path,
+    context = ctx,
+    info = model_info
+  ))
+}
