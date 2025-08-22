@@ -3,8 +3,15 @@ PKG_CXXFLAGS = -std=gnu++17 -O2 -fPIC -DNDEBUG -DGGML_USE_CPU
 PKG_CFLAGS = -std=gnu11 -O2 -fPIC -DNDEBUG -DGGML_USE_CPU -D_GNU_SOURCE -D_POSIX_C_SOURCE=200809L
 PKG_LIBS = -lpthread
 
-# Direct object list - add x86 architecture files for vectorized functions
-OBJECTS = bindings.o RcppExports.o ggml/ggml.o ggml/ggml-alloc.o ggml/gguf.o ggml/ggml-backend.o ggml/ggml-backend-reg.o ggml/ggml-quants.o ggml/ggml-threading.o ggml/ggml-opt.o llama/llama.o llama/llama-vocab.o llama/llama-model.o llama/llama-context.o llama/llama-mmap.o llama/llama-graph.o llama/llama-io.o llama/llama-impl.o llama/llama-model-loader.o llama/llama-batch.o llama/llama-arch.o ggml/ggml-cpu/ggml-cpu.o ggml/ggml-cpu/ops.o ggml/ggml-cpu/binary-ops.o ggml/ggml-cpu/unary-ops.o ggml/ggml-cpu/vec.o ggml/ggml-cpu/traits.o ggml/ggml-cpu/repack.o ggml/ggml-cpu/quants.o ggml/ggml-cpu/arch/x86/cpu-feats.o ggml/ggml-cpu/arch/x86/quants.o ggml/ggml-cpu/arch/x86/repack.o
+# Direct object list - use proper names for conflicting ggml-cpu files
+OBJECTS = bindings.o RcppExports.o ggml/ggml.o ggml/ggml-alloc.o ggml/gguf.o ggml/ggml-backend.o ggml/ggml-backend-reg.o ggml/ggml-quants.o ggml/ggml-threading.o ggml/ggml-opt.o llama/llama.o llama/llama-vocab.o llama/llama-model.o llama/llama-context.o llama/llama-mmap.o llama/llama-graph.o llama/llama-io.o llama/llama-impl.o llama/llama-model-loader.o llama/llama-batch.o llama/llama-arch.o ggml/ggml-cpu/ggml-cpu-c.o ggml/ggml-cpu/ggml-cpu-cpp.o ggml/ggml-cpu/ops.o ggml/ggml-cpu/binary-ops.o ggml/ggml-cpu/unary-ops.o ggml/ggml-cpu/vec.o ggml/ggml-cpu/traits.o ggml/ggml-cpu/repack.o ggml/ggml-cpu/quants.o ggml/ggml-cpu/arch/x86/cpu-feats.o ggml/ggml-cpu/arch/x86/quants.o ggml/ggml-cpu/arch/x86/repack.o
+
+# Special rules for conflicting ggml-cpu files
+ggml/ggml-cpu/ggml-cpu-c.o: ggml/ggml-cpu/ggml-cpu.c
+	$(CC) $(ALL_CPPFLAGS) $(ALL_CFLAGS) -c $< -o $@
+
+ggml/ggml-cpu/ggml-cpu-cpp.o: ggml/ggml-cpu/ggml-cpu.cpp
+	$(CXX) $(ALL_CPPFLAGS) $(ALL_CXXFLAGS) -c $< -o $@
 
 all: $(SHLIB)
 
