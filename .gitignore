@@ -1,7 +1,50 @@
+# R package specific
 .Rproj.user
 .Rhistory
 .RData
 .Ruserdata
+*.Rcheck/
+*.tar.gz
+*.tgz
+
+# Compiled files
+*.o
+*.so
+*.dll
+*.dylib
 src/*.o
 src/*.so
 src/*.dll
+
+# Model files (large binaries)
+*.gguf
+*.bin
+*.safetensors
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Development files
+temp_*/
+test_*
+demo_output/
+
+# Build artifacts
+inst/doc
+
+# Package documentation
+docs/
+_pkgdown.yml

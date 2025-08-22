@@ -4,7 +4,9 @@
 
 [![R Package](https://img.shields.io/badge/R-package-blue.svg)](https://www.r-project.org/)
 [![MIT License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![Status](https://img.shields.io/badge/Status-Development-orange.svg)](https://github.com/user/edgemodelr)
+[![R-CMD-check](https://github.com/PawanRamaMali/edgemodelr/workflows/R-CMD-check/badge.svg)](https://github.com/PawanRamaMali/edgemodelr/actions)
+[![Codecov test coverage](https://codecov.io/gh/PawanRamaMali/edgemodelr/branch/main/graph/badge.svg)](https://app.codecov.io/gh/PawanRamaMali/edgemodelr?branch=main)
+[![Comprehensive Tests](https://github.com/PawanRamaMali/edgemodelr/workflows/comprehensive-tests/badge.svg)](https://github.com/PawanRamaMali/edgemodelr/actions)
 
 ## Overview
 
