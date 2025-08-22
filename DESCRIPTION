@@ -1,15 +1,33 @@
 Package: edgemodelr
 Type: Package
-Title: Local Language Model Inference via llama.cpp
+Title: Local Language Model Inference via 'llama.cpp'
 Version: 0.1.0
-Authors@R: c(person(given = "Pawan Rama", family = "Mali", role = c("aut","cre"), email = "prm@outlook.in"))
-Description: Enables R users to run language models locally using GGUF files and llama.cpp as the inference engine. Provides seamless integration for on-device inference without requiring cloud APIs or internet connectivity, ensuring privacy and control over data processing.
+Author: Pawan Rama Mali <prm@outlook.in>
+Maintainer: Pawan Rama Mali <prm@outlook.in>
+Authors@R: person("Pawan Rama", "Mali", 
+                  role = c("aut", "cre"), 
+                  email = "prm@outlook.in",
+                  comment = c(ORCID = "0000-0000-0000-0000"))
+Description: Enables R users to run large language models locally using GGUF 
+    model files and 'llama.cpp' as the inference engine. Provides a complete 
+    R interface for loading models, generating text completions, and streaming 
+    responses in real-time. Supports on-device inference without requiring 
+    cloud APIs or internet connectivity, ensuring complete data privacy and 
+    control. Includes functions for interactive chat sessions and batch text 
+    processing workflows.
 License: MIT + file LICENSE
 LinkingTo: Rcpp
-Imports: Rcpp
-Suggests: testthat (>= 3.0.0)
-SystemRequirements: C++17 compiler, llama.cpp (GGUF models)
+Imports: 
+    Rcpp (>= 1.0.0),
+    utils
+Suggests: 
+    testthat (>= 3.0.0),
+    knitr,
+    rmarkdown
+VignetteBuilder: knitr
+SystemRequirements: C++17
 URL: https://github.com/PawanRamaMali/edgemodelr
 BugReports: https://github.com/PawanRamaMali/edgemodelr/issues
-RoxygenNote: 7.2.3
+RoxygenNote: 7.3.2
 Encoding: UTF-8
+Language: en-US

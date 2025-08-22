@@ -6,17 +6,19 @@
 #' @return External pointer to the loaded model context
 #' 
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' # Load a TinyLlama model
 #' model_path <- "~/models/TinyLlama-1.1B-Chat.Q4_K_M.gguf"
-#' ctx <- edge_load_model(model_path, n_ctx = 2048)
-#' 
-#' # Generate completion
-#' result <- edge_completion(ctx, "Explain R data.frame:", n_predict = 100)
-#' cat(result)
-#' 
-#' # Free model when done
-#' edge_free_model(ctx)
+#' if (file.exists(model_path)) {
+#'   ctx <- edge_load_model(model_path, n_ctx = 2048)
+#'   
+#'   # Generate completion
+#'   result <- edge_completion(ctx, "Explain R data.frame:", n_predict = 100)
+#'   cat(result)
+#'   
+#'   # Free model when done
+#'   edge_free_model(ctx)
+#' }
 #' }
 #' @export
 edge_load_model <- function(model_path, n_ctx = 2048L, n_gpu_layers = 0L) {
@@ -62,10 +64,14 @@ edge_load_model <- function(model_path, n_ctx = 2048L, n_gpu_layers = 0L) {
 #' @return Generated text as character string
 #' 
 #' @examples
-#' \dontrun{
-#' ctx <- edge_load_model("model.gguf")
-#' result <- edge_completion(ctx, "The capital of France is", n_predict = 50)
-#' cat(result)
+#' \donttest{
+#' model_path <- "model.gguf"
+#' if (file.exists(model_path)) {
+#'   ctx <- edge_load_model(model_path)
+#'   result <- edge_completion(ctx, "The capital of France is", n_predict = 50)
+#'   cat(result)
+#'   edge_free_model(ctx)
+#' }
 #' }
 #' @export
 edge_completion <- function(ctx, prompt, n_predict = 128L, temperature = 0.8, top_p = 0.95) {
@@ -87,10 +93,13 @@ edge_completion <- function(ctx, prompt, n_predict = 128L, temperature = 0.8, to
 #' @return NULL (invisibly)
 #' 
 #' @examples
-#' \dontrun{
-#' ctx <- edge_load_model("model.gguf")
-#' # ... use model ...
-#' edge_free_model(ctx)  # Clean up
+#' \donttest{
+#' model_path <- "model.gguf"
+#' if (file.exists(model_path)) {
+#'   ctx <- edge_load_model(model_path)
+#'   # ... use model ...
+#'   edge_free_model(ctx)  # Clean up
+#' }
 #' }
 #' @export
 edge_free_model <- function(ctx) {
@@ -117,7 +126,7 @@ is_valid_model <- function(ctx) {
 #' @return Path to the downloaded model file
 #' 
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' # Download TinyLlama model
 #' model_path <- edge_download_model(
 #'   model_id = "TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF",
@@ -125,9 +134,11 @@ is_valid_model <- function(ctx) {
 #' )
 #' 
 #' # Use the downloaded model
-#' ctx <- edge_load_model(model_path)
-#' response <- edge_completion(ctx, "Hello, how are you?")
-#' edge_free_model(ctx)
+#' if (file.exists(model_path)) {
+#'   ctx <- edge_load_model(model_path)
+#'   response <- edge_completion(ctx, "Hello, how are you?")
+#'   edge_free_model(ctx)
+#' }
 #' }
 #' @export
 edge_download_model <- function(model_id, filename, cache_dir = NULL, force_download = FALSE) {
@@ -207,7 +218,7 @@ edge_list_models <- function() {
 #' @return List with model path and context (if llama.cpp is available)
 #' 
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' # Quick setup with TinyLlama
 #' setup <- edge_quick_setup("TinyLlama-1.1B")
 #' ctx <- setup$context
@@ -265,22 +276,25 @@ edge_quick_setup <- function(model_name, cache_dir = NULL) {
 #' @return List with full response and generation statistics
 #' 
 #' @examples
-#' \dontrun{
-#' ctx <- edge_load_model("model.gguf")
-#' 
-#' # Basic streaming with token display
-#' result <- edge_stream_completion(ctx, "Hello, how are you?", 
-#'   callback = function(data) {
-#'     if (!data$is_final) {
-#'       cat(data$token)
-#'       flush.console()
-#'     } else {
-#'       cat("\n[Done: ", data$total_tokens, " tokens]\n")
-#'     }
-#'     return(TRUE)  # Continue generation
-#'   })
-#' 
-#' edge_free_model(ctx)
+#' \donttest{
+#' model_path <- "model.gguf"
+#' if (file.exists(model_path)) {
+#'   ctx <- edge_load_model(model_path)
+#'   
+#'   # Basic streaming with token display
+#'   result <- edge_stream_completion(ctx, "Hello, how are you?", 
+#'     callback = function(data) {
+#'       if (!data$is_final) {
+#'         cat(data$token)
+#'         flush.console()
+#'       } else {
+#'         cat("\n[Done: ", data$total_tokens, " tokens]\n")
+#'       }
+#'       return(TRUE)  # Continue generation
+#'     })
+#'   
+#'   edge_free_model(ctx)
+#' }
 #' }
 #' @export
 edge_stream_completion <- function(ctx, prompt, callback, n_predict = 128L, temperature = 0.8, top_p = 0.95) {
@@ -308,15 +322,17 @@ edge_stream_completion <- function(ctx, prompt, callback, n_predict = 128L, temp
 #' @return NULL (runs interactively)
 #' 
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' setup <- edge_quick_setup("TinyLlama-1.1B")
 #' ctx <- setup$context
 #' 
-#' # Start interactive chat with streaming
-#' edge_chat_stream(ctx, 
-#'   system_prompt = "You are a helpful R programming assistant.")
-#' 
-#' edge_free_model(ctx)
+#' if (!is.null(ctx)) {
+#'   # Start interactive chat with streaming
+#'   # edge_chat_stream(ctx, 
+#'   #   system_prompt = "You are a helpful R programming assistant.")
+#'   
+#'   edge_free_model(ctx)
+#' }
 #' }
 #' @export
 edge_chat_stream <- function(ctx, system_prompt = NULL, max_history = 10, n_predict = 200L, temperature = 0.8) {
