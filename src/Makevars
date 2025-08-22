@@ -3,29 +3,48 @@ PKG_CXXFLAGS = -std=gnu++17 -O2 -fPIC -DNDEBUG -DGGML_USE_CPU
 PKG_CFLAGS = -std=gnu11 -O2 -fPIC -DNDEBUG -DGGML_USE_CPU -D_GNU_SOURCE -D_POSIX_C_SOURCE=200809L
 PKG_LIBS = -lpthread
 
-# Main package objects - START MINIMAL
+# Main package objects
 OBJECTS = bindings.o RcppExports.o
 
-# Core GGML (minimal essential)  
-OBJECTS += ggml/ggml.o ggml/ggml-alloc.o ggml/gguf.o
+# ALL llama.cpp source files
+OBJECTS += llama/llama.o llama/llama-io.o llama/llama-mmap.o llama/llama-impl.o \
+           llama/llama-vocab.o llama/llama-model-loader.o llama/llama-model-saver.o \
+           llama/llama-batch.o llama/llama-context.o llama/llama-arch.o \
+           llama/llama-model.o llama/llama-graph.o llama/llama-adapter.o \
+           llama/llama-kv-cache.o llama/llama-kv-cache-iswa.o \
+           llama/llama-memory.o llama/llama-memory-hybrid.o llama/llama-memory-recurrent.o \
+           llama/llama-hparams.o llama/llama-cparams.o llama/llama-quant.o \
+           llama/llama-chat.o llama/unicode.o llama/unicode-data.o
 
-# Essential backend files (add incrementally)
-OBJECTS += ggml/ggml-backend.o ggml/ggml-backend-reg.o
+# Essential GGML source files
+OBJECTS += ggml/ggml.o ggml/ggml-alloc.o ggml/ggml-backend.o ggml/ggml-backend-reg.o \
+           ggml/ggml-quants.o ggml/ggml-threading.o ggml/ggml-opt.o ggml/gguf.o
 
-# Add quantization support (contains dequantize_row_q4_0 and similar functions)
-OBJECTS += ggml/ggml-quants.o
+# Complete CPU backend implementation  
+OBJECTS += ggml/ggml-cpu/ggml-cpu-c.o ggml/ggml-cpu/ggml-cpu-cpp.o ggml/ggml-cpu/ops.o \
+           ggml/ggml-cpu/binary-ops.o ggml/ggml-cpu/unary-ops.o ggml/ggml-cpu/vec.o \
+           ggml/ggml-cpu/traits.o ggml/ggml-cpu/repack.o ggml/ggml-cpu/quants.o
 
-# Add threading support (may be needed for some operations)
-OBJECTS += ggml/ggml-threading.o
+# Architecture-specific CPU files (x86 for most systems)
+OBJECTS += ggml/ggml-cpu/arch/x86/cpu-feats.o ggml/ggml-cpu/arch/x86/quants.o \
+           ggml/ggml-cpu/arch/x86/repack.o
 
-# Add core llama.cpp (contains llama_backend_init and other essential functions)
-OBJECTS += llama/llama.o
+# Special rules for conflicting ggml-cpu files
+ggml/ggml-cpu/ggml-cpu-c.o: ggml/ggml-cpu/ggml-cpu.c
+	$(CC) $(ALL_CPPFLAGS) $(ALL_CFLAGS) -c $< -o $@
 
-# Add essential llama.cpp components needed by bindings.cpp
-OBJECTS += llama/llama-vocab.o llama/llama-model.o llama/llama-context.o llama/llama-mmap.o
+ggml/ggml-cpu/ggml-cpu-cpp.o: ggml/ggml-cpu/ggml-cpu.cpp
+	$(CXX) $(ALL_CPPFLAGS) $(ALL_CXXFLAGS) -c $< -o $@
 
 # Build rules
 all: $(SHLIB)
 
 clean:
 	rm -f $(OBJECTS) $(SHLIB)
+
+# Ensure proper compilation flags
+%.o: %.c
+	$(CC) $(ALL_CPPFLAGS) $(ALL_CFLAGS) -c $< -o $@
+
+%.o: %.cpp
+	$(CXX) $(ALL_CPPFLAGS) $(ALL_CXXFLAGS) -c $< -o $@
