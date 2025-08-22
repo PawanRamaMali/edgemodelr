@@ -76,6 +76,10 @@ SEXP edge_load_model(std::string model_path, int n_ctx = 2048, int n_gpu_layers 
 // [[Rcpp::export]]
 std::string edge_completion(SEXP model_ptr, std::string prompt, int n_predict = 128, double temperature = 0.8, double top_p = 0.95) {
   try {
+    if (TYPEOF(model_ptr) != EXTPTRSXP) {
+      stop("Invalid model context");
+    }
+    
     XPtr<EdgeModelContext> edge_ctx(model_ptr);
     
     if (!edge_ctx->is_valid()) {
@@ -193,6 +197,10 @@ bool is_valid_model(SEXP model_ptr) {
 // [[Rcpp::export]]
 List edge_completion_stream(SEXP model_ptr, std::string prompt, Function callback, int n_predict = 128, double temperature = 0.8, double top_p = 0.95) {
   try {
+    if (TYPEOF(model_ptr) != EXTPTRSXP) {
+      stop("Invalid model context");
+    }
+    
     XPtr<EdgeModelContext> edge_ctx(model_ptr);
     
     if (!edge_ctx->is_valid()) {

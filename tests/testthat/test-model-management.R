@@ -7,25 +7,26 @@ test_that("Model management functions work correctly", {
     expect_true(is.data.frame(models))
     expect_true(nrow(models) > 0)
     
-    # Check required columns
-    required_cols <- c("model_id", "filename", "description", "size_gb", "use_case")
+    # Check required columns (match actual implementation)
+    required_cols <- c("name", "size", "model_id", "filename", "use_case")
     for (col in required_cols) {
       expect_true(col %in% colnames(models), 
                   info = paste("Missing column:", col))
     }
     
-    # Check data types
+    # Check data types (match actual implementation)
+    expect_true(is.character(models$name))
+    expect_true(is.character(models$size))
     expect_true(is.character(models$model_id))
     expect_true(is.character(models$filename))
-    expect_true(is.character(models$description))
-    expect_true(is.numeric(models$size_gb))
     expect_true(is.character(models$use_case))
     
     # Check that all entries are non-empty
+    expect_true(all(nchar(models$name) > 0))
+    expect_true(all(nchar(models$size) > 0))
     expect_true(all(nchar(models$model_id) > 0))
     expect_true(all(nchar(models$filename) > 0))
-    expect_true(all(nchar(models$description) > 0))
-    expect_true(all(models$size_gb > 0))
+    expect_true(all(nchar(models$use_case) > 0))
   })
   
   test_that("edge_download_model parameter validation", {

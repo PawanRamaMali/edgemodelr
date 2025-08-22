@@ -103,6 +103,14 @@ edge_completion <- function(ctx, prompt, n_predict = 128L, temperature = 0.8, to
 #' }
 #' @export
 edge_free_model <- function(ctx) {
+  # Handle invalid contexts gracefully without warnings
+  if (is.null(ctx)) {
+    return(invisible(NULL))
+  }
+  if (!inherits(ctx, "externalptr")) {
+    return(invisible(NULL))
+  }
+  
   invisible(.Call(`_edgemodelr_edge_free_model`, ctx))
 }
 
@@ -142,6 +150,20 @@ is_valid_model <- function(ctx) {
 #' }
 #' @export
 edge_download_model <- function(model_id, filename, cache_dir = NULL, force_download = FALSE) {
+  # Parameter validation
+  if (is.null(model_id) || !is.character(model_id) || length(model_id) != 1) {
+    stop("model_id must be a string")
+  }
+  if (nchar(model_id) == 0) {
+    stop("model_id cannot be empty")
+  }
+  if (is.null(filename) || !is.character(filename) || length(filename) != 1) {
+    stop("filename must be a string")
+  }
+  if (nchar(filename) == 0) {
+    stop("filename cannot be empty")
+  }
+  
   # Set default cache directory
   if (is.null(cache_dir)) {
     cache_dir <- file.path(path.expand("~"), ".cache", "edgemodelr")
@@ -231,6 +253,17 @@ edge_list_models <- function() {
 #' }
 #' @export  
 edge_quick_setup <- function(model_name, cache_dir = NULL) {
+  # Parameter validation
+  if (is.null(model_name)) {
+    model_name <- ""
+  }
+  if (!is.character(model_name) || length(model_name) != 1) {
+    stop("model_name must be a string")
+  }
+  if (nchar(model_name) == 0) {
+    stop("model_name cannot be empty")
+  }
+  
   models <- edge_list_models()
   model_info <- models[models$name == model_name, ]
   
