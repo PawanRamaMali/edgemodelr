@@ -131,6 +131,218 @@ wget https://huggingface.co/TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF/resolve/main/
 huggingface-cli download TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF tinyllama-1.1b-chat-v1.0.q4_k_m.gguf
 ```
 
+## Downloading and Using GGUF Models
+
+### Available Models
+
+Use `edge_list_models()` to see pre-configured popular models:
+
+```r
+library(edgemodelr)
+models <- edge_list_models()
+print(models)
+```
+
+| Model | Size | Use Case | Description |
+|-------|------|----------|-------------|
+| TinyLlama-1.1B | ~700MB | Testing | Fast, lightweight model perfect for development |
+| TinyLlama-OpenOrca | ~700MB | Better Chat | Improved conversational abilities |
+| Llama-2-7B | ~3.8GB | General | High-quality general-purpose model |
+| CodeLlama-7B | ~3.8GB | Code | Specialized for code generation and analysis |
+| Mistral-7B | ~4.1GB | Quality | Excellent response quality and reasoning |
+
+### Quick Model Setup
+
+The fastest way to get started with any model:
+
+```r
+# One-line setup - downloads and loads automatically
+setup <- edge_quick_setup("TinyLlama-1.1B")
+ctx <- setup$context
+
+# Start chatting immediately!
+response <- edge_completion(ctx, "Hello! Tell me about R programming.")
+cat("Assistant:", response, "\n")
+
+# Clean up when done
+edge_free_model(ctx)
+```
+
+### Manual Model Download
+
+Download specific models with fine control:
+
+```r
+# Download TinyLlama for testing
+model_path <- edge_download_model(
+  model_id = "TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF",
+  filename = "tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf"
+)
+
+# Load the model
+ctx <- edge_load_model(model_path, n_ctx = 2048)
+
+# Generate text
+result <- edge_completion(ctx, "Explain machine learning in simple terms:", n_predict = 100)
+cat(result)
+
+# Free memory
+edge_free_model(ctx)
+```
+
+### Chat Session Examples
+
+#### Simple Q&A Session
+```r
+library(edgemodelr)
+
+# Load your preferred model
+setup <- edge_quick_setup("TinyLlama-1.1B")
+ctx <- setup$context
+
+# Ask questions
+questions <- c(
+  "What is R programming language?",
+  "How do I create a data frame in R?", 
+  "What are the benefits of using R for data science?"
+)
+
+for (question in questions) {
+  cat("\nQ:", question, "\n")
+  answer <- edge_completion(ctx, paste("Question:", question, "\nAnswer:"), 
+                           n_predict = 150, temperature = 0.7)
+  cat("A:", answer, "\n")
+}
+
+edge_free_model(ctx)
+```
+
+#### Interactive Chat Loop
+```r
+library(edgemodelr)
+
+chat_session <- function(model_name = "TinyLlama-1.1B") {
+  # Setup model
+  setup <- edge_quick_setup(model_name)
+  ctx <- setup$context
+  
+  if (is.null(ctx)) {
+    stop("Could not load model. Make sure llama.cpp is available.")
+  }
+  
+  cat("🤖 Chat started with", model_name, "! Type 'quit' to exit.\n")
+  conversation_history <- ""
+  
+  repeat {
+    user_input <- readline("👤 You: ")
+    
+    if (tolower(trimws(user_input)) %in% c("quit", "exit", "bye")) {
+      cat("👋 Chat ended!\n")
+      break
+    }
+    
+    # Build context-aware prompt
+    prompt <- paste(conversation_history, 
+                   "\nHuman:", user_input,
+                   "\nAssistant:", sep = " ")
+    
+    # Generate response
+    response <- edge_completion(ctx, prompt, 
+                               n_predict = 200, 
+                               temperature = 0.8,
+                               top_p = 0.9)
+    
+    cat("🤖 Assistant:", response, "\n\n")
+    
+    # Update conversation history (keep last 1000 chars to avoid context overflow)
+    conversation_history <- substr(paste(conversation_history, "Human:", user_input, "Assistant:", response), 
+                                  max(1, nchar(conversation_history) - 1000), 
+                                  nchar(conversation_history))
+  }
+  
+  edge_free_model(ctx)
+}
+
+# Start chat session
+chat_session("TinyLlama-1.1B")
+```
+
+#### Code Generation Chat
+```r
+library(edgemodelr)
+
+# Use CodeLlama for programming tasks
+setup <- edge_quick_setup("CodeLlama-7B")
+ctx <- setup$context
+
+coding_prompts <- c(
+  "Write an R function to calculate the mean of a numeric vector:",
+  "Create an R function that reads a CSV file and returns summary statistics:",
+  "Show me how to create a ggplot2 scatter plot with custom colors:"
+)
+
+for (prompt in coding_prompts) {
+  cat("\n" , "="*50, "\n")
+  cat("REQUEST:", prompt, "\n")
+  cat("="*50, "\n")
+  
+  response <- edge_completion(ctx, 
+                             paste("# R Programming Task\n", prompt, "\n\n# Solution:\n"),
+                             n_predict = 250,
+                             temperature = 0.3)  # Lower temp for more precise code
+  
+  cat(response, "\n")
+}
+
+edge_free_model(ctx)
+```
+
+### Batch Processing Examples
+
+#### Analyze Multiple Text Documents
+```r
+library(edgemodelr)
+
+analyze_documents <- function(texts, model_name = "Mistral-7B") {
+  setup <- edge_quick_setup(model_name)
+  ctx <- setup$context
+  
+  results <- data.frame(
+    document_id = seq_along(texts),
+    original_text = texts,
+    summary = character(length(texts)),
+    sentiment = character(length(texts)),
+    stringsAsFactors = FALSE
+  )
+  
+  for (i in seq_along(texts)) {
+    cat("Processing document", i, "of", length(texts), "\n")
+    
+    # Generate summary
+    summary_prompt <- paste("Summarize this text in 2-3 sentences:", texts[i], "\n\nSummary:")
+    results$summary[i] <- edge_completion(ctx, summary_prompt, n_predict = 100)
+    
+    # Analyze sentiment  
+    sentiment_prompt <- paste("Analyze the sentiment of this text (positive/negative/neutral):", 
+                             texts[i], "\n\nSentiment:")
+    results$sentiment[i] <- trimws(edge_completion(ctx, sentiment_prompt, n_predict = 10))
+  }
+  
+  edge_free_model(ctx)
+  return(results)
+}
+
+# Example usage
+sample_texts <- c(
+  "This new R package is amazing! It makes local LLM inference so easy.",
+  "I'm having trouble with the installation. The documentation could be clearer.",
+  "The performance is decent but could be improved for larger models."
+)
+
+analysis <- analyze_documents(sample_texts)
+print(analysis)
+```
+
 ## API Reference
 
 ### `edge_load_model(model_path, n_ctx = 2048, n_gpu_layers = 0)`
