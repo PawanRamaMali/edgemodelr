@@ -1,5 +1,6 @@
-PKG_CPPFLAGS = -I../inst/include -I./llama -I./ggml -I./ggml/ggml-cpu
+PKG_CPPFLAGS = -I../inst/include -I./llama -I./ggml -I./ggml/ggml-cpu -D_GNU_SOURCE -D_POSIX_C_SOURCE=200809L
 PKG_CXXFLAGS = -std=gnu++17 -O3 -fPIC -DNDEBUG -DGGML_USE_LLAMAFILE -DGGML_USE_CPU
+PKG_CFLAGS = -std=gnu11 -O3 -fPIC -DNDEBUG -DGGML_USE_LLAMAFILE -DGGML_USE_CPU -D_GNU_SOURCE -D_POSIX_C_SOURCE=200809L
 PKG_LIBS = -lpthread
 
 # Main package objects

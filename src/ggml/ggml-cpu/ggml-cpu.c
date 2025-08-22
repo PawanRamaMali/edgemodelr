@@ -1,6 +1,16 @@
 #define _CRT_SECURE_NO_DEPRECATE // Disables "unsafe" warnings on Windows
 #define _USE_MATH_DEFINES // For M_PI on MSVC
 
+// Feature test macros for Linux threading and CPU affinity
+#if defined(__linux__) || defined(__gnu_linux__)
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
+#ifndef _POSIX_C_SOURCE
+#define _POSIX_C_SOURCE 200809L
+#endif
+#endif
+
 #include "ggml-backend-impl.h"
 #include "ggml-backend.h"
 #include "traits.h"
@@ -36,6 +46,15 @@
 #include <signal.h>
 #if defined(__gnu_linux__)
 #include <syscall.h>
+#endif
+
+#if defined(__linux__) || defined(__gnu_linux__)
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
+#include <pthread.h>
+#include <sched.h>
+#include <unistd.h>
 #endif
 
 #ifdef GGML_USE_OPENMP
