@@ -4,19 +4,10 @@
 #include "repack.h"
 #include "traits.h"
 #include "ggml-impl.h"
-#include "amx/amx.h"
 
 #include <cctype>
 #include <string>
 #include <vector>
-
-#ifdef GGML_USE_CPU_HBM
-#    include "hbm.h"
-#endif
-
-#ifdef GGML_USE_CPU_KLEIDIAI
-#    include "kleidiai/kleidiai.h"
-#endif
 
 #if defined(_WIN32)
 #    define WIN32_LEAN_AND_MEAN
