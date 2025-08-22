@@ -17,3 +17,7 @@ is_valid_model <- function(model_ptr) {
     .Call(`_edgemodelr_is_valid_model`, model_ptr)
 }
 
+edge_completion_stream <- function(model_ptr, prompt, callback, n_predict = 128L, temperature = 0.8, top_p = 0.95) {
+    .Call(`_edgemodelr_edge_completion_stream`, model_ptr, prompt, callback, n_predict, temperature, top_p)
+}
+

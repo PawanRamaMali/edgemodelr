@@ -343,6 +343,150 @@ analysis <- analyze_documents(sample_texts)
 print(analysis)
 ```
 
+### Real-Time Streaming Examples
+
+#### Basic Token Streaming
+```r
+library(edgemodelr)
+
+# Setup model
+setup <- edge_quick_setup("TinyLlama-1.1B")
+ctx <- setup$context
+
+# Stream tokens in real-time
+result <- edge_stream_completion(ctx, "Write a short poem about R programming:", 
+  callback = function(data) {
+    if (!data$is_final) {
+      cat(data$token)  # Print each token as it's generated
+      flush.console()  # Force immediate display
+      return(TRUE)     # Continue generation
+    } else {
+      cat("\n\n✅ Generation complete! Total tokens:", data$total_tokens, "\n")
+      return(TRUE)
+    }
+  },
+  n_predict = 150
+)
+
+edge_free_model(ctx)
+```
+
+#### Interactive Streaming Chat
+```r
+library(edgemodelr)
+
+# Setup and start streaming chat session
+setup <- edge_quick_setup("TinyLlama-1.1B")
+ctx <- setup$context
+
+# One-line streaming chat with system prompt
+edge_chat_stream(ctx, 
+  system_prompt = "You are a helpful R programming assistant. Keep responses concise.",
+  max_history = 5,      # Keep last 5 exchanges
+  n_predict = 200,      # Max tokens per response
+  temperature = 0.7)    # Slightly creative responses
+
+# Chat will run interactively with streaming responses
+# Type 'quit' to exit
+
+edge_free_model(ctx)
+```
+
+#### Custom Streaming with Progress
+```r
+library(edgemodelr)
+
+streaming_with_progress <- function(ctx, prompt, max_tokens = 200) {
+  cat("🚀 Starting generation...\n")
+  cat("Response: ")
+  
+  start_time <- Sys.time()
+  tokens_per_second <- 0
+  
+  result <- edge_stream_completion(ctx, prompt,
+    callback = function(data) {
+      if (!data$is_final) {
+        cat(data$token)
+        flush.console()
+        
+        # Calculate tokens per second
+        elapsed <- as.numeric(Sys.time() - start_time, units = "secs")
+        if (elapsed > 0) {
+          tokens_per_second <<- data$total_tokens / elapsed
+        }
+        
+        # Show progress every 20 tokens
+        if (data$total_tokens %% 20 == 0) {
+          cat(sprintf(" [%d tokens, %.1f tok/s]", data$total_tokens, tokens_per_second))
+        }
+        
+        return(TRUE)
+      } else {
+        elapsed <- as.numeric(Sys.time() - start_time, units = "secs")
+        cat(sprintf("\n\n📊 Final stats: %d tokens in %.2f seconds (%.1f tok/s)\n", 
+                   data$total_tokens, elapsed, data$total_tokens / elapsed))
+        return(TRUE)
+      }
+    },
+    n_predict = max_tokens
+  )
+  
+  return(result)
+}
+
+# Usage
+setup <- edge_quick_setup("TinyLlama-1.1B")
+ctx <- setup$context
+
+streaming_with_progress(ctx, 
+  "Explain the benefits of using R for data science in detail:",
+  max_tokens = 300)
+
+edge_free_model(ctx)
+```
+
+#### Multi-Model Streaming Comparison
+```r
+library(edgemodelr)
+
+compare_models_streaming <- function(prompt, models = c("TinyLlama-1.1B", "TinyLlama-OpenOrca")) {
+  for (model_name in models) {
+    cat("\n", "="*60, "\n")
+    cat("🤖 Model:", model_name, "\n")
+    cat("="*60, "\n")
+    
+    setup <- edge_quick_setup(model_name)
+    ctx <- setup$context
+    
+    if (!is.null(ctx)) {
+      cat("Response: ")
+      
+      result <- edge_stream_completion(ctx, prompt,
+        callback = function(data) {
+          if (!data$is_final) {
+            cat(data$token)
+            flush.console()
+            return(TRUE)
+          } else {
+            cat(sprintf("\n[%d tokens generated]\n", data$total_tokens))
+            return(TRUE)
+          }
+        },
+        n_predict = 150,
+        temperature = 0.8
+      )
+      
+      edge_free_model(ctx)
+    } else {
+      cat("❌ Failed to load model\n")
+    }
+  }
+}
+
+# Compare how different models respond to the same prompt
+compare_models_streaming("What makes R special for data analysis?")
+```
+
 ## API Reference
 
 ### `edge_load_model(model_path, n_ctx = 2048, n_gpu_layers = 0)`
@@ -370,6 +514,29 @@ Free model context and release memory. Always call when done.
 ### `is_valid_model(ctx)`
 
 Check if a model context is still valid and can be used for inference.
+
+### `edge_stream_completion(ctx, prompt, callback, n_predict = 128, temperature = 0.8, top_p = 0.95)`
+
+Stream text generation with real-time token callbacks.
+
+- `ctx`: Model context from `edge_load_model()`
+- `prompt`: Input text prompt
+- `callback`: Function called for each token. Receives data list with token info
+- `n_predict`: Maximum tokens to generate
+- `temperature`: Sampling temperature
+- `top_p`: Top-p sampling threshold
+
+Callback receives: `list(token, position, is_final, total_tokens, full_response, stopped_early)`
+
+### `edge_chat_stream(ctx, system_prompt = NULL, max_history = 10, n_predict = 200, temperature = 0.8)`
+
+Interactive chat session with streaming responses.
+
+- `ctx`: Model context from `edge_load_model()`
+- `system_prompt`: Optional system message to set context
+- `max_history`: Maximum conversation turns to keep
+- `n_predict`: Maximum tokens per response
+- `temperature`: Response creativity level
 
 ## Advanced Examples
 

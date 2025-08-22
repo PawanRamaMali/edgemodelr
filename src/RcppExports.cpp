@@ -59,12 +59,29 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
+// edge_completion_stream
+List edge_completion_stream(SEXP model_ptr, std::string prompt, Function callback, int n_predict, double temperature, double top_p);
+RcppExport SEXP _edgemodelr_edge_completion_stream(SEXP model_ptrSEXP, SEXP promptSEXP, SEXP callbackSEXP, SEXP n_predictSEXP, SEXP temperatureSEXP, SEXP top_pSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< SEXP >::type model_ptr(model_ptrSEXP);
+    Rcpp::traits::input_parameter< std::string >::type prompt(promptSEXP);
+    Rcpp::traits::input_parameter< Function >::type callback(callbackSEXP);
+    Rcpp::traits::input_parameter< int >::type n_predict(n_predictSEXP);
+    Rcpp::traits::input_parameter< double >::type temperature(temperatureSEXP);
+    Rcpp::traits::input_parameter< double >::type top_p(top_pSEXP);
+    rcpp_result_gen = Rcpp::wrap(edge_completion_stream(model_ptr, prompt, callback, n_predict, temperature, top_p));
+    return rcpp_result_gen;
+END_RCPP
+}
 
 static const R_CallMethodDef CallEntries[] = {
     {"_edgemodelr_edge_load_model", (DL_FUNC) &_edgemodelr_edge_load_model, 3},
     {"_edgemodelr_edge_completion", (DL_FUNC) &_edgemodelr_edge_completion, 5},
     {"_edgemodelr_edge_free_model", (DL_FUNC) &_edgemodelr_edge_free_model, 1},
     {"_edgemodelr_is_valid_model", (DL_FUNC) &_edgemodelr_is_valid_model, 1},
+    {"_edgemodelr_edge_completion_stream", (DL_FUNC) &_edgemodelr_edge_completion_stream, 6},
     {NULL, NULL, 0}
 };
 

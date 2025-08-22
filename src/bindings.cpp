@@ -189,3 +189,146 @@ bool is_valid_model(SEXP model_ptr) {
     return false;
   }
 }
+
+// [[Rcpp::export]]
+List edge_completion_stream(SEXP model_ptr, std::string prompt, Function callback, int n_predict = 128, double temperature = 0.8, double top_p = 0.95) {
+  try {
+    XPtr<EdgeModelContext> edge_ctx(model_ptr);
+    
+    if (!edge_ctx->is_valid()) {
+      stop("Invalid model context");
+    }
+    
+    // Get vocabulary from model
+    const struct llama_vocab* vocab = llama_model_get_vocab(edge_ctx->model);
+    if (!vocab) {
+      stop("Failed to get vocabulary from model");
+    }
+    
+    // Tokenize the prompt - first get the number of tokens needed
+    const int n_prompt_tokens = -llama_tokenize(vocab, prompt.c_str(), (int32_t)prompt.size(), NULL, 0, true, true);
+    
+    if (n_prompt_tokens <= 0) {
+      stop("Failed to determine prompt token count");
+    }
+    
+    // Allocate space for tokens and tokenize
+    std::vector<llama_token> prompt_tokens(n_prompt_tokens);
+    if (llama_tokenize(vocab, prompt.c_str(), (int32_t)prompt.size(), prompt_tokens.data(), (int32_t)prompt_tokens.size(), true, true) < 0) {
+      stop("Failed to tokenize prompt");
+    }
+    
+    // Create initial batch for the prompt
+    llama_batch batch = llama_batch_get_one(prompt_tokens.data(), (int32_t)prompt_tokens.size());
+    
+    // Process the prompt
+    if (llama_decode(edge_ctx->ctx, batch)) {
+      stop("Failed to process prompt");
+    }
+    
+    std::string full_response = prompt;  // Track full response
+    std::vector<std::string> tokens_generated;
+    int tokens_count = 0;
+    bool stopped_early = false;
+    
+    // Generate tokens one by one and stream them
+    for (int i = 0; i < n_predict; ++i) {
+      // Get logits from the context
+      const float* logits = llama_get_logits_ith(edge_ctx->ctx, -1);
+      if (!logits) {
+        stopped_early = true;
+        break;
+      }
+      
+      // Get vocabulary size using the correct API
+      const int n_vocab = llama_vocab_n_tokens(vocab);
+      llama_token new_token = 0;
+      float max_logit = logits[0];
+      
+      // Simple greedy sampling (could be enhanced with temperature/top_p)
+      for (int j = 1; j < n_vocab; ++j) {
+        if (logits[j] > max_logit) {
+          max_logit = logits[j];
+          new_token = j;
+        }
+      }
+      
+      // Check if it's end of generation
+      if (llama_vocab_is_eog(vocab, new_token)) {
+        stopped_early = true;
+        break;
+      }
+      
+      // Convert token to text
+      char piece[256];
+      int n_chars = llama_token_to_piece(vocab, new_token, piece, sizeof(piece), 0, true);
+      
+      std::string token_text = "";
+      if (n_chars > 0) {
+        token_text = std::string(piece, n_chars);
+        full_response += token_text;
+        tokens_generated.push_back(token_text);
+        tokens_count++;
+        
+        // Call the R callback function with current token
+        try {
+          List callback_data = List::create(
+            Named("token") = token_text,
+            Named("position") = i + 1,
+            Named("is_final") = false,
+            Named("total_tokens") = tokens_count
+          );
+          
+          SEXP result = callback(callback_data);
+          
+          // Check if callback wants to stop early
+          if (is<LogicalVector>(result)) {
+            LogicalVector stop_signal = as<LogicalVector>(result);
+            if (stop_signal.length() > 0 && stop_signal[0] == false) {
+              stopped_early = true;
+              break;
+            }
+          }
+        } catch (const std::exception& e) {
+          warning("Callback error: " + std::string(e.what()));
+        }
+      }
+      
+      // Prepare next batch with the new token
+      batch = llama_batch_get_one(&new_token, 1);
+      
+      // Process the new token
+      if (llama_decode(edge_ctx->ctx, batch)) {
+        stopped_early = true;
+        break;
+      }
+    }
+    
+    // Send final callback
+    try {
+      List final_callback_data = List::create(
+        Named("token") = "",
+        Named("position") = tokens_count,
+        Named("is_final") = true,
+        Named("total_tokens") = tokens_count,
+        Named("full_response") = full_response,
+        Named("stopped_early") = stopped_early
+      );
+      callback(final_callback_data);
+    } catch (const std::exception& e) {
+      warning("Final callback error: " + std::string(e.what()));
+    }
+    
+    // Return summary information
+    return List::create(
+      Named("full_response") = full_response,
+      Named("tokens_generated") = tokens_generated,
+      Named("total_tokens") = tokens_count,
+      Named("stopped_early") = stopped_early,
+      Named("original_prompt") = prompt
+    );
+    
+  } catch (const std::exception& e) {
+    stop("Error during streaming completion: " + std::string(e.what()));
+  }
+}

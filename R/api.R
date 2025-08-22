@@ -253,3 +253,165 @@ edge_quick_setup <- function(model_name, cache_dir = NULL) {
     info = model_info
   ))
 }
+
+#' Stream text completion with real-time token generation
+#'
+#' @param ctx Model context from edge_load_model()
+#' @param prompt Input text prompt
+#' @param callback Function called for each generated token. Receives list with token info.
+#' @param n_predict Maximum tokens to generate (default: 128)
+#' @param temperature Sampling temperature (default: 0.8)
+#' @param top_p Top-p sampling parameter (default: 0.95)
+#' @return List with full response and generation statistics
+#' 
+#' @examples
+#' \dontrun{
+#' ctx <- edge_load_model("model.gguf")
+#' 
+#' # Basic streaming with token display
+#' result <- edge_stream_completion(ctx, "Hello, how are you?", 
+#'   callback = function(data) {
+#'     if (!data$is_final) {
+#'       cat(data$token)
+#'       flush.console()
+#'     } else {
+#'       cat("\n[Done: ", data$total_tokens, " tokens]\n")
+#'     }
+#'     return(TRUE)  # Continue generation
+#'   })
+#' 
+#' edge_free_model(ctx)
+#' }
+#' @export
+edge_stream_completion <- function(ctx, prompt, callback, n_predict = 128L, temperature = 0.8, top_p = 0.95) {
+  if (!is.character(prompt) || length(prompt) != 1L) {
+    stop("Prompt must be a single character string")
+  }
+  
+  if (!is.function(callback)) {
+    stop("Callback must be a function")
+  }
+  
+  edge_completion_stream(ctx, prompt, callback, 
+                        as.integer(n_predict),
+                        as.numeric(temperature),
+                        as.numeric(top_p))
+}
+
+#' Interactive chat session with streaming responses
+#'
+#' @param ctx Model context from edge_load_model()
+#' @param system_prompt Optional system prompt to set context
+#' @param max_history Maximum conversation turns to keep in context (default: 10)
+#' @param n_predict Maximum tokens per response (default: 200)
+#' @param temperature Sampling temperature (default: 0.8)
+#' @return NULL (runs interactively)
+#' 
+#' @examples
+#' \dontrun{
+#' setup <- edge_quick_setup("TinyLlama-1.1B")
+#' ctx <- setup$context
+#' 
+#' # Start interactive chat with streaming
+#' edge_chat_stream(ctx, 
+#'   system_prompt = "You are a helpful R programming assistant.")
+#' 
+#' edge_free_model(ctx)
+#' }
+#' @export
+edge_chat_stream <- function(ctx, system_prompt = NULL, max_history = 10, n_predict = 200L, temperature = 0.8) {
+  if (!is_valid_model(ctx)) {
+    stop("Invalid model context. Load a model first with edge_load_model()")
+  }
+  
+  conversation_history <- list()
+  
+  # Add system prompt if provided
+  if (!is.null(system_prompt)) {
+    conversation_history <- append(conversation_history, 
+                                 list(list(role = "system", content = system_prompt)))
+    cat("🤖 System prompt set.\n")
+  }
+  
+  cat("🤖 Chat started! Type 'quit', 'exit', or 'bye' to end.\n")
+  cat("💡 Responses will stream in real-time.\n\n")
+  
+  while (TRUE) {
+    user_input <- readline("👤 You: ")
+    
+    # Check for exit commands
+    if (tolower(trimws(user_input)) %in% c("quit", "exit", "bye", "")) {
+      cat("👋 Chat ended!\n")
+      break
+    }
+    
+    # Add user message to history
+    conversation_history <- append(conversation_history, 
+                                 list(list(role = "user", content = user_input)))
+    
+    # Build prompt from conversation history
+    prompt <- build_chat_prompt(conversation_history)
+    
+    # Stream the response
+    cat("🤖 Assistant: ")
+    flush.console()
+    
+    current_response <- ""
+    
+    result <- edge_stream_completion(ctx, prompt, 
+      callback = function(data) {
+        if (!data$is_final) {
+          cat(data$token)
+          flush.console()
+          return(TRUE)  # Continue generation
+        } else {
+          cat("\n\n")
+          current_response <<- data$full_response
+          return(TRUE)
+        }
+      },
+      n_predict = n_predict, 
+      temperature = temperature)
+    
+    # Extract assistant response (remove the prompt part)
+    assistant_response <- sub(prompt, "", result$full_response, fixed = TRUE)
+    
+    # Add assistant response to history
+    conversation_history <- append(conversation_history, 
+                                 list(list(role = "assistant", content = assistant_response)))
+    
+    # Trim history if too long
+    if (length(conversation_history) > max_history * 2) {
+      # Keep system prompt (if exists) and most recent exchanges
+      system_msgs <- conversation_history[sapply(conversation_history, function(x) x$role == "system")]
+      recent_msgs <- tail(conversation_history[sapply(conversation_history, function(x) x$role != "system")], 
+                         max_history * 2 - length(system_msgs))
+      conversation_history <- c(system_msgs, recent_msgs)
+    }
+  }
+}
+
+#' Build chat prompt from conversation history
+#' @param history List of conversation turns with role and content
+#' @return Formatted prompt string
+build_chat_prompt <- function(history) {
+  if (length(history) == 0) {
+    return("")
+  }
+  
+  prompt_parts <- c()
+  
+  for (turn in history) {
+    if (turn$role == "system") {
+      prompt_parts <- c(prompt_parts, paste("System:", turn$content))
+    } else if (turn$role == "user") {
+      prompt_parts <- c(prompt_parts, paste("Human:", turn$content))
+    } else if (turn$role == "assistant") {
+      prompt_parts <- c(prompt_parts, paste("Assistant:", turn$content))
+    }
+  }
+  
+  # Add the start of assistant response
+  prompt <- paste(c(prompt_parts, "Assistant:"), collapse = "\n")
+  return(prompt)
+}
