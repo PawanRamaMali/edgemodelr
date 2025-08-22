@@ -12,6 +12,12 @@ OBJECTS += ggml/ggml.o ggml/ggml-alloc.o ggml/gguf.o
 # Essential backend files (add incrementally)
 OBJECTS += ggml/ggml-backend.o ggml/ggml-backend-reg.o
 
+# Add quantization support (contains dequantize_row_q4_0 and similar functions)
+OBJECTS += ggml/ggml-quants.o
+
+# Add threading support (may be needed for some operations)
+OBJECTS += ggml/ggml-threading.o
+
 # Build rules
 all: $(SHLIB)
 
