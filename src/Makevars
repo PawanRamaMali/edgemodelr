@@ -18,6 +18,12 @@ OBJECTS += ggml/ggml-quants.o
 # Add threading support (may be needed for some operations)
 OBJECTS += ggml/ggml-threading.o
 
+# Add core llama.cpp (contains llama_backend_init and other essential functions)
+OBJECTS += llama/llama.o
+
+# Add essential llama.cpp components needed by bindings.cpp
+OBJECTS += llama/llama-vocab.o llama/llama-model.o llama/llama-context.o
+
 # Build rules
 all: $(SHLIB)
 
