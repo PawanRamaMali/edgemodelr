@@ -6,21 +6,21 @@ PKG_LIBS = -lpthread
 # Main package objects
 OBJECTS = bindings.o RcppExports.o
 
-# ALL llama.cpp source files
+# ALL llama.cpp source files (only files that actually exist)
 OBJECTS += llama/llama.o llama/llama-io.o llama/llama-mmap.o llama/llama-impl.o \
-           llama/llama-vocab.o llama/llama-model-loader.o llama/llama-model-saver.o \
-           llama/llama-batch.o llama/llama-context.o llama/llama-arch.o \
-           llama/llama-model.o llama/llama-graph.o llama/llama-adapter.o \
-           llama/llama-kv-cache.o llama/llama-kv-cache-iswa.o \
-           llama/llama-memory.o llama/llama-memory-hybrid.o llama/llama-memory-recurrent.o \
-           llama/llama-hparams.o llama/llama-cparams.o llama/llama-quant.o \
-           llama/llama-chat.o llama/unicode.o llama/unicode-data.o
+           llama/llama-vocab.o llama/llama-model-loader.o llama/llama-batch.o \
+           llama/llama-context.o llama/llama-arch.o llama/llama-model.o \
+           llama/llama-graph.o llama/llama-adapter.o llama/llama-kv-cache.o \
+           llama/llama-kv-cache-iswa.o llama/llama-memory.o llama/llama-memory-hybrid.o \
+           llama/llama-memory-recurrent.o llama/llama-hparams.o llama/llama-cparams.o \
+           llama/llama-quant.o llama/llama-chat.o llama/llama-grammar.o \
+           llama/llama-sampling.o llama/unicode.o llama/unicode-data.o
 
 # Essential GGML source files
 OBJECTS += ggml/ggml.o ggml/ggml-alloc.o ggml/ggml-backend.o ggml/ggml-backend-reg.o \
            ggml/ggml-quants.o ggml/ggml-threading.o ggml/ggml-opt.o ggml/gguf.o
 
-# Complete CPU backend implementation  
+# Complete CPU backend implementation (only files that exist)  
 OBJECTS += ggml/ggml-cpu/ggml-cpu-c.o ggml/ggml-cpu/ggml-cpu-cpp.o ggml/ggml-cpu/ops.o \
            ggml/ggml-cpu/binary-ops.o ggml/ggml-cpu/unary-ops.o ggml/ggml-cpu/vec.o \
            ggml/ggml-cpu/traits.o ggml/ggml-cpu/repack.o ggml/ggml-cpu/quants.o
