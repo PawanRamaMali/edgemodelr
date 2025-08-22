@@ -22,7 +22,7 @@ OBJECTS += ggml/ggml-threading.o
 OBJECTS += llama/llama.o
 
 # Add essential llama.cpp components needed by bindings.cpp
-OBJECTS += llama/llama-vocab.o llama/llama-model.o llama/llama-context.o
+OBJECTS += llama/llama-vocab.o llama/llama-model.o llama/llama-context.o llama/llama-mmap.o
 
 # Build rules
 all: $(SHLIB)
