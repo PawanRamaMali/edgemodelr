@@ -3,24 +3,38 @@ PKG_CXXFLAGS = -std=gnu++17 -O2 -fPIC -DNDEBUG -DGGML_USE_CPU
 PKG_CFLAGS = -std=gnu11 -O2 -fPIC -DNDEBUG -DGGML_USE_CPU -D_GNU_SOURCE -D_POSIX_C_SOURCE=200809L
 PKG_LIBS = -lpthread
 
-# List ALL object files in a single OBJECTS line (R prefers this format)
-OBJECTS = bindings.o RcppExports.o \
-	ggml/ggml.o ggml/ggml-alloc.o ggml/gguf.o \
-	ggml/ggml-backend.o ggml/ggml-backend-reg.o \
-	ggml/ggml-quants.o ggml/ggml-threading.o ggml/ggml-opt.o \
-	llama/llama.o llama/llama-io.o llama/llama-mmap.o llama/llama-impl.o \
-	llama/llama-vocab.o llama/llama-model-loader.o llama/llama-batch.o \
-	llama/llama-context.o llama/llama-arch.o llama/llama-model.o \
-	llama/llama-graph.o llama/llama-adapter.o llama/llama-kv-cache.o \
-	llama/llama-kv-cache-iswa.o llama/llama-memory.o llama/llama-memory-hybrid.o \
-	llama/llama-memory-recurrent.o llama/llama-hparams.o llama/llama-cparams.o \
-	llama/llama-quant.o llama/llama-chat.o llama/llama-grammar.o \
-	llama/llama-sampling.o llama/unicode.o llama/unicode-data.o \
-	ggml/ggml-cpu/ggml-cpu-c.o ggml/ggml-cpu/ggml-cpu-cpp.o ggml/ggml-cpu/ops.o \
-	ggml/ggml-cpu/binary-ops.o ggml/ggml-cpu/unary-ops.o ggml/ggml-cpu/vec.o \
-	ggml/ggml-cpu/traits.o ggml/ggml-cpu/repack.o ggml/ggml-cpu/quants.o \
-	ggml/ggml-cpu/arch/x86/cpu-feats.o ggml/ggml-cpu/arch/x86/quants.o \
-	ggml/ggml-cpu/arch/x86/repack.o
+# Main package objects  
+OBJECTS = bindings.o RcppExports.o
+
+# Include ALL llama.cpp source files
+LLAMA_SOURCES = $(wildcard llama/*.cpp)
+LLAMA_OBJS = $(LLAMA_SOURCES:.cpp=.o)
+
+# Include core GGML source files 
+GGML_SOURCES = ggml/ggml.c ggml/ggml-alloc.c ggml/ggml-backend.cpp ggml/ggml-backend-reg.cpp \
+               ggml/ggml-quants.c ggml/ggml-threading.cpp ggml/ggml-opt.cpp ggml/gguf.cpp
+
+# Complete CPU backend implementation 
+GGML_CPU_SOURCES = ggml/ggml-cpu/ops.cpp ggml/ggml-cpu/binary-ops.cpp \
+                   ggml/ggml-cpu/unary-ops.cpp ggml/ggml-cpu/vec.cpp ggml/ggml-cpu/traits.cpp \
+                   ggml/ggml-cpu/repack.cpp ggml/ggml-cpu/quants.c
+
+# Architecture-specific files for x86 (Linux)
+GGML_CPU_ARCH_SOURCES = ggml/ggml-cpu/arch/x86/cpu-feats.cpp ggml/ggml-cpu/arch/x86/quants.c \
+                        ggml/ggml-cpu/arch/x86/repack.cpp
+               
+GGML_OBJS = $(GGML_SOURCES:.cpp=.o)
+GGML_OBJS := $(GGML_OBJS:.c=.o)
+
+GGML_CPU_OBJS = $(GGML_CPU_SOURCES:.cpp=.o)
+GGML_CPU_OBJS := $(GGML_CPU_OBJS:.c=.o)
+
+GGML_CPU_ARCH_OBJS = $(GGML_CPU_ARCH_SOURCES:.cpp=.o)
+GGML_CPU_ARCH_OBJS := $(GGML_CPU_ARCH_OBJS:.c=.o)
+
+# Build both ggml-cpu.c and ggml-cpu.cpp with different object names
+OBJECTS += $(LLAMA_OBJS) $(GGML_OBJS) $(GGML_CPU_OBJS) $(GGML_CPU_ARCH_OBJS) \
+           ggml/ggml-cpu/ggml-cpu-c.o ggml/ggml-cpu/ggml-cpu-cpp.o
 
 # Special rules for conflicting ggml-cpu files
 ggml/ggml-cpu/ggml-cpu-c.o: ggml/ggml-cpu/ggml-cpu.c
