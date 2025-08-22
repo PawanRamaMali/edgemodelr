@@ -7,9 +7,12 @@ Description: Enables R users to run language models locally using GGUF files and
 License: MIT + file LICENSE
 LinkingTo: Rcpp
 Imports: Rcpp
-Suggests: testthat (>= 3.0.0)
 SystemRequirements: C++17 compiler, llama.cpp (GGUF models)
 URL: https://github.com/PawanRamaMali/edgemodelr
 BugReports: https://github.com/PawanRamaMali/edgemodelr/issues
 RoxygenNote: 7.2.3
 Encoding: UTF-8
+Author: Pawan Rama Mali [aut, cre]
+Maintainer: Pawan Rama Mali <prm@outlook.in>
+Built: R 4.4.1; x86_64-w64-mingw32; 2025-08-22 04:12:55 UTC; windows
+Archs: x64
