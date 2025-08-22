@@ -8,6 +8,12 @@
 #include "ggml-backend.h"
 #include "ggml-cpu.h"
 
+// Forward declaration for CPU backend registration
+extern "C" {
+  void ggml_backend_register(ggml_backend_reg_t reg);
+  ggml_backend_reg_t ggml_backend_cpu_reg(void);
+}
+
 using namespace Rcpp;
 
 struct EdgeModelContext {
@@ -29,7 +35,10 @@ struct EdgeModelContext {
 // [[Rcpp::export]]
 SEXP edge_load_model(std::string model_path, int n_ctx = 2048, int n_gpu_layers = 0) {
   try {
-    // Initialize llama backend first
+    // Load all available backends (including CPU)
+    ggml_backend_load_all();
+    
+    // Initialize llama backend
     llama_backend_init();
     
     llama_model_params model_params = llama_model_default_params();
@@ -100,8 +109,8 @@ std::string edge_completion(SEXP model_ptr, std::string prompt, int n_predict = 
       stop("Failed to process prompt");
     }
     
-    std::string result;
-    result.reserve(n_predict * 4);
+    std::string result = prompt;  // Start with the original prompt
+    result.reserve(prompt.size() + n_predict * 4);
     
     // Generate tokens one by one using simple greedy sampling
     for (int i = 0; i < n_predict; ++i) {
