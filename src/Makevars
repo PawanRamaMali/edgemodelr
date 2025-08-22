@@ -12,7 +12,7 @@ OBJECTS = bindings.o RcppExports.o \
 	llama/llama-context.o llama/llama-cparams.o llama/llama-grammar.o llama/llama-graph.o \
 	llama/llama-hparams.o llama/llama-impl.o llama/llama-io.o llama/llama-kv-cache-iswa.o \
 	llama/llama-kv-cache.o llama/llama-memory-hybrid.o llama/llama-memory-recurrent.o \
-	llama/llama-memory.o llama/llama-mmap.o llama/llama-model-loader.o llama/llama-model.o \
+	llama/llama-memory.o llama/llama-mmap.o llama/llama-model-loader.o llama/llama-model-saver.o llama/llama-model.o \
 	llama/llama-quant.o llama/llama-sampling.o llama/llama-vocab.o llama/llama.o \
 	llama/unicode-data.o llama/unicode.o \
 	ggml/ggml-cpu/ggml-cpu-c.o ggml/ggml-cpu/ggml-cpu-cpp.o ggml/ggml-cpu/ops.o \
