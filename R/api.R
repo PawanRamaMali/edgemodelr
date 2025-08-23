@@ -24,8 +24,8 @@
 edge_load_model <- function(model_path, n_ctx = 2048L, n_gpu_layers = 0L) {
   if (!file.exists(model_path)) {
     # Provide helpful suggestions for missing models
-    cat("📁 Model file not found:", model_path, "\n")
-    cat("💡 Try these options:\n")
+    cat("Model file not found:", model_path, "\n")
+    cat("Try these options:\n")
     cat("   1. Download a model: edge_download_model('TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF', 'tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf')\n")
     cat("   2. Quick setup: edge_quick_setup('TinyLlama-1.1B')\n")
     cat("   3. List models: edge_list_models()\n")
@@ -45,8 +45,8 @@ edge_load_model <- function(model_path, n_ctx = 2048L, n_gpu_layers = 0L) {
   }, error = function(e) {
     # Provide more context about what went wrong
     if (grepl("llama_load_model_from_file", e$message)) {
-      cat("\n🎯 Model found but llama.cpp not available for loading.\n")
-      cat("📦 Install llama.cpp system-wide, then:\n")
+      cat("\nModel found but llama.cpp not available for loading.\n")
+      cat("Install llama.cpp system-wide, then:\n")
       cat("   devtools::load_all()  # Rebuild package\n")
       cat("   ctx <- edge_load_model('", basename(model_path), "')\n")
     }
@@ -195,7 +195,7 @@ edge_download_model <- function(model_id, filename, cache_dir = NULL, force_down
   # Download the file
   tryCatch({
     utils::download.file(download_url, local_path, mode = "wb", method = "auto")
-    cat("✅ Download completed successfully!\n")
+    cat("Download completed successfully!\n")
     cat("Model size:", round(file.info(local_path)$size / (1024^2), 1), "MB\n")
     return(local_path)
   }, error = function(e) {
@@ -285,7 +285,7 @@ edge_quick_setup <- function(model_name, cache_dir = NULL) {
   ctx <- tryCatch({
     edge_load_model(model_path)
   }, error = function(e) {
-    cat("ℹ️  Model downloaded but llama.cpp not available for inference.\n")
+    cat("Model downloaded but llama.cpp not available for inference.\n")
     cat("   Model path:", model_path, "\n")
     cat("   Install llama.cpp system-wide to use for inference.\n")
     NULL
@@ -379,18 +379,18 @@ edge_chat_stream <- function(ctx, system_prompt = NULL, max_history = 10, n_pred
   if (!is.null(system_prompt)) {
     conversation_history <- append(conversation_history, 
                                  list(list(role = "system", content = system_prompt)))
-    cat("🤖 System prompt set.\n")
+    cat("System prompt set.\n")
   }
   
-  cat("🤖 Chat started! Type 'quit', 'exit', or 'bye' to end.\n")
-  cat("💡 Responses will stream in real-time.\n\n")
+  cat("Chat started! Type 'quit', 'exit', or 'bye' to end.\n")
+  cat("Responses will stream in real-time.\n\n")
   
   while (TRUE) {
-    user_input <- readline("👤 You: ")
+    user_input <- readline("You: ")
     
     # Check for exit commands
     if (tolower(trimws(user_input)) %in% c("quit", "exit", "bye", "")) {
-      cat("👋 Chat ended!\n")
+      cat("Chat ended!\n")
       break
     }
     
@@ -402,7 +402,7 @@ edge_chat_stream <- function(ctx, system_prompt = NULL, max_history = 10, n_pred
     prompt <- build_chat_prompt(conversation_history)
     
     # Stream the response
-    cat("🤖 Assistant: ")
+    cat("Assistant: ")
     flush.console()
     
     current_response <- ""

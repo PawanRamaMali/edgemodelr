@@ -1,7 +1,7 @@
 PKG_CPPFLAGS = -I../inst/include -I./llama -I./ggml -I./ggml/ggml-cpu -D_GNU_SOURCE -D_POSIX_C_SOURCE=200809L
-PKG_CXXFLAGS = -std=gnu++17 -O2 -fPIC -DNDEBUG -DGGML_USE_CPU
-PKG_CFLAGS = -std=gnu11 -O2 -fPIC -DNDEBUG -DGGML_USE_CPU -D_GNU_SOURCE -D_POSIX_C_SOURCE=200809L
-PKG_LIBS = -lpthread
+PKG_CXXFLAGS = $(SHLIB_OPENMP_CXXFLAGS) -DNDEBUG -DGGML_USE_CPU
+PKG_CFLAGS = $(SHLIB_OPENMP_CFLAGS) -DNDEBUG -DGGML_USE_CPU -D_GNU_SOURCE -D_POSIX_C_SOURCE=200809L
+PKG_LIBS = $(SHLIB_OPENMP_CXXFLAGS) -lpthread
 
 # Complete static list of ALL object files - no variables, no wildcards
 OBJECTS = bindings.o RcppExports.o \

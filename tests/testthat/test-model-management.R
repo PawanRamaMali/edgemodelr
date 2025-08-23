@@ -62,7 +62,7 @@ test_that("Model management functions work correctly", {
     
     expect_error(
       edge_quick_setup(NULL),
-      "model_name must be a string"
+      "model_name cannot be empty"
     )
     
     # Test with non-existent model

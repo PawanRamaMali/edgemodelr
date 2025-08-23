@@ -659,8 +659,8 @@ analyze_sentiment <- function(model_path, df, text_column) {
 ### Getting Help
 
 - 📖 Check the [documentation](R/api.R) for function details
-- 🐛 Report bugs at [GitHub Issues](https://github.com/user/edgemodelr/issues)
-- 💬 Ask questions in [Discussions](https://github.com/user/edgemodelr/discussions)
+- 🐛 Report bugs at [GitHub Issues](https://github.com/PawanRamaMali/edgemodelr/issues)
+- 💬 Ask questions in [Discussions](https://github.com/PawanRamaMali/edgemodelr/discussions)
 
 ## Development Status
 
@@ -689,4 +689,4 @@ We welcome contributions! Areas where help is needed:
 Built with ❤️ using:
 - [llama.cpp](https://github.com/ggml-org/llama.cpp) - Fast LLM inference in C++
 - [Rcpp](https://github.com/RcppCore/Rcpp) - R and C++ integration
-- [GGML](https://github.com/ggerganov/ggml) - Machine learning tensor library
+- [GGML](https://github.com/ggml-org/ggml) - Machine learning tensor library

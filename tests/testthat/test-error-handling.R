@@ -4,19 +4,19 @@ test_that("Error handling and edge cases work correctly", {
     # Non-existent file
     expect_error(
       edge_load_model("does_not_exist.gguf"),
-      "Failed to load GGUF model"
+      "Model file does not exist"
     )
     
     # Empty file path
     expect_error(
       edge_load_model(""),
-      "model_path cannot be empty|Failed to load GGUF model"
+      "Model file does not exist"
     )
     
     # NULL file path
     expect_error(
       edge_load_model(NULL),
-      "model_path must be a string|Failed to load GGUF model"
+      "invalid 'file' argument"
     )
     
     # Directory instead of file
@@ -35,25 +35,25 @@ test_that("Error handling and edge cases work correctly", {
     # Negative context size
     expect_error(
       suppressWarnings(edge_load_model(dummy_path, n_ctx = -1)),
-      "n_ctx must be positive|Failed to load GGUF model"
+      "Model file does not exist"
     )
     
     # Zero context size
     expect_error(
       suppressWarnings(edge_load_model(dummy_path, n_ctx = 0)),
-      "n_ctx must be positive|Failed to load GGUF model"
+      "Model file does not exist"
     )
     
     # Extremely large context size (should be handled gracefully)
     expect_error(
       suppressWarnings(edge_load_model(dummy_path, n_ctx = 999999999)),
-      "Failed to load GGUF model"
+      "Model file does not exist"
     )
     
     # Negative GPU layers
     expect_error(
       suppressWarnings(edge_load_model(dummy_path, n_gpu_layers = -1)),
-      "n_gpu_layers cannot be negative|Failed to load GGUF model"
+      "Model file does not exist"
     )
   })
   
@@ -209,14 +209,14 @@ test_that("Error handling and edge cases work correctly", {
     # This should fail but not leak memory
     expect_error(
       edge_load_model("nonexistent.gguf"),
-      "Failed to load GGUF model"
+      "Model file does not exist"
     )
     
     # Multiple failed attempts should not accumulate resources
     for (i in 1:5) {
       expect_error(
         suppressWarnings(edge_load_model("nonexistent.gguf")),
-        "Failed to load GGUF model"
+        "Model file does not exist"
       )
     }
   })

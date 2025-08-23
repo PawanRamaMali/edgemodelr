@@ -7,14 +7,14 @@ test_that("Model loading functions work correctly", {
     expect_true(nrow(models) > 0)
     expect_true("model_id" %in% colnames(models))
     expect_true("filename" %in% colnames(models))
-    expect_true("description" %in% colnames(models))
+    expect_true("use_case" %in% colnames(models))
   })
   
   # Test 2: edge_load_model with invalid path should error
   test_that("edge_load_model handles invalid paths", {
     expect_error(
       edge_load_model("nonexistent_model.gguf"),
-      "Failed to load GGUF model"
+      "Model file does not exist"
     )
   })
   

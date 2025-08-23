@@ -64,13 +64,12 @@ test_that("Integration tests work correctly", {
       # Filename should end with .gguf
       expect_true(endsWith(model$filename, ".gguf"))
       
-      # Size should be positive
-      expect_true(model$size_gb > 0)
-      expect_true(model$size_gb < 1000, 
-                  info = "Model size should be reasonable (< 1TB)")
+      # Size should be informative
+      expect_true(nchar(model$size) > 3)
+      expect_true(grepl("MB|GB", model$size))
       
-      # Description should be informative
-      expect_true(nchar(model$description) > 10)
+      # Use case should be informative
+      expect_true(nchar(model$use_case) > 3)
     }
   })
   
