@@ -2,11 +2,10 @@ Package: edgemodelr
 Type: Package
 Title: Local Language Model Inference via 'llama.cpp'
 Version: 0.1.0
-Author: Pawan Rama Mali <prm@outlook.in>
-Maintainer: Pawan Rama Mali <prm@outlook.in>
 Authors@R: person("Pawan Rama", "Mali", 
                   role = c("aut", "cre"), 
                   email = "prm@outlook.in")
+Maintainer: Pawan Rama Mali <prm@outlook.in>
 Description: Enables R users to run large language models locally using GGUF 
     model files and 'llama.cpp' as the inference engine. Provides a complete 
     R interface for loading models, generating text completions, and streaming 

@@ -660,7 +660,7 @@ analyze_sentiment <- function(model_path, df, text_column) {
 
 - 📖 Check the [documentation](R/api.R) for function details
 - 🐛 Report bugs at [GitHub Issues](https://github.com/PawanRamaMali/edgemodelr/issues)
-- 💬 Ask questions in [Discussions](https://github.com/PawanRamaMali/edgemodelr/discussions)
+- 💬 Ask questions by opening an issue with the "question" label
 
 ## Development Status
 
