@@ -1,0 +1,55 @@
+PKG_CPPFLAGS = -I../inst/include -I./llama -I./ggml -I./ggml/ggml-cpu -DUSING_R=1
+PKG_CXXFLAGS = -std=gnu++17 -O2 -DNDEBUG -DNOMINMAX -D_USE_MATH_DEFINES -DGGML_USE_CPU
+PKG_LIBS = 
+
+# Main package objects  
+OBJECTS = bindings.o RcppExports.o
+
+# Include ALL llama.cpp source files
+LLAMA_SOURCES = $(wildcard llama/*.cpp)
+LLAMA_OBJS = $(LLAMA_SOURCES:.cpp=.o)
+
+# Include core GGML source files 
+GGML_SOURCES = ggml/ggml.c ggml/ggml-alloc.c ggml/ggml-backend.cpp ggml/ggml-backend-reg.cpp \
+               ggml/ggml-quants.c ggml/ggml-threading.cpp ggml/ggml-opt.cpp ggml/gguf.cpp
+
+# Complete CPU backend implementation 
+GGML_CPU_SOURCES = ggml/ggml-cpu/ops.cpp ggml/ggml-cpu/binary-ops.cpp \
+                   ggml/ggml-cpu/unary-ops.cpp ggml/ggml-cpu/vec.cpp ggml/ggml-cpu/traits.cpp \
+                   ggml/ggml-cpu/repack.cpp ggml/ggml-cpu/quants.c
+
+# Architecture-specific files for x86 (Windows)
+GGML_CPU_ARCH_SOURCES = ggml/ggml-cpu/arch/x86/cpu-feats.cpp ggml/ggml-cpu/arch/x86/quants.c \
+                        ggml/ggml-cpu/arch/x86/repack.cpp
+               
+GGML_OBJS = $(GGML_SOURCES:.cpp=.o)
+GGML_OBJS := $(GGML_OBJS:.c=.o)
+
+GGML_CPU_OBJS = $(GGML_CPU_SOURCES:.cpp=.o)
+GGML_CPU_OBJS := $(GGML_CPU_OBJS:.c=.o)
+
+GGML_CPU_ARCH_OBJS = $(GGML_CPU_ARCH_SOURCES:.cpp=.o)
+GGML_CPU_ARCH_OBJS := $(GGML_CPU_ARCH_OBJS:.c=.o)
+
+# Build both ggml-cpu.c and ggml-cpu.cpp with different object names
+OBJECTS += $(LLAMA_OBJS) $(GGML_OBJS) $(GGML_CPU_OBJS) $(GGML_CPU_ARCH_OBJS) \
+           ggml/ggml-cpu/ggml-cpu-c.o ggml/ggml-cpu/ggml-cpu-cpp.o
+
+all: $(SHLIB)
+
+clean:
+	rm -f $(OBJECTS) $(SHLIB)
+
+# Special rules for conflicting ggml-cpu files
+ggml/ggml-cpu/ggml-cpu-c.o: ggml/ggml-cpu/ggml-cpu.c
+	$(CC) $(ALL_CPPFLAGS) $(ALL_CFLAGS) -c $< -o $@
+
+ggml/ggml-cpu/ggml-cpu-cpp.o: ggml/ggml-cpu/ggml-cpu.cpp
+	$(CXX) $(ALL_CPPFLAGS) $(ALL_CXXFLAGS) -c $< -o $@
+
+# Compilation rules
+%.o: %.c
+	$(CC) $(ALL_CPPFLAGS) $(ALL_CFLAGS) -c $< -o $@
+
+%.o: %.cpp  
+	$(CXX) $(ALL_CPPFLAGS) $(ALL_CXXFLAGS) -c $< -o $@
