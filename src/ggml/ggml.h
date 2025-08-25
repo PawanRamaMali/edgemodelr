@@ -257,8 +257,9 @@ __host__ __device__ constexpr inline void ggml_unused_vars_impl(Args&&...) noexc
 #ifndef NDEBUG
 #   ifdef USING_R
 #       define GGML_UNREACHABLE() do { \
-            extern void error(const char *, ...); \
-            error("GGML: statement should be unreachable"); \
+            fprintf(stderr, "GGML: statement should be unreachable\n"); \
+            /* In R packages, avoid abort() - use a non-terminating approach */ \
+            __builtin_unreachable(); \
         } while(0)
 #   else
 #       define GGML_UNREACHABLE() do { fprintf(stderr, "statement should be unreachable\n"); abort(); } while(0)
