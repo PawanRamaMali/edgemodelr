@@ -1,5 +1,6 @@
 #define _CRT_SECURE_NO_DEPRECATE // Disables "unsafe" warnings on Windows
 #define _USE_MATH_DEFINES // For M_PI on MSVC
+#define USING_R 1 // Enable R package compatibility mode
 
 #include "ggml-backend.h"
 #include "ggml-impl.h"
@@ -187,7 +188,8 @@ void ggml_print_backtrace(void) {
             (char *) NULL);
         // gdb failed, fallback to backtrace_symbols
         ggml_print_backtrace_symbols();
-        _Exit(0);
+        // _Exit(0); // Disabled for R package compliance
+        return;
     } else { // parent
 #if defined(__linux__)
         prctl(PR_SET_PTRACER, child_pid);
@@ -231,7 +233,16 @@ void ggml_abort(const char * file, int line, const char * fmt, ...) {
         ggml_print_backtrace();
     }
 
+    // abort(); // Disabled for R package compliance - use error() instead
+    // For R packages, we should throw an R error instead of aborting
+    #ifdef USING_R
+    {
+        extern void error(const char *, ...);
+        error("GGML error: %s", message);
+    }
+    #else
     abort();
+    #endif
 }
 
 // ggml_print_backtrace is registered with std::set_terminate by ggml.cpp

@@ -9,12 +9,12 @@ Authors@R: person("Pawan Rama", "Mali",
                   email = "prm@outlook.in",
                   comment = c(ORCID = "0000-0000-0000-0000"))
 Description: Enables R users to run large language models locally using GGUF 
-    model files and 'llama.cpp' as the inference engine. Provides a complete 
-    R interface for loading models, generating text completions, and streaming 
-    responses in real-time. Supports on-device inference without requiring 
-    cloud APIs or internet connectivity, ensuring complete data privacy and 
-    control. Includes functions for interactive chat sessions and batch text 
-    processing workflows.
+    (GPT-Generated Unified Format) model files and 'llama.cpp' as the inference 
+    engine. Provides a complete R interface for loading models, generating text 
+    completions, and streaming responses in real-time. Supports on-device 
+    inference without requiring cloud APIs or internet connectivity, ensuring 
+    complete data privacy and control. Includes functions for interactive chat 
+    sessions and batch text processing workflows.
 License: MIT + file LICENSE
 LinkingTo: Rcpp
 Imports: 
