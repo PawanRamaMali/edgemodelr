@@ -233,13 +233,11 @@ void ggml_abort(const char * file, int line, const char * fmt, ...) {
         ggml_print_backtrace();
     }
 
-    // abort(); // Disabled for R package compliance - use error() instead
-    // For R packages, we should throw an R error instead of aborting
+    // abort(); // Disabled for R package compliance
+    // For R packages, we avoid calling abort() and let the program continue
     #ifdef USING_R
-    {
-        extern void error(const char *, ...);
-        error("GGML error: %s", message);
-    }
+    // In R packages, we should not abort - just return and let R handle the error
+    return;
     #else
     abort();
     #endif
