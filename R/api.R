@@ -36,9 +36,9 @@ edge_load_model <- function(model_path, n_ctx = 2048L, n_gpu_layers = 0L) {
     warning("Model file should have .gguf extension for optimal compatibility")
   }
   
-  # Try to load the model
+  # Try to load the model using the raw Rcpp function
   tryCatch({
-    .Call(`_edgemodelr_edge_load_model`, 
+    .Call(`_edgemodelr_edge_load_model`,
           normalizePath(model_path), 
           as.integer(n_ctx),
           as.integer(n_gpu_layers))
@@ -79,7 +79,7 @@ edge_completion <- function(ctx, prompt, n_predict = 128L, temperature = 0.8, to
     stop("Prompt must be a single character string")
   }
   
-  .Call(`_edgemodelr_edge_completion`, 
+  .Call(`_edgemodelr_edge_completion`,
         ctx, 
         prompt, 
         as.integer(n_predict),
@@ -339,7 +339,7 @@ edge_stream_completion <- function(ctx, prompt, callback, n_predict = 128L, temp
     stop("Callback must be a function")
   }
   
-  .Call(`_edgemodelr_edge_completion_stream`, 
+  .Call(`_edgemodelr_edge_completion_stream`,
         ctx, prompt, callback, 
         as.integer(n_predict),
         as.numeric(temperature),

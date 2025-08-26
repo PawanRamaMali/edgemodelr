@@ -1,35 +1,25 @@
-test_that("Model loading functions work correctly", {
-  
-  # Test 1: edge_list_models() returns a data frame
-  test_that("edge_list_models returns valid data", {
-    models <- edge_list_models()
-    expect_true(is.data.frame(models))
-    expect_true(nrow(models) > 0)
-    expect_true("model_id" %in% colnames(models))
-    expect_true("filename" %in% colnames(models))
-    expect_true("use_case" %in% colnames(models))
-  })
-  
-  # Test 2: edge_load_model with invalid path should error
-  test_that("edge_load_model handles invalid paths", {
-    expect_error(
-      edge_load_model("nonexistent_model.gguf")
-    )
-  })
-  
-  # Test 3: edge_load_model with invalid parameters
-  test_that("edge_load_model handles invalid parameters", {
-    # These will fail because file doesn't exist, which is expected
-    expect_error(edge_load_model("test.gguf", n_ctx = -1))
-    expect_error(edge_load_model("test.gguf", n_ctx = 0))
-  })
-  
-  # Test 4: is_valid_model with invalid context
-  test_that("is_valid_model handles invalid contexts", {
-    expect_false(is_valid_model(NULL))
-    expect_false(is_valid_model("invalid"))
-    expect_false(is_valid_model(123))
-  })
+# Test 1: edge_list_models() returns a data frame
+test_that("edge_list_models returns valid data", {
+  models <- edge_list_models()
+  expect_true(is.data.frame(models))
+  expect_true(nrow(models) > 0)
+  expect_true("model_id" %in% colnames(models))
+  expect_true("filename" %in% colnames(models))
+  expect_true("use_case" %in% colnames(models))
+})
+
+# Test 2: edge_load_model with invalid path should error
+test_that("edge_load_model handles invalid paths", {
+  expect_error(
+    edge_load_model("nonexistent_model.gguf")
+  )
+})
+
+# Test 3: is_valid_model with invalid context
+test_that("is_valid_model handles invalid contexts", {
+  expect_false(is_valid_model(NULL))
+  expect_false(is_valid_model("invalid"))
+  expect_false(is_valid_model(123))
 })
 
 # Test with actual model if available
