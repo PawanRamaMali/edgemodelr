@@ -53,8 +53,8 @@
 #' @seealso 
 #' \itemize{
 #'   \item Package repository: \url{https://github.com/PawanRamaMali/edgemodelr}
-#'   \item llama.cpp project: \url{https://github.com/ggerganov/llama.cpp}
-#'   \item GGUF format: \url{https://github.com/ggerganov/ggml/blob/master/docs/gguf.md}
+#'   \item llama.cpp project: \url{https://github.com/ggml-org/llama.cpp}
+#'   \item GGUF format: \url{https://github.com/ggml-org/ggml}
 #' }
 #'
 #' @keywords internal

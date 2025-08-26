@@ -339,10 +339,11 @@ edge_stream_completion <- function(ctx, prompt, callback, n_predict = 128L, temp
     stop("Callback must be a function")
   }
   
-  edge_completion_stream(ctx, prompt, callback, 
-                        as.integer(n_predict),
-                        as.numeric(temperature),
-                        as.numeric(top_p))
+  .Call(`_edgemodelr_edge_completion_stream`, 
+        ctx, prompt, callback, 
+        as.integer(n_predict),
+        as.numeric(temperature),
+        as.numeric(top_p))
 }
 
 #' Interactive chat session with streaming responses

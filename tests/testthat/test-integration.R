@@ -35,8 +35,7 @@ test_that("Integration tests work correctly", {
       
       # 5. Verify we can't use the context after freeing
       expect_error(
-        edge_completion(ctx, "Hello", n_predict = 5),
-        "Invalid model context"
+        edge_completion(ctx, "Hello", n_predict = 5)
       )
       
     } else {

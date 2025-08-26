@@ -4,7 +4,9 @@ Title: Local Language Model Inference via 'llama.cpp'
 Version: 0.1.0
 Authors@R: person("Pawan Rama", "Mali", 
                   role = c("aut", "cre"), 
-                  email = "prm@outlook.in")
+                  email = "prm@outlook.in",
+                  comment = c(ORCID = "0000-0000-0000-0000"))
+Author: Pawan Rama Mali <prm@outlook.in>
 Maintainer: Pawan Rama Mali <prm@outlook.in>
 Description: Enables R users to run large language models locally using GGUF 
     (GPT-Generated Unified Format) model files and 'llama.cpp' as the inference 
