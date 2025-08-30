@@ -17,6 +17,7 @@ This directory contains examples for using edgemodelr with modern small language
 - `03_content_generation.R` - Multi-format content generation
 - `04_streaming_chat.R` - Interactive streaming conversations
 - `05_model_benchmarking.R` - Systematic model evaluation
+- `shiny/multimodel_chat` - Shiny app for streaming chat with model selection
 
 ## 🏃 Quick Start
 
