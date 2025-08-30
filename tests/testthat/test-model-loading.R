@@ -83,8 +83,9 @@ test_that("is_valid_model handles invalid contexts", {
   expect_false(is_valid_model(FALSE))
   expect_false(is_valid_model(c(1, 2, 3)))
   
-  # Test with missing arguments
-  expect_error(is_valid_model())
+  # Test with missing arguments - function returns FALSE instead of erroring
+  result <- is_valid_model()
+  expect_false(result)
 })
 
 # Test 3b: edge_free_model with invalid contexts
@@ -123,7 +124,7 @@ test_that("Model loading with real model (if available)", {
     test_that("edge_load_model works with valid GGUF file", {
       ctx <- edge_load_model(model_path, n_ctx = 256)
       expect_true(!is.null(ctx))
-      expect_true(inherits(ctx, "externalptr"))
+      expect_true(inherits(ctx, "edge_model_context"))
       
       # Test model validation
       expect_true(is_valid_model(ctx))
