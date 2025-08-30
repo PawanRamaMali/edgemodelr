@@ -26,6 +26,9 @@ static inline void r_fputs(const char* text, FILE* stream) {
     }
 }
 
+static inline int r_fprintf(FILE* stream, const char* format, ...) {
+    va_list args;
+    va_start(args, format);
     int result = 0;
     
     if (stream == stderr || stream == stdout) {
