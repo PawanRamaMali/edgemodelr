@@ -210,11 +210,27 @@ edge_download_model <- function(model_id, filename, cache_dir = NULL, force_down
 #' @export
 edge_list_models <- function() {
   models <- data.frame(
-    name = c("TinyLlama-1.1B", "TinyLlama-OpenOrca", "Llama-2-7B", "CodeLlama-7B", "Mistral-7B"),
-    size = c("~700MB", "~700MB", "~3.8GB", "~3.8GB", "~4.1GB"),
+    name = c(
+      "TinyLlama-1.1B", "TinyLlama-OpenOrca", 
+      "llama3.2-1b", "llama3.2-3b",
+      "phi3.5-mini", "qwen2.5-1.5b", "qwen2.5-3b", "gemma2-2b",
+      "Llama-2-7B", "CodeLlama-7B", "Mistral-7B"
+    ),
+    size = c(
+      "~700MB", "~700MB",
+      "~800MB", "~2GB", 
+      "~2.4GB", "~1GB", "~2GB", "~1.6GB",
+      "~3.8GB", "~3.8GB", "~4.1GB"
+    ),
     model_id = c(
       "TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF",
       "TheBloke/TinyLlama-1.1B-1T-OpenOrca-GGUF",
+      "bartowski/Llama-3.2-1B-Instruct-GGUF",
+      "bartowski/Llama-3.2-3B-Instruct-GGUF", 
+      "bartowski/Phi-3.5-mini-instruct-GGUF",
+      "bartowski/Qwen2.5-1.5B-Instruct-GGUF",
+      "bartowski/Qwen2.5-3B-Instruct-GGUF",
+      "bartowski/gemma-2-2b-it-GGUF",
       "TheBloke/Llama-2-7B-Chat-GGUF", 
       "TheBloke/CodeLlama-7B-Instruct-GGUF",
       "TheBloke/Mistral-7B-Instruct-v0.1-GGUF"
@@ -222,11 +238,22 @@ edge_list_models <- function() {
     filename = c(
       "tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf",
       "tinyllama-1.1b-1t-openorca.Q4_K_M.gguf",
+      "Llama-3.2-1B-Instruct-Q4_K_M.gguf",
+      "Llama-3.2-3B-Instruct-Q4_K_M.gguf",
+      "Phi-3.5-mini-instruct-Q4_K_M.gguf",
+      "Qwen2.5-1.5B-Instruct-Q4_K_M.gguf", 
+      "Qwen2.5-3B-Instruct-Q4_K_M.gguf",
+      "gemma-2-2b-it-Q4_K_M.gguf",
       "llama-2-7b-chat.Q4_K_M.gguf",
       "codellama-7b-instruct.Q4_K_M.gguf", 
       "mistral-7b-instruct-v0.1.Q4_K_M.gguf"
     ),
-    use_case = c("Testing", "Better Chat", "General", "Code", "Quality"),
+    use_case = c(
+      "Testing", "Better Chat", 
+      "2024 Mobile", "2024 General", 
+      "2024 Reasoning", "2024 Multilingual", "2024 Quality", "2024 Gemma",
+      "General", "Code", "Quality"
+    ),
     stringsAsFactors = FALSE
   )
   
@@ -241,8 +268,8 @@ edge_list_models <- function() {
 #' 
 #' @examples
 #' \donttest{
-#' # Quick setup with TinyLlama
-#' setup <- edge_quick_setup("TinyLlama-1.1B")
+#' # Quick setup with 2024 models
+#' setup <- edge_quick_setup("llama3.2-1b")  # Modern small model
 #' ctx <- setup$context
 #' 
 #' if (!is.null(ctx)) {
