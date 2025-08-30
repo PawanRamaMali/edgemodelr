@@ -112,6 +112,14 @@ edge_free_model(ctx)
 
 ## Model Resources
 
+### 🆕 Latest Models (2024)
+
+| Model | Size | Strengths | Best For | HuggingFace |
+|-------|------|-----------|----------|-------------|
+| **Llama 3.2 1B** | ~800MB | Mobile-optimized, latest Meta | General use, edge | [bartowski/Llama-3.2-1B-Instruct-GGUF](https://huggingface.co/bartowski/Llama-3.2-1B-Instruct-GGUF) |
+| **Phi-3.5 Mini** | ~2.4GB | 7B-quality in 3.8B params | High quality output | [microsoft/Phi-3.5-mini-instruct](https://huggingface.co/microsoft/Phi-3.5-mini-instruct) |
+| **Qwen2.5 1.5B** | ~1GB | Exceptional coding & math | Programming, analysis | [Qwen/Qwen2.5-1.5B-Instruct-GGUF](https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF) |
+
 ### Recommended Models for Testing
 
 | Model | Size | Use Case | Download |
