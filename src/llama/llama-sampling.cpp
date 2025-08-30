@@ -129,12 +129,7 @@ struct ring_buffer {
 };
 
 static int llama_sample_dist(llama_token_data_array * cur_p, std::mt19937 & rng) {
-    // iterator for the probabilities
-#ifdef __GNUC__
-    #pragma GCC diagnostic push
-    #pragma GCC diagnostic ignored "-Wunused-local-typedefs"
-#endif
-
+    // iterator for the probabilities (pragma removed for CRAN compliance)
     struct probs_iterator {
         typedef std::input_iterator_tag iterator_category;
         typedef float value_type;
@@ -150,10 +145,6 @@ static int llama_sample_dist(llama_token_data_array * cur_p, std::mt19937 & rng)
         probs_iterator & operator++() { ++data; return *this; }
         probs_iterator operator++(int) { probs_iterator tmp = *this; ++data; return tmp; }
     };
-
-#ifdef __GNUC__
-    #pragma GCC diagnostic pop
-#endif
 
     std::discrete_distribution<int> dist(probs_iterator{cur_p->data}, probs_iterator{cur_p->data + cur_p->size});
 

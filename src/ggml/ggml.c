@@ -35,6 +35,7 @@
 #include <limits.h>
 #include <stdarg.h>
 #include <signal.h>
+#include "../r_output_redirect.h"
 #if defined(__gnu_linux__)
 #include <syscall.h>
 #endif

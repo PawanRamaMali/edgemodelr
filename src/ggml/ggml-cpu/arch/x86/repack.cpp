@@ -18,9 +18,7 @@
 #define GGML_CPU_CLANG_WORKAROUND
 #include "../../repack.h"
 
-#if defined(__GNUC__)
-#pragma GCC diagnostic ignored "-Woverlength-strings"
-#endif
+// Removed GCC diagnostic pragmas for CRAN compliance
 
 #define UNUSED GGML_UNUSED
 

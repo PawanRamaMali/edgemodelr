@@ -7,6 +7,7 @@
 #include <cmath>
 #include <algorithm>
 #include <stdexcept>
+#include "../r_output_redirect.h"
 
 //
 // helpers
