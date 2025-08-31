@@ -179,50 +179,55 @@ ui <- fluidPage(
         stopBtn.style.display = 'inline-block';
         spinner.classList.add('active');
         isStreaming = true;
+        // Reset cached element for new streaming session
+        streamingMessageElement = null;
       } else {
         sendBtn.style.display = 'inline-block';
         stopBtn.style.display = 'none';
         spinner.classList.remove('active');
         isStreaming = false;
+        // Clear cached element
+        streamingMessageElement = null;
       }
     });
     
-    // Function to update streaming message
+    // Optimized function to update streaming message with minimal DOM queries
+    var streamingMessageElement = null;
+    
     function updateStreamingMessage(text) {
-      var chatDisplay = document.getElementById('chat-display');
-      var messages = chatDisplay.querySelectorAll('.message');
-      var lastMessage = messages[messages.length - 1];
-      
-      // Always look for the last assistant message or create new one
-      var targetMessage = null;
-      
-      // Find the last assistant message
-      for (var i = messages.length - 1; i >= 0; i--) {
-        if (messages[i].classList.contains('assistant-message')) {
-          var contentDiv = messages[i].querySelector('.message-content');
-          // Check if this message is empty or has temporary content
-          if (contentDiv && (contentDiv.innerHTML.trim() === '' || contentDiv.innerHTML.indexOf('...') !== -1 || isStreaming)) {
-            targetMessage = messages[i];
-            break;
+      // Cache the streaming element to avoid repeated DOM queries
+      if (!streamingMessageElement) {
+        var chatDisplay = document.getElementById('chat-display');
+        var messages = chatDisplay.querySelectorAll('.message');
+        var lastMessage = messages[messages.length - 1];
+        
+        // Find or create the streaming message element
+        if (lastMessage && lastMessage.classList.contains('assistant-message')) {
+          var contentDiv = lastMessage.querySelector('.message-content');
+          if (contentDiv && (contentDiv.innerHTML.indexOf('...') !== -1 || isStreaming)) {
+            streamingMessageElement = contentDiv;
           }
         }
-      }
-      
-      if (targetMessage) {
-        // Update existing streaming message
-        var contentDiv = targetMessage.querySelector('.message-content');
-        if (contentDiv) {
-          contentDiv.innerHTML = text;
+        
+        if (!streamingMessageElement) {
+          // Create new assistant message for streaming
+          var newMessage = document.createElement('div');
+          newMessage.className = 'message assistant-message';
+          newMessage.innerHTML = '<div class=\"message-header\">Assistant</div><div class=\"message-content\"></div>';
+          chatDisplay.appendChild(newMessage);
+          streamingMessageElement = newMessage.querySelector('.message-content');
         }
-      } else {
-        // Create new assistant message for streaming
-        var newMessage = document.createElement('div');
-        newMessage.className = 'message assistant-message';
-        newMessage.innerHTML = '<div class=\"message-header\">Assistant</div><div class=\"message-content\">' + text + '</div>';
-        chatDisplay.appendChild(newMessage);
       }
       
-      scrollToBottom();
+      // Fast update - direct innerHTML assignment
+      if (streamingMessageElement) {
+        streamingMessageElement.innerHTML = text;
+      }
+      
+      // Only scroll every few updates for performance
+      if (Math.random() < 0.3) {  // 30% chance to scroll, reduces scroll overhead
+        scrollToBottom();
+      }
     }
     
     // Function to scroll to bottom
@@ -324,18 +329,15 @@ server <- function(input, output, session) {
     # Update chat display with user message and prepare for streaming
     updateChatDisplay(values$history, "...")  # Add placeholder for assistant response
     
-    # Build prompt with better formatting
-    recent_history <- if (length(values$history) > 6) tail(values$history, 6) else values$history
+    # Build optimized prompt - keep it short for faster inference
+    recent_history <- if (length(values$history) > 4) tail(values$history, 4) else values$history
     
-    # Format prompt to encourage direct responses, not creative writing
-    system_prompt <- "You are a helpful assistant. Give direct, concise answers. Do not write stories, scripts, or dialogue format. Answer questions clearly and helpfully."
+    # Short system prompt to reduce processing time
+    system_prompt <- "Be helpful and direct."
     
-    # Add system prompt and format conversation properly
+    # Minimal prompt formatting for speed
     if (length(recent_history) > 0) {
-      formatted_history <- c(system_prompt, recent_history)
-      prompt <- paste(formatted_history, collapse = "\n")
-      # Ensure we end with "Assistant:" to guide the response format
-      prompt <- paste0(prompt, "\nAssistant:")
+      prompt <- paste(c(system_prompt, recent_history, "Assistant:"), collapse = "\n")
     } else {
       prompt <- paste0(system_prompt, "\nAssistant:")
     }
@@ -344,12 +346,12 @@ server <- function(input, output, session) {
     local_ctx <- values$ctx
     
     tryCatch({
-      # Start streaming
+      # Start streaming with optimized parameters for speed
       result <- edge_stream_completion(
         ctx = local_ctx,
         prompt = prompt,
-        n_predict = 200,
-        temperature = 0.8,
+        n_predict = 100,  # Shorter responses for faster completion
+        temperature = 0.7,  # Slightly lower for more focused responses
         callback = function(data) {
           # Check if stop was requested (simple environment check)
           if (session_env$stop_streaming) {
@@ -357,16 +359,11 @@ server <- function(input, output, session) {
           }
           
           if (!data$is_final && !is.null(data$token)) {
-            # Update current response
+            # Update current response (minimal processing)
             values$current_response <- paste0(values$current_response, data$token)
             
-            # Clean up the response for display (remove dialogue formatting)
-            display_text <- values$current_response
-            display_text <- gsub("^(Robot:|Customer:|Scene \\d+:|\\(.*\\):?)", "", display_text)
-            display_text <- trimws(display_text)
-            
-            # Send real-time update to JavaScript
-            session$sendCustomMessage("streamUpdate", list(text = display_text))
+            # Send real-time update to JavaScript (no text processing in callback for speed)
+            session$sendCustomMessage("streamUpdate", list(text = values$current_response))
             
             return(TRUE)  # Continue streaming
           }
@@ -392,11 +389,14 @@ server <- function(input, output, session) {
         final_response <- trimws(final_response)
       }
       
-      # Clean up any remaining formatting issues
+      # Clean up any remaining formatting issues (do this only once at the end)
       final_response <- trimws(final_response)
-      # Remove any leading dialogue markers
-      final_response <- gsub("^(Robot:|Customer:|Scene \\d+:|\\(.*\\):?)", "", final_response)
-      final_response <- trimws(final_response)
+      if (final_response != "") {
+        # Remove dialogue markers and clean up
+        final_response <- gsub("^(Robot:|Customer:|Scene \\d+:|\\(.*\\):?)", "", final_response)
+        final_response <- gsub("\\n(Robot:|Customer:|Scene \\d+:|\\(.*\\):?)", "\n", final_response)
+        final_response <- trimws(final_response)
+      }
       
       # Add assistant response to history
       if (final_response != "") {
