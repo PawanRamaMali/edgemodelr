@@ -17,6 +17,14 @@ library(shiny)
 library(shinyjs)
 library(edgemodelr)
 
+# File-based communication for stop control - most reliable method
+STOP_FILE <- file.path(tempdir(), "edgemodelr_stop.txt")
+
+# Initialize by removing any existing stop file
+if (file.exists(STOP_FILE)) {
+  file.remove(STOP_FILE)
+}
+
 ui <- fluidPage(
   useShinyjs(),
   
@@ -235,6 +243,32 @@ ui <- fluidPage(
       var chatDisplay = document.getElementById('chat-display');
       chatDisplay.scrollTop = chatDisplay.scrollHeight;
     }
+    
+    // Add direct JavaScript event handler for stop button debugging
+    $(document).ready(function() {
+      console.log('Document ready - setting up stop button debugging');
+      
+      // Check if stop button exists
+      setTimeout(function() {
+        var stopBtn = document.getElementById('stop');
+        if (stopBtn) {
+          console.log('Stop button found in DOM');
+          
+          // Add direct click handler for debugging
+          stopBtn.addEventListener('click', function(e) {
+            console.log('Stop button clicked via direct JavaScript handler');
+            
+            // Force trigger Shiny input
+            Shiny.setInputValue('manual_stop_trigger', Math.random(), {priority: 'event'});
+            
+            e.preventDefault();
+            return false;
+          });
+        } else {
+          console.log('ERROR: Stop button NOT found in DOM');
+        }
+      }, 1000); // Wait 1 second for DOM to be ready
+    });
   "))
 )
 
@@ -246,10 +280,6 @@ server <- function(input, output, session) {
     is_generating = FALSE,
     current_response = ""
   )
-  
-  # Global stop flag that callback can access reliably
-  session_env <- new.env()
-  session_env$stop_streaming <- FALSE
   
   # Initialize app
   observe({
@@ -319,9 +349,13 @@ server <- function(input, output, session) {
     # Clear input
     updateTextAreaInput(session, "user_input", value = "")
     
-    # Update UI state
+    # Update UI state and ensure stop file is removed
     values$is_generating <- TRUE
-    session_env$stop_streaming <- FALSE
+    cat("Setting is_generating to TRUE\n")
+    if (file.exists(STOP_FILE)) {
+      file.remove(STOP_FILE)
+      cat("Removed existing stop file\n")
+    }
     values$current_response <- ""
     session$sendCustomMessage("uiState", list(streaming = TRUE))
     session$sendCustomMessage("statusUpdate", list(message = "Generating response..."))
@@ -342,8 +376,12 @@ server <- function(input, output, session) {
       prompt <- paste0(system_prompt, "\nAssistant:")
     }
     
-    # Start streaming - store context locally
+    # Start streaming - store context locally and avoid reactive values in callback
     local_ctx <- values$ctx
+    local_session <- session
+    
+    # Use local variable instead of reactive value to avoid context issues
+    current_response_text <- ""
     
     tryCatch({
       # Start streaming with optimized parameters for speed
@@ -353,17 +391,27 @@ server <- function(input, output, session) {
         n_predict = 100,  # Shorter responses for faster completion
         temperature = 0.7,  # Slightly lower for more focused responses
         callback = function(data) {
-          # Check if stop was requested (simple environment check)
-          if (session_env$stop_streaming) {
-            return(FALSE)  # Stop streaming
+          # Check if stop file exists - most reliable cross-context method
+          if (file.exists(STOP_FILE)) {
+            cat("Stop file detected - stopping streaming\n")
+            return(FALSE)  # Stop streaming immediately
+          }
+          
+          # Debug: print that callback is running
+          if (!data$is_final) {
+            cat(".", sep="")  # Print dot for each token (minimal output)
           }
           
           if (!data$is_final && !is.null(data$token)) {
-            # Update current response (minimal processing)
-            values$current_response <- paste0(values$current_response, data$token)
+            # Update local response variable (not reactive value)
+            current_response_text <<- paste0(current_response_text, data$token)
             
-            # Send real-time update to JavaScript (no text processing in callback for speed)
-            session$sendCustomMessage("streamUpdate", list(text = values$current_response))
+            # Send real-time update to JavaScript
+            tryCatch({
+              local_session$sendCustomMessage("streamUpdate", list(text = current_response_text))
+            }, error = function(e) {
+              # Ignore communication errors during streaming
+            })
             
             return(TRUE)  # Continue streaming
           }
@@ -372,8 +420,11 @@ server <- function(input, output, session) {
         }
       )
       
-      # Handle completion
-      final_response <- values$current_response
+      # After streaming completes, update the reactive value
+      values$current_response <- current_response_text
+      
+      # Handle completion using local variable
+      final_response <- current_response_text
       if (final_response == "" && !is.null(result$full_response)) {
         # Fallback if streaming didn't capture text
         final_response <- result$full_response
@@ -408,8 +459,10 @@ server <- function(input, output, session) {
       values$current_response <- ""
       session$sendCustomMessage("uiState", list(streaming = FALSE))
       
-      if (session_env$stop_streaming) {
+      if (file.exists(STOP_FILE)) {
         session$sendCustomMessage("statusUpdate", list(message = "Generation stopped."))
+        # Clean up stop file
+        file.remove(STOP_FILE)
       } else {
         session$sendCustomMessage("statusUpdate", list(message = "Ready."))
       }
@@ -427,12 +480,39 @@ server <- function(input, output, session) {
     })
   })
   
-  # Stop streaming
+  # Stop streaming using file-based communication
   observeEvent(input$stop, {
+    cat("Shiny observeEvent for input$stop triggered\n")
     if (values$is_generating) {
-      session_env$stop_streaming <- TRUE
+      # Create stop file - most reliable method for cross-context communication
+      tryCatch({
+        writeLines("STOP", STOP_FILE)
+        cat("Stop button clicked - created stop file:", STOP_FILE, "\n")
+      }, error = function(e) {
+        cat("Error creating stop file:", e$message, "\n")
+      })
+      
       session$sendCustomMessage("statusUpdate", list(message = "Stopping generation..."))
       showNotification("Stopping generation...", type = "message")
+    } else {
+      cat("Stop button clicked but not generating\n")
+    }
+  })
+  
+  # Backup handler for manual stop trigger
+  observeEvent(input$manual_stop_trigger, {
+    cat("Manual stop trigger activated via JavaScript\n")
+    if (values$is_generating) {
+      # Create stop file
+      tryCatch({
+        writeLines("STOP", STOP_FILE)
+        cat("Manual stop - created stop file:", STOP_FILE, "\n")
+      }, error = function(e) {
+        cat("Error creating stop file via manual trigger:", e$message, "\n")
+      })
+      
+      session$sendCustomMessage("statusUpdate", list(message = "Stopping generation..."))
+      showNotification("Generation stopped via manual trigger", type = "message")
     }
   })
   
@@ -445,7 +525,10 @@ server <- function(input, output, session) {
     
     values$history <- character(0)
     values$current_response <- ""
-    session_env$stop_streaming <- FALSE
+    # Clean up any existing stop file
+    if (file.exists(STOP_FILE)) {
+      file.remove(STOP_FILE)
+    }
     
     # Reset chat display
     session$sendCustomMessage("chatUpdate", list(
@@ -491,11 +574,28 @@ server <- function(input, output, session) {
     session$sendCustomMessage("chatUpdate", list(html = html))
   }
   
-  # Cleanup on session end
+  # Cleanup on session end - avoid reactive context issues
   session$onSessionEnded(function() {
-    if (!is.null(values$ctx)) {
-      tryCatch(edge_free_model(values$ctx), error = function(e) {})
-    }
+    # Use isolate to access reactive values safely during cleanup
+    tryCatch({
+      ctx_to_free <- isolate(values$ctx)
+      if (!is.null(ctx_to_free)) {
+        edge_free_model(ctx_to_free)
+      }
+    }, error = function(e) {
+      # Ignore cleanup errors
+    })
+    
+    # Clean up stop file
+    tryCatch({
+      if (file.exists(STOP_FILE)) {
+        file.remove(STOP_FILE)
+      }
+    }, error = function(e) {
+      # Ignore file cleanup errors
+    })
+    
+    cat("Session cleanup completed\n")
   })
 }
 
