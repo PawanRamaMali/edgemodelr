@@ -1,13 +1,14 @@
 #' Advanced Shiny Streaming Chat Application
 #'
-#' This example demonstrates true streaming functionality by using
-#' background processing and periodic updates to avoid reactive context issues.
+#' This is a completely rewritten streaming chat application that provides
+#' real-time token-by-token streaming with proper stop functionality.
 #'
 #' Features:
-#' - True real-time token-by-token streaming
-#' - Working spinner with proper state management
-#' - Model selection and conversation history
-#' - Background processing to avoid Shiny reactive context issues
+#' - Fast, real-time streaming updates
+#' - Working stop streaming button
+#' - Clean message formatting
+#' - Model selection and management
+#' - Proper error handling
 #'
 #' @author edgemodelr team
 #' @date 2024
@@ -18,254 +19,476 @@ library(edgemodelr)
 
 ui <- fluidPage(
   useShinyjs(),
+  
   tags$head(
     tags$style(HTML("
-      .spinner-border {
-        width: 1.5rem;
-        height: 1.5rem;
-        border: 0.2em solid currentColor;
-        border-right-color: transparent;
-        border-radius: 50%;
-        animation: spinner-border .75s linear infinite;
+      .main-container {
+        max-width: 1200px;
+        margin: 0 auto;
+        padding: 20px;
       }
       
-      @keyframes spinner-border {
-        to { transform: rotate(360deg); }
-      }
-      
-      .text-center { text-align: center !important; }
-      
-      .status-box {
-        background-color: #f8f9fa;
-        border: 1px solid #dee2e6;
-        border-radius: 0.25rem;
-        padding: 0.5rem;
-        margin-bottom: 1rem;
-      }
-      
-      .chat-output {
-        background-color: #ffffff;
-        border: 1px solid #dee2e6;
-        border-radius: 0.25rem;
-        padding: 1rem;
-        max-height: 500px;
+      .chat-container {
+        border: 2px solid #ddd;
+        border-radius: 10px;
+        height: 500px;
         overflow-y: auto;
+        padding: 15px;
+        background-color: #fafafa;
+        margin-bottom: 20px;
+      }
+      
+      .message {
+        margin-bottom: 15px;
+        padding: 10px;
+        border-radius: 8px;
+        clear: both;
+      }
+      
+      .user-message {
+        background-color: #e3f2fd;
+        border-left: 4px solid #2196f3;
+        margin-right: 20%;
+      }
+      
+      .assistant-message {
+        background-color: #f3e5f5;
+        border-left: 4px solid #9c27b0;
+        margin-left: 20%;
+      }
+      
+      .message-header {
+        font-weight: bold;
+        margin-bottom: 5px;
+        font-size: 14px;
+      }
+      
+      .message-content {
+        line-height: 1.4;
         white-space: pre-wrap;
-        font-family: monospace;
+      }
+      
+      .controls {
+        display: flex;
+        gap: 10px;
+        margin-bottom: 20px;
+      }
+      
+      .status-bar {
+        background-color: #e8f5e8;
+        border: 1px solid #c8e6c9;
+        padding: 10px;
+        border-radius: 5px;
+        margin-bottom: 20px;
+        font-weight: bold;
+      }
+      
+      .spinner {
+        display: none;
+        text-align: center;
+        margin: 20px 0;
+      }
+      
+      .spinner.active {
+        display: block;
+      }
+      
+      .btn-stop {
+        background-color: #f44336 !important;
+        border-color: #f44336 !important;
+        color: white !important;
+      }
+      
+      .btn-stop:hover {
+        background-color: #d32f2f !important;
+        border-color: #d32f2f !important;
+      }
+      
+      @keyframes spin {
+        0% { transform: rotate(0deg); }
+        100% { transform: rotate(360deg); }
       }
     "))
   ),
   
-  titlePanel("edgemodelr Advanced Streaming Chat"),
-  
-  sidebarLayout(
-    sidebarPanel(
-      width = 3,
-      selectInput("model", "Select Model", choices = NULL),
-      textAreaInput("user", "Your message", "", rows = 3),
-      actionButton("send", "Send", class = "btn-primary", width = "100%"),
-      br(), br(),
-      actionButton("clear", "Clear Chat", class = "btn-warning", width = "100%")
+  div(class = "main-container",
+    titlePanel("edgemodelr Advanced Streaming Chat"),
+    
+    # Status bar
+    div(id = "status-bar", class = "status-bar", "Loading models..."),
+    
+    # Model selection
+    div(class = "controls",
+      selectInput("model", "Select Model:", choices = NULL, width = "300px"),
+      actionButton("load_model", "Load Model", class = "btn btn-info")
     ),
     
-    mainPanel(
-      width = 9,
-      div(class = "status-box",
-          h5("Status:"),
-          textOutput("status")),
-      
-      div(id = "spinner", style = "display: none;", class = "text-center",
-          br(),
-          div(class = "spinner-border text-primary", role = "status"),
-          br(),
-          p("Generating response...")),
-      
-      h5("Conversation:"),
-      div(class = "chat-output", verbatimTextOutput("chat"))
+    # Chat display
+    div(id = "chat-display", class = "chat-container",
+      div(class = "message",
+        div(class = "message-content", "No messages yet. Select a model and start chatting!")
+      )
+    ),
+    
+    # Spinner
+    div(id = "spinner", class = "spinner",
+      tags$div(style = "border: 4px solid #f3f3f3; border-top: 4px solid #3498db; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin: 0 auto;"),
+      tags$p("Generating response...", style = "margin-top: 10px;")
+    ),
+    
+    # Input controls
+    div(class = "controls",
+      textAreaInput("user_input", NULL, "", width = "100%", rows = 3, 
+                   placeholder = "Type your message here..."),
+      actionButton("send", "Send", class = "btn btn-primary"),
+      actionButton("stop", "Stop", class = "btn btn-stop", style = "display: none;"),
+      actionButton("clear", "Clear Chat", class = "btn btn-secondary")
     )
-  )
+  ),
+  
+  # JavaScript for real-time updates
+  tags$script(HTML("
+    // Global variables for streaming
+    var isStreaming = false;
+    var streamingStopped = false;
+    
+    // Add custom message handler for streaming updates
+    Shiny.addCustomMessageHandler('streamUpdate', function(data) {
+      updateStreamingMessage(data.text);
+    });
+    
+    // Add custom message handler for chat updates
+    Shiny.addCustomMessageHandler('chatUpdate', function(data) {
+      document.getElementById('chat-display').innerHTML = data.html;
+      scrollToBottom();
+    });
+    
+    // Add custom message handler for status updates
+    Shiny.addCustomMessageHandler('statusUpdate', function(data) {
+      document.getElementById('status-bar').innerHTML = data.message;
+    });
+    
+    // Add custom message handler for UI state
+    Shiny.addCustomMessageHandler('uiState', function(data) {
+      var sendBtn = document.getElementById('send');
+      var stopBtn = document.getElementById('stop');
+      var spinner = document.getElementById('spinner');
+      
+      if (data.streaming) {
+        sendBtn.style.display = 'none';
+        stopBtn.style.display = 'inline-block';
+        spinner.classList.add('active');
+        isStreaming = true;
+      } else {
+        sendBtn.style.display = 'inline-block';
+        stopBtn.style.display = 'none';
+        spinner.classList.remove('active');
+        isStreaming = false;
+      }
+    });
+    
+    // Function to update streaming message
+    function updateStreamingMessage(text) {
+      var chatDisplay = document.getElementById('chat-display');
+      var messages = chatDisplay.querySelectorAll('.message');
+      var lastMessage = messages[messages.length - 1];
+      
+      // Always look for the last assistant message or create new one
+      var targetMessage = null;
+      
+      // Find the last assistant message
+      for (var i = messages.length - 1; i >= 0; i--) {
+        if (messages[i].classList.contains('assistant-message')) {
+          var contentDiv = messages[i].querySelector('.message-content');
+          // Check if this message is empty or has temporary content
+          if (contentDiv && (contentDiv.innerHTML.trim() === '' || contentDiv.innerHTML.indexOf('...') !== -1 || isStreaming)) {
+            targetMessage = messages[i];
+            break;
+          }
+        }
+      }
+      
+      if (targetMessage) {
+        // Update existing streaming message
+        var contentDiv = targetMessage.querySelector('.message-content');
+        if (contentDiv) {
+          contentDiv.innerHTML = text;
+        }
+      } else {
+        // Create new assistant message for streaming
+        var newMessage = document.createElement('div');
+        newMessage.className = 'message assistant-message';
+        newMessage.innerHTML = '<div class=\"message-header\">Assistant</div><div class=\"message-content\">' + text + '</div>';
+        chatDisplay.appendChild(newMessage);
+      }
+      
+      scrollToBottom();
+    }
+    
+    // Function to scroll to bottom
+    function scrollToBottom() {
+      var chatDisplay = document.getElementById('chat-display');
+      chatDisplay.scrollTop = chatDisplay.scrollHeight;
+    }
+  "))
 )
 
 server <- function(input, output, session) {
-  rv <- reactiveValues(
-    history = character(),
+  # Reactive values
+  values <- reactiveValues(
+    history = character(0),
     ctx = NULL,
-    status = "Loading models...",
     is_generating = FALSE,
-    streaming_response = "",
-    stream_complete = FALSE
+    current_response = "",
+    stop_requested = FALSE
   )
   
-  # Shared environment for streaming communication
-  stream_env <- new.env()
-  stream_env$current_response <- ""
-  stream_env$is_streaming <- FALSE
-  stream_env$stream_finished <- FALSE
-  
-  # Initialize models
+  # Initialize app
   observe({
     tryCatch({
       models <- edge_list_models()
       if (nrow(models) > 0) {
         updateSelectInput(session, "model", choices = setNames(models$name, models$name))
-        rv$status <- "Select a model to begin."
+        session$sendCustomMessage("statusUpdate", list(message = "Select a model to begin."))
       } else {
-        rv$status <- "No models available."
+        session$sendCustomMessage("statusUpdate", list(message = "No models available."))
       }
     }, error = function(e) {
-      rv$status <- paste("Error loading models:", e$message)
+      session$sendCustomMessage("statusUpdate", list(message = paste("Error loading models:", e$message)))
     })
   })
   
-  # Render outputs
-  output$chat <- renderText({
-    if (length(rv$history) == 0 && rv$streaming_response == "") {
-      "No messages yet. Select a model and start chatting!"
-    } else {
-      display_history <- rv$history
-      if (rv$streaming_response != "") {
-        display_history <- c(display_history, paste0("Assistant: ", rv$streaming_response))
-      }
-      paste(display_history, collapse = "\n\n")
-    }
-  })
-  
-  output$status <- renderText({ rv$status })
-  
-  # Model loading
-  observeEvent(input$model, {
+  # Load model
+  observeEvent(input$load_model, {
     req(input$model)
     
-    if (rv$is_generating) {
-      showNotification("Please wait for generation to complete.", type = "warning")
+    if (values$is_generating) {
+      showNotification("Please wait for current generation to complete.", type = "warning")
       return()
     }
     
-    rv$status <- paste("Loading model:", input$model, "...")
-    shinyjs::show("spinner")
+    session$sendCustomMessage("statusUpdate", list(message = paste("Loading model:", input$model, "...")))
     
-    if (!is.null(rv$ctx)) {
-      tryCatch(edge_free_model(rv$ctx), error = function(e) {})
-      rv$ctx <- NULL
+    # Free existing model
+    if (!is.null(values$ctx)) {
+      tryCatch(edge_free_model(values$ctx), error = function(e) {})
+      values$ctx <- NULL
     }
     
+    # Load new model
     tryCatch({
       setup <- edge_quick_setup(input$model)
-      rv$ctx <- setup$context
-      rv$status <- paste("Model", input$model, "ready.")
-    }, error = function(e) {
-      rv$status <- paste("Error loading model:", e$message)
-    })
-    
-    shinyjs::hide("spinner")
-  })
-  
-  # Streaming timer - checks for updates every 100ms
-  streaming_timer <- reactiveTimer(100)
-  
-  observe({
-    streaming_timer()
-    
-    if (stream_env$is_streaming) {
-      rv$streaming_response <- stream_env$current_response
+      values$ctx <- setup$context
       
-      if (stream_env$stream_finished) {
-        # Stream completed
-        rv$history <- c(rv$history, paste0("Assistant: ", stream_env$current_response))
-        rv$streaming_response <- ""
-        rv$is_generating <- FALSE
-        rv$status <- "Ready."
-        shinyjs::hide("spinner")
-        
-        # Reset stream environment
-        stream_env$is_streaming <- FALSE
-        stream_env$stream_finished <- FALSE
-        stream_env$current_response <- ""
+      if (!is.null(values$ctx)) {
+        session$sendCustomMessage("statusUpdate", list(message = paste("Model", input$model, "loaded successfully.")))
+      } else {
+        session$sendCustomMessage("statusUpdate", list(message = "Model downloaded but not loaded. Check llama.cpp installation."))
       }
-    }
+    }, error = function(e) {
+      session$sendCustomMessage("statusUpdate", list(message = paste("Error loading model:", e$message)))
+    })
   })
   
   # Send message
   observeEvent(input$send, {
-    req(input$user, rv$ctx)
+    req(input$user_input, values$ctx)
     
-    if (rv$is_generating) {
-      showNotification("Please wait for generation to complete.", type = "warning")
+    if (values$is_generating) {
+      showNotification("Please wait for current generation to complete.", type = "warning")
       return()
     }
     
-    if (trimws(input$user) == "") {
+    if (trimws(input$user_input) == "") {
       showNotification("Please enter a message.", type = "warning")
       return()
     }
     
-    user_message <- trimws(input$user)
-    rv$history <- c(rv$history, paste0("You: ", user_message))
-    rv$streaming_response <- ""
+    # Add user message to history
+    user_msg <- trimws(input$user_input)
+    values$history <- c(values$history, paste("You:", user_msg))
     
-    updateTextAreaInput(session, "user", value = "")
-    shinyjs::show("spinner")
-    rv$status <- "Generating response..."
-    rv$is_generating <- TRUE
+    # Clear input
+    updateTextAreaInput(session, "user_input", value = "")
     
-    # Start streaming in background
-    stream_env$current_response <- ""
-    stream_env$is_streaming <- TRUE
-    stream_env$stream_finished <- FALSE
+    # Update UI state
+    values$is_generating <- TRUE
+    values$stop_requested <- FALSE
+    values$current_response <- ""
+    session$sendCustomMessage("uiState", list(streaming = TRUE))
+    session$sendCustomMessage("statusUpdate", list(message = "Generating response..."))
     
-    # Capture context outside
-    ctx_copy <- rv$ctx
+    # Update chat display with user message and prepare for streaming
+    updateChatDisplay(values$history, "...")  # Add placeholder for assistant response
     
     # Build prompt
-    prompt_parts <- rv$history
-    if (length(prompt_parts) > 6) {
-      prompt_parts <- tail(prompt_parts, 6)
-    }
-    full_prompt <- paste(prompt_parts, collapse = "\n")
+    recent_history <- if (length(values$history) > 6) tail(values$history, 6) else values$history
+    prompt <- paste(recent_history, collapse = "\n")
     
-    # Run streaming in a future/background process
+    # Start streaming with a local stop flag
+    local_ctx <- values$ctx
+    stop_flag <- FALSE
+    
+    # Create observer to monitor stop requests
+    stop_observer <- observe({
+      if (values$stop_requested) {
+        stop_flag <<- TRUE
+        stop_observer$destroy()
+      }
+    })
+    
     tryCatch({
-      edge_stream_completion(ctx_copy,
-        prompt = full_prompt,
+      # Start streaming
+      result <- edge_stream_completion(
+        ctx = local_ctx,
+        prompt = prompt,
         n_predict = 200,
         temperature = 0.8,
         callback = function(data) {
-          if (!data$is_final) {
-            stream_env$current_response <- paste0(stream_env$current_response, data$token)
-            return(TRUE)
-          } else {
-            stream_env$stream_finished <- TRUE
-            return(TRUE)
+          # Check if stop was requested
+          if (stop_flag) {
+            return(FALSE)  # Stop streaming
           }
+          
+          if (!data$is_final && !is.null(data$token)) {
+            # Update current response
+            values$current_response <- paste0(values$current_response, data$token)
+            
+            # Send real-time update to JavaScript
+            session$sendCustomMessage("streamUpdate", list(text = values$current_response))
+            
+            return(TRUE)  # Continue streaming
+          }
+          
+          return(TRUE)
         }
       )
+      
+      # Clean up observer
+      if (!stop_observer$destroyed) {
+        stop_observer$destroy()
+      }
+      
+      # Handle completion
+      final_response <- values$current_response
+      if (final_response == "" && !is.null(result$full_response)) {
+        # Fallback if streaming didn't capture text
+        final_response <- sub(prompt, "", result$full_response, fixed = TRUE)
+        final_response <- trimws(sub("^Assistant:", "", final_response))
+      }
+      
+      # Add assistant response to history
+      if (final_response != "") {
+        values$history <- c(values$history, paste("Assistant:", final_response))
+      }
+      
+      # Update final state
+      values$is_generating <- FALSE
+      values$current_response <- ""
+      session$sendCustomMessage("uiState", list(streaming = FALSE))
+      
+      if (values$stop_requested) {
+        session$sendCustomMessage("statusUpdate", list(message = "Generation stopped."))
+      } else {
+        session$sendCustomMessage("statusUpdate", list(message = "Ready."))
+      }
+      
+      # Update chat display with final history
+      updateChatDisplay(values$history, "")
+      
     }, error = function(e) {
-      stream_env$is_streaming <- FALSE
-      stream_env$stream_finished <- TRUE
-      rv$status <- paste("Error:", e$message)
-      rv$is_generating <- FALSE
-      shinyjs::hide("spinner")
+      # Clean up observer on error
+      if (exists("stop_observer") && !stop_observer$destroyed) {
+        stop_observer$destroy()
+      }
+      
+      # Handle errors
+      values$is_generating <- FALSE
+      values$current_response <- ""
+      session$sendCustomMessage("uiState", list(streaming = FALSE))
+      session$sendCustomMessage("statusUpdate", list(message = paste("Error:", e$message)))
+      showNotification(paste("Error:", e$message), type = "error")
     })
+  })
+  
+  # Stop streaming
+  observeEvent(input$stop, {
+    if (values$is_generating) {
+      values$stop_requested <- TRUE
+      session$sendCustomMessage("statusUpdate", list(message = "Stopping generation..."))
+    }
   })
   
   # Clear chat
   observeEvent(input$clear, {
-    if (rv$is_generating) {
-      showNotification("Cannot clear while generating.", type = "warning")
+    if (values$is_generating) {
+      showNotification("Cannot clear chat while generating.", type = "warning")
       return()
     }
     
-    rv$history <- character()
-    rv$streaming_response <- ""
-    rv$status <- if (is.null(rv$ctx)) "Select a model to begin." else "Chat cleared."
+    values$history <- character(0)
+    values$current_response <- ""
+    
+    # Reset chat display
+    session$sendCustomMessage("chatUpdate", list(
+      html = '<div class="message"><div class="message-content">No messages yet. Select a model and start chatting!</div></div>'
+    ))
+    
+    session$sendCustomMessage("statusUpdate", list(message = "Chat cleared."))
   })
   
-  # Cleanup
+  # Helper function to update chat display
+  updateChatDisplay <- function(history, streaming_text = "") {
+    if (length(history) == 0 && streaming_text == "") {
+      html <- '<div class="message"><div class="message-content">No messages yet. Select a model and start chatting!</div></div>'
+    } else {
+      html <- ""
+      
+      # Process history
+      for (msg in history) {
+        if (startsWith(msg, "You:")) {
+          content <- sub("^You:", "", msg)
+          html <- paste0(html, '<div class="message user-message">',
+                        '<div class="message-header">You</div>',
+                        '<div class="message-content">', htmlEscape(content), '</div>',
+                        '</div>')
+        } else if (startsWith(msg, "Assistant:")) {
+          content <- sub("^Assistant:", "", msg)
+          html <- paste0(html, '<div class="message assistant-message">',
+                        '<div class="message-header">Assistant</div>',
+                        '<div class="message-content">', htmlEscape(content), '</div>',
+                        '</div>')
+        }
+      }
+      
+      # Add streaming text if present
+      if (streaming_text != "") {
+        html <- paste0(html, '<div class="message assistant-message">',
+                      '<div class="message-header">Assistant</div>',
+                      '<div class="message-content">', htmlEscape(streaming_text), '</div>',
+                      '</div>')
+      }
+    }
+    
+    session$sendCustomMessage("chatUpdate", list(html = html))
+  }
+  
+  # Cleanup on session end
   session$onSessionEnded(function() {
-    if (!is.null(rv$ctx)) {
-      tryCatch(edge_free_model(rv$ctx), error = function(e) {})
+    if (!is.null(values$ctx)) {
+      tryCatch(edge_free_model(values$ctx), error = function(e) {})
     }
   })
 }
 
-shinyApp(ui, server)
+# Helper function for HTML escaping
+htmlEscape <- function(text) {
+  text <- gsub("&", "&amp;", text)
+  text <- gsub("<", "&lt;", text)
+  text <- gsub(">", "&gt;", text)
+  text <- gsub('"', "&quot;", text)
+  text <- gsub("'", "&#x27;", text)
+  return(text)
+}
+
+shinyApp(ui = ui, server = server)
