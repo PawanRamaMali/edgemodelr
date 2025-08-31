@@ -239,9 +239,12 @@ server <- function(input, output, session) {
     history = character(0),
     ctx = NULL,
     is_generating = FALSE,
-    current_response = "",
-    stop_requested = FALSE
+    current_response = ""
   )
+  
+  # Global stop flag that callback can access reliably
+  session_env <- new.env()
+  session_env$stop_streaming <- FALSE
   
   # Initialize app
   observe({
@@ -313,7 +316,7 @@ server <- function(input, output, session) {
     
     # Update UI state
     values$is_generating <- TRUE
-    values$stop_requested <- FALSE
+    session_env$stop_streaming <- FALSE
     values$current_response <- ""
     session$sendCustomMessage("uiState", list(streaming = TRUE))
     session$sendCustomMessage("statusUpdate", list(message = "Generating response..."))
@@ -337,19 +340,8 @@ server <- function(input, output, session) {
       prompt <- paste0(system_prompt, "\nAssistant:")
     }
     
-    # Start streaming with a local stop flag
+    # Start streaming - store context locally
     local_ctx <- values$ctx
-    stop_flag <- FALSE
-    
-    # Create observer to monitor stop requests
-    stop_observer <- observe({
-      if (!is.null(values$stop_requested) && isTRUE(values$stop_requested)) {
-        stop_flag <<- TRUE
-        if (!is.null(stop_observer)) {
-          stop_observer$destroy()
-        }
-      }
-    })
     
     tryCatch({
       # Start streaming
@@ -359,8 +351,8 @@ server <- function(input, output, session) {
         n_predict = 200,
         temperature = 0.8,
         callback = function(data) {
-          # Check if stop was requested
-          if (stop_flag) {
+          # Check if stop was requested (simple environment check)
+          if (session_env$stop_streaming) {
             return(FALSE)  # Stop streaming
           }
           
@@ -382,15 +374,6 @@ server <- function(input, output, session) {
           return(TRUE)
         }
       )
-      
-      # Clean up observer
-      tryCatch({
-        if (!is.null(stop_observer) && !stop_observer$destroyed) {
-          stop_observer$destroy()
-        }
-      }, error = function(e) {
-        # Ignore cleanup errors
-      })
       
       # Handle completion
       final_response <- values$current_response
@@ -425,7 +408,7 @@ server <- function(input, output, session) {
       values$current_response <- ""
       session$sendCustomMessage("uiState", list(streaming = FALSE))
       
-      if (values$stop_requested) {
+      if (session_env$stop_streaming) {
         session$sendCustomMessage("statusUpdate", list(message = "Generation stopped."))
       } else {
         session$sendCustomMessage("statusUpdate", list(message = "Ready."))
@@ -435,15 +418,6 @@ server <- function(input, output, session) {
       updateChatDisplay(values$history, "")
       
     }, error = function(e) {
-      # Clean up observer on error
-      tryCatch({
-        if (exists("stop_observer") && !is.null(stop_observer) && !stop_observer$destroyed) {
-          stop_observer$destroy()
-        }
-      }, error = function(cleanup_error) {
-        # Ignore cleanup errors
-      })
-      
       # Handle errors
       values$is_generating <- FALSE
       values$current_response <- ""
@@ -456,8 +430,9 @@ server <- function(input, output, session) {
   # Stop streaming
   observeEvent(input$stop, {
     if (values$is_generating) {
-      values$stop_requested <- TRUE
+      session_env$stop_streaming <- TRUE
       session$sendCustomMessage("statusUpdate", list(message = "Stopping generation..."))
+      showNotification("Stopping generation...", type = "message")
     }
   })
   
@@ -470,6 +445,7 @@ server <- function(input, output, session) {
     
     values$history <- character(0)
     values$current_response <- ""
+    session_env$stop_streaming <- FALSE
     
     # Reset chat display
     session$sendCustomMessage("chatUpdate", list(
