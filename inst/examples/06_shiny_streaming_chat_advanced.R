@@ -321,9 +321,21 @@ server <- function(input, output, session) {
     # Update chat display with user message and prepare for streaming
     updateChatDisplay(values$history, "...")  # Add placeholder for assistant response
     
-    # Build prompt
+    # Build prompt with better formatting
     recent_history <- if (length(values$history) > 6) tail(values$history, 6) else values$history
-    prompt <- paste(recent_history, collapse = "\n")
+    
+    # Format prompt to encourage direct responses, not creative writing
+    system_prompt <- "You are a helpful assistant. Give direct, concise answers. Do not write stories, scripts, or dialogue format. Answer questions clearly and helpfully."
+    
+    # Add system prompt and format conversation properly
+    if (length(recent_history) > 0) {
+      formatted_history <- c(system_prompt, recent_history)
+      prompt <- paste(formatted_history, collapse = "\n")
+      # Ensure we end with "Assistant:" to guide the response format
+      prompt <- paste0(prompt, "\nAssistant:")
+    } else {
+      prompt <- paste0(system_prompt, "\nAssistant:")
+    }
     
     # Start streaming with a local stop flag
     local_ctx <- values$ctx
@@ -331,9 +343,11 @@ server <- function(input, output, session) {
     
     # Create observer to monitor stop requests
     stop_observer <- observe({
-      if (values$stop_requested) {
+      if (!is.null(values$stop_requested) && isTRUE(values$stop_requested)) {
         stop_flag <<- TRUE
-        stop_observer$destroy()
+        if (!is.null(stop_observer)) {
+          stop_observer$destroy()
+        }
       }
     })
     
@@ -354,8 +368,13 @@ server <- function(input, output, session) {
             # Update current response
             values$current_response <- paste0(values$current_response, data$token)
             
+            # Clean up the response for display (remove dialogue formatting)
+            display_text <- values$current_response
+            display_text <- gsub("^(Robot:|Customer:|Scene \\d+:|\\(.*\\):?)", "", display_text)
+            display_text <- trimws(display_text)
+            
             # Send real-time update to JavaScript
-            session$sendCustomMessage("streamUpdate", list(text = values$current_response))
+            session$sendCustomMessage("streamUpdate", list(text = display_text))
             
             return(TRUE)  # Continue streaming
           }
@@ -365,17 +384,36 @@ server <- function(input, output, session) {
       )
       
       # Clean up observer
-      if (!stop_observer$destroyed) {
-        stop_observer$destroy()
-      }
+      tryCatch({
+        if (!is.null(stop_observer) && !stop_observer$destroyed) {
+          stop_observer$destroy()
+        }
+      }, error = function(e) {
+        # Ignore cleanup errors
+      })
       
       # Handle completion
       final_response <- values$current_response
       if (final_response == "" && !is.null(result$full_response)) {
         # Fallback if streaming didn't capture text
-        final_response <- sub(prompt, "", result$full_response, fixed = TRUE)
-        final_response <- trimws(sub("^Assistant:", "", final_response))
+        final_response <- result$full_response
+        
+        # Remove the prompt part from the response
+        if (length(recent_history) > 0) {
+          # Find the last "Assistant:" and take everything after it
+          parts <- strsplit(final_response, "Assistant:")[[1]]
+          if (length(parts) > 1) {
+            final_response <- parts[length(parts)]
+          }
+        }
+        final_response <- trimws(final_response)
       }
+      
+      # Clean up any remaining formatting issues
+      final_response <- trimws(final_response)
+      # Remove any leading dialogue markers
+      final_response <- gsub("^(Robot:|Customer:|Scene \\d+:|\\(.*\\):?)", "", final_response)
+      final_response <- trimws(final_response)
       
       # Add assistant response to history
       if (final_response != "") {
@@ -398,9 +436,13 @@ server <- function(input, output, session) {
       
     }, error = function(e) {
       # Clean up observer on error
-      if (exists("stop_observer") && !stop_observer$destroyed) {
-        stop_observer$destroy()
-      }
+      tryCatch({
+        if (exists("stop_observer") && !is.null(stop_observer) && !stop_observer$destroyed) {
+          stop_observer$destroy()
+        }
+      }, error = function(cleanup_error) {
+        # Ignore cleanup errors
+      })
       
       # Handle errors
       values$is_generating <- FALSE
