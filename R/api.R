@@ -194,13 +194,42 @@ edge_download_model <- function(model_id, filename, cache_dir = NULL, force_down
   
   # Download the file
   tryCatch({
-    utils::download.file(download_url, local_path, mode = "wb", method = "auto")
-    cat("Download completed successfully!\n")
-    cat("Model size:", round(file.info(local_path)$size / (1024^2), 1), "MB\n")
-    return(local_path)
+    # Try different download methods
+    download_success <- FALSE
+    methods_to_try <- c("auto", "curl", "wget", "wininet")
+    
+    for (method in methods_to_try) {
+      tryCatch({
+        utils::download.file(download_url, local_path, mode = "wb", method = method, quiet = FALSE)
+        if (file.exists(local_path) && file.info(local_path)$size > 1000) {  # At least 1KB
+          download_success <- TRUE
+          break
+        }
+      }, error = function(e) {
+        cat("Download method", method, "failed:", e$message, "\n")
+      })
+    }
+    
+    if (download_success) {
+      cat("Download completed successfully!\n")
+      cat("Model size:", round(file.info(local_path)$size / (1024^2), 1), "MB\n")
+      return(local_path)
+    } else {
+      stop("All download methods failed")
+    }
+    
   }, error = function(e) {
-    stop("Failed to download model: ", e$message, 
-         "\n\nTry downloading manually with:\nwget ", download_url)
+    # Clean up partial download
+    if (file.exists(local_path)) {
+      file.remove(local_path)
+    }
+    
+    cat("Download failed. Possible solutions:\n")
+    cat("1. Check your internet connection\n")
+    cat("2. Try downloading manually:\n")
+    cat("   curl -L -o '", local_path, "' '", download_url, "'\n")
+    cat("3. Or use a different model from edge_list_models()\n")
+    stop("Failed to download model: ", e$message)
   })
 }
 
@@ -213,46 +242,35 @@ edge_list_models <- function() {
     name = c(
       "TinyLlama-1.1B", "TinyLlama-OpenOrca", 
       "llama3.2-1b", "llama3.2-3b",
-      "phi3.5-mini", "qwen2.5-1.5b", "qwen2.5-3b", "gemma2-2b",
-      "Llama-2-7B", "CodeLlama-7B", "Mistral-7B"
+      "phi3-mini", "qwen2.5-1.5b", "gemma2-2b"
     ),
     size = c(
       "~700MB", "~700MB",
       "~800MB", "~2GB", 
-      "~2.4GB", "~1GB", "~2GB", "~1.6GB",
-      "~3.8GB", "~3.8GB", "~4.1GB"
+      "~2.4GB", "~1GB", "~1.6GB"
     ),
     model_id = c(
       "TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF",
       "TheBloke/TinyLlama-1.1B-1T-OpenOrca-GGUF",
       "bartowski/Llama-3.2-1B-Instruct-GGUF",
       "bartowski/Llama-3.2-3B-Instruct-GGUF", 
-      "bartowski/Phi-3.5-mini-instruct-GGUF",
-      "bartowski/Qwen2.5-1.5B-Instruct-GGUF",
-      "bartowski/Qwen2.5-3B-Instruct-GGUF",
-      "bartowski/gemma-2-2b-it-GGUF",
-      "TheBloke/Llama-2-7B-Chat-GGUF", 
-      "TheBloke/CodeLlama-7B-Instruct-GGUF",
-      "TheBloke/Mistral-7B-Instruct-v0.1-GGUF"
+      "microsoft/Phi-3-mini-4k-instruct-gguf",
+      "Qwen/Qwen2.5-1.5B-Instruct-GGUF",
+      "google/gemma-2-2b-it-gguf"
     ),
     filename = c(
       "tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf",
       "tinyllama-1.1b-1t-openorca.Q4_K_M.gguf",
       "Llama-3.2-1B-Instruct-Q4_K_M.gguf",
       "Llama-3.2-3B-Instruct-Q4_K_M.gguf",
-      "Phi-3.5-mini-instruct-Q4_K_M.gguf",
-      "Qwen2.5-1.5B-Instruct-Q4_K_M.gguf", 
-      "Qwen2.5-3B-Instruct-Q4_K_M.gguf",
-      "gemma-2-2b-it-Q4_K_M.gguf",
-      "llama-2-7b-chat.Q4_K_M.gguf",
-      "codellama-7b-instruct.Q4_K_M.gguf", 
-      "mistral-7b-instruct-v0.1.Q4_K_M.gguf"
+      "Phi-3-mini-4k-instruct-q4.gguf",
+      "qwen2.5-1.5b-instruct-q4_k_m.gguf", 
+      "gemma-2-2b-it-q4_k_m.gguf"
     ),
     use_case = c(
       "Testing", "Better Chat", 
       "2024 Mobile", "2024 General", 
-      "2024 Reasoning", "2024 Multilingual", "2024 Quality", "2024 Gemma",
-      "General", "Code", "Quality"
+      "2024 Reasoning", "2024 Multilingual", "2024 Gemma"
     ),
     stringsAsFactors = FALSE
   )
