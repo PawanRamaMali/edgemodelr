@@ -23,13 +23,11 @@
 #' @export
 edge_load_model <- function(model_path, n_ctx = 2048L, n_gpu_layers = 0L) {
   if (!file.exists(model_path)) {
-    # Provide helpful suggestions for missing models
-    cat("Model file not found:", model_path, "\n")
-    cat("Try these options:\n")
-    cat("   1. Download a model: edge_download_model('TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF', 'tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf')\n")
-    cat("   2. Quick setup: edge_quick_setup('TinyLlama-1.1B')\n")
-    cat("   3. List models: edge_list_models()\n")
-    stop("Model file does not exist: ", model_path)
+    stop("Model file not found: ", model_path, "\n",
+         "Try these options:\n",
+         "  1. Download a model: edge_download_model('TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF', 'tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf')\n",
+         "  2. Quick setup: edge_quick_setup('TinyLlama-1.1B')\n",
+         "  3. List models: edge_list_models()")
   }
   
   if (!grepl("\\.gguf$", model_path, ignore.case = TRUE)) {
@@ -45,10 +43,10 @@ edge_load_model <- function(model_path, n_ctx = 2048L, n_gpu_layers = 0L) {
   }, error = function(e) {
     # Provide more context about what went wrong
     if (grepl("llama_load_model_from_file", e$message)) {
-      cat("\nModel found but llama.cpp not available for loading.\n")
-      cat("Install llama.cpp system-wide, then:\n")
-      cat("   devtools::load_all()  # Rebuild package\n")
-      cat("   ctx <- edge_load_model('", basename(model_path), "')\n")
+      stop("Model found but llama.cpp not available for loading.\n",
+           "Install llama.cpp system-wide, then:\n",
+           "  devtools::load_all()  # Rebuild package\n",
+           "  ctx <- edge_load_model('", basename(model_path), "')")
     }
     stop(e$message)
   })
@@ -172,7 +170,7 @@ edge_download_model <- function(model_id, filename, cache_dir = NULL, force_down
   # Create cache directory if it doesn't exist
   if (!dir.exists(cache_dir)) {
     dir.create(cache_dir, recursive = TRUE)
-    cat("Created cache directory:", cache_dir, "\n")
+    message("Created cache directory: ", cache_dir)
   }
   
   # Construct local file path
@@ -180,7 +178,7 @@ edge_download_model <- function(model_id, filename, cache_dir = NULL, force_down
   
   # Check if file already exists
   if (file.exists(local_path) && !force_download) {
-    cat("Model already exists:", local_path, "\n")
+    message("Model already exists: ", local_path)
     return(local_path)
   }
   
@@ -188,9 +186,9 @@ edge_download_model <- function(model_id, filename, cache_dir = NULL, force_down
   base_url <- "https://huggingface.co"
   download_url <- file.path(base_url, model_id, "resolve", "main", filename)
   
-  cat("Downloading model...\n")
-  cat("From:", download_url, "\n")
-  cat("To:  ", local_path, "\n")
+  message("Downloading model...")
+  message("From: ", download_url)
+  message("To: ", local_path)
   
   # Download the file
   tryCatch({
@@ -206,13 +204,13 @@ edge_download_model <- function(model_id, filename, cache_dir = NULL, force_down
           break
         }
       }, error = function(e) {
-        cat("Download method", method, "failed:", e$message, "\n")
+        # Silently try next method
       })
     }
     
     if (download_success) {
-      cat("Download completed successfully!\n")
-      cat("Model size:", round(file.info(local_path)$size / (1024^2), 1), "MB\n")
+      message("Download completed successfully!")
+      message("Model size: ", round(file.info(local_path)$size / (1024^2), 1), "MB")
       return(local_path)
     } else {
       stop("All download methods failed")
@@ -224,12 +222,12 @@ edge_download_model <- function(model_id, filename, cache_dir = NULL, force_down
       file.remove(local_path)
     }
     
-    cat("Download failed. Possible solutions:\n")
-    cat("1. Check your internet connection\n")
-    cat("2. Try downloading manually:\n")
-    cat("   curl -L -o '", local_path, "' '", download_url, "'\n")
-    cat("3. Or use a different model from edge_list_models()\n")
-    stop("Failed to download model: ", e$message)
+    stop("Failed to download model: ", e$message, "\n",
+         "Possible solutions:\n",
+         "1. Check your internet connection\n",
+         "2. Try downloading manually:\n",
+         "   curl -L -o '", local_path, "' '", download_url, "'\n",
+         "3. Or use a different model from edge_list_models()")
   })
 }
 
@@ -317,7 +315,7 @@ edge_quick_setup <- function(model_name, cache_dir = NULL) {
          paste(models$name, collapse = ", "))
   }
   
-  cat("Setting up", model_name, "...\n")
+  message("Setting up ", model_name, "...")
   
   # Download model
   model_path <- edge_download_model(
@@ -330,9 +328,9 @@ edge_quick_setup <- function(model_name, cache_dir = NULL) {
   ctx <- tryCatch({
     edge_load_model(model_path)
   }, error = function(e) {
-    cat("Model downloaded but llama.cpp not available for inference.\n")
-    cat("   Model path:", model_path, "\n")
-    cat("   Install llama.cpp system-wide to use for inference.\n")
+    warning("Model downloaded but llama.cpp not available for inference.\n",
+            "Model path: ", model_path, "\n",
+            "Install llama.cpp system-wide to use for inference.")
     NULL
   })
   
@@ -425,18 +423,19 @@ edge_chat_stream <- function(ctx, system_prompt = NULL, max_history = 10, n_pred
   if (!is.null(system_prompt)) {
     conversation_history <- append(conversation_history, 
                                  list(list(role = "system", content = system_prompt)))
-    cat("System prompt set.\n")
+    message("System prompt set.")
   }
   
-  cat("Chat started! Type 'quit', 'exit', or 'bye' to end.\n")
-  cat("Responses will stream in real-time.\n\n")
+  message("Chat started! Type 'quit', 'exit', or 'bye' to end.")
+  message("Responses will stream in real-time.")
+  cat("\n")
   
   while (TRUE) {
     user_input <- readline("You: ")
     
     # Check for exit commands
     if (tolower(trimws(user_input)) %in% c("quit", "exit", "bye", "")) {
-      cat("Chat ended!\n")
+      message("Chat ended!")
       break
     }
     
@@ -449,7 +448,7 @@ edge_chat_stream <- function(ctx, system_prompt = NULL, max_history = 10, n_pred
     
     # Stream the response
     cat("Assistant: ")
-    flush.console()
+    utils::flush.console()
     
     current_response <- ""
     
@@ -457,7 +456,7 @@ edge_chat_stream <- function(ctx, system_prompt = NULL, max_history = 10, n_pred
       callback = function(data) {
         if (!data$is_final) {
           cat(data$token)
-          flush.console()
+          utils::flush.console()
           return(TRUE)  # Continue generation
         } else {
           cat("\n\n")
