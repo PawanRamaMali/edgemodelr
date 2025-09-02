@@ -8,6 +8,9 @@
 
 #include <R.h>
 #include <Rinternals.h>
+#include <stdio.h>
+#include <stdarg.h>
+#include <string.h>
 
 // Protect against R macros interfering with C++ standard library
 #ifdef __cplusplus
@@ -16,10 +19,16 @@
 #endif
 #endif
 
-// Create R-compatible output functions
+// Global variable to control console output suppression
+extern bool g_suppress_console_output;
+
+// Create R-compatible output functions that can be suppressed
 static inline void r_fputs(const char* text, FILE* stream) {
     if (stream == stderr || stream == stdout) {
-        Rprintf("%s", text);
+        // Suppress console output for CRAN compliance
+        if (!g_suppress_console_output) {
+            Rprintf("%s", text);
+        }
     } else {
         /* Use original fputs for file streams */
         fputs(text, stream);
@@ -32,11 +41,16 @@ static inline int r_fprintf(FILE* stream, const char* format, ...) {
     int result = 0;
     
     if (stream == stderr || stream == stdout) {
-        /* Use Rprintf for console output */
-        char buffer[4096];
-        result = vsnprintf(buffer, sizeof(buffer), format, args);
-        if (result > 0) {
-            Rprintf("%s", buffer);
+        /* Suppress console output for CRAN compliance */
+        if (!g_suppress_console_output) {
+            char buffer[4096];
+            result = vsnprintf(buffer, sizeof(buffer), format, args);
+            if (result > 0) {
+                Rprintf("%s", buffer);
+            }
+        } else {
+            // Still calculate result for compatibility but don't output
+            result = vsnprintf(NULL, 0, format, args);
         }
     } else {
         /* Use original fprintf for file streams */
@@ -50,11 +64,17 @@ static inline int r_fprintf(FILE* stream, const char* format, ...) {
 static inline int r_printf(const char* format, ...) {
     va_list args;
     va_start(args, format);
+    int result = 0;
     
-    char buffer[4096];
-    int result = vsnprintf(buffer, sizeof(buffer), format, args);
-    if (result > 0) {
-        Rprintf("%s", buffer);
+    if (!g_suppress_console_output) {
+        char buffer[4096];
+        result = vsnprintf(buffer, sizeof(buffer), format, args);
+        if (result > 0) {
+            Rprintf("%s", buffer);
+        }
+    } else {
+        // Still calculate result for compatibility but don't output
+        result = vsnprintf(NULL, 0, format, args);
     }
     
     va_end(args);
@@ -62,13 +82,17 @@ static inline int r_printf(const char* format, ...) {
 }
 
 static inline int r_putchar(int c) {
-    char temp[2] = {(char)c, '\0'};
-    Rprintf("%s", temp);
+    if (!g_suppress_console_output) {
+        char temp[2] = {(char)c, '\0'};
+        Rprintf("%s", temp);
+    }
     return c;
 }
 
 static inline int r_puts(const char* str) {
-    Rprintf("%s\n", str);
+    if (!g_suppress_console_output) {
+        Rprintf("%s\n", str);
+    }
     return strlen(str) + 1; /* Return positive value for success */
 }
 

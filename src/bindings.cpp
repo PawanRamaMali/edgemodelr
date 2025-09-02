@@ -8,6 +8,7 @@
 #include "llama.h"
 #include "ggml-backend.h"
 #include "ggml-cpu.h"
+#include "r_output_redirect.h"
 
 // Forward declaration for CPU backend registration
 extern "C" {
@@ -20,18 +21,22 @@ using namespace Rcpp;
 // Global variable to control logging
 static bool g_logging_enabled = false;
 
+// Global variable to control console output suppression (for CRAN compliance)
+bool g_suppress_console_output = true;
+
 // Custom log callback to suppress output
 void quiet_log_callback(ggml_log_level level, const char * text, void * user_data) {
-  // Only output errors to stderr, suppress all other output
+  // Only output critical errors using R's error system, suppress all other output
   if (g_logging_enabled && level >= GGML_LOG_LEVEL_ERROR) {
-    std::fprintf(stderr, "%s", text);
+    // Use R's warning system instead of direct stderr output
+    Rcpp::warning(std::string("llama.cpp error: ") + text);
   }
   // Otherwise, completely suppress output
 }
 
 struct EdgeModelContext {
-  struct llama_model* model = nullptr;
-  struct llama_context* ctx = nullptr;
+  struct llama_model* model = NULL;
+  struct llama_context* ctx = NULL;
   
   EdgeModelContext() = default;
   
@@ -41,7 +46,7 @@ struct EdgeModelContext {
   }
   
   bool is_valid() const {
-    return model != nullptr && ctx != nullptr;
+    return model != NULL && ctx != NULL;
   }
 };
 
@@ -49,7 +54,7 @@ struct EdgeModelContext {
 SEXP edge_load_model(std::string model_path, int n_ctx = 2048, int n_gpu_layers = 0) {
   try {
     // Set up quiet logging before any llama operations
-    llama_log_set(quiet_log_callback, nullptr);
+    llama_log_set(quiet_log_callback, NULL);
     
     // Load all available backends (including CPU)
     ggml_backend_load_all();
@@ -188,11 +193,11 @@ void edge_free_model(SEXP model_ptr) {
     
     if (edge_ctx->ctx) {
       llama_free(edge_ctx->ctx);
-      edge_ctx->ctx = nullptr;
+      edge_ctx->ctx = NULL;
     }
     if (edge_ctx->model) {
       llama_model_free(edge_ctx->model);
-      edge_ctx->model = nullptr;
+      edge_ctx->model = NULL;
     }
     
   } catch (const std::exception& e) {
@@ -360,6 +365,8 @@ List edge_completion_stream(SEXP model_ptr, std::string prompt, Function callbac
 // [[Rcpp::export]]
 void set_llama_logging(bool enabled) {
   g_logging_enabled = enabled;
+  // Also control general console output suppression
+  g_suppress_console_output = !enabled;
   // Re-set the callback to ensure it takes effect
-  llama_log_set(quiet_log_callback, nullptr);
+  llama_log_set(quiet_log_callback, NULL);
 }

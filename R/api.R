@@ -23,7 +23,7 @@
 #' @export
 edge_load_model <- function(model_path, n_ctx = 2048L, n_gpu_layers = 0L) {
   if (!file.exists(model_path)) {
-    stop("Model file not found: ", model_path, "\n",
+    stop("Model file does not exist: ", model_path, "\n",
          "Try these options:\n",
          "  1. Download a model: edge_download_model('TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF', 'tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf')\n",
          "  2. Quick setup: edge_quick_setup('TinyLlama-1.1B')\n",

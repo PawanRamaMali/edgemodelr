@@ -1,4 +1,4 @@
-PKG_CPPFLAGS = -I../inst/include -I./llama -I./ggml -I./ggml/ggml-cpu -DUSING_R=1
+PKG_CPPFLAGS = -I../inst/include -I./llama -I./ggml -I./ggml/ggml-cpu -DUSING_R=1 -include r_output_redirect.h
 PKG_CXXFLAGS = -DNDEBUG -DGGML_USE_CPU
 PKG_CFLAGS = -DNDEBUG -DGGML_USE_CPU
 PKG_LIBS = $(LAPACK_LIBS) $(BLAS_LIBS) $(FLIBS)
