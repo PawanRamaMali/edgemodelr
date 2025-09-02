@@ -19,7 +19,8 @@ Depends: R (>= 4.0)
 LinkingTo: Rcpp
 Imports:
     Rcpp (>= 1.0.0),
-    utils
+    utils,
+    tools
 Suggests: 
     testthat (>= 3.0.0),
     knitr,

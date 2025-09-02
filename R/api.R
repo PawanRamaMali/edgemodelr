@@ -7,8 +7,8 @@
 #' 
 #' @examples
 #' \donttest{
-#' # Load a TinyLlama model
-#' model_path <- "~/models/TinyLlama-1.1B-Chat.Q4_K_M.gguf"
+#' # Load a TinyLlama model (example path)
+#' model_path <- file.path(tempdir(), "TinyLlama-1.1B-Chat.Q4_K_M.gguf")
 #' if (file.exists(model_path)) {
 #'   ctx <- edge_load_model(model_path, n_ctx = 2048)
 #'   
@@ -63,7 +63,7 @@ edge_load_model <- function(model_path, n_ctx = 2048L, n_gpu_layers = 0L) {
 #' 
 #' @examples
 #' \donttest{
-#' model_path <- "model.gguf"
+#' model_path <- file.path(tempdir(), "model.gguf")
 #' if (file.exists(model_path)) {
 #'   ctx <- edge_load_model(model_path)
 #'   result <- edge_completion(ctx, "The capital of France is", n_predict = 50)
@@ -92,7 +92,7 @@ edge_completion <- function(ctx, prompt, n_predict = 128L, temperature = 0.8, to
 #' 
 #' @examples
 #' \donttest{
-#' model_path <- "model.gguf"
+#' model_path <- file.path(tempdir(), "model.gguf")
 #' if (file.exists(model_path)) {
 #'   ctx <- edge_load_model(model_path)
 #'   # ... use model ...
@@ -127,7 +127,7 @@ is_valid_model <- function(ctx) {
 #'
 #' @param model_id Hugging Face model identifier (e.g., "TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF")
 #' @param filename Specific GGUF file to download
-#' @param cache_dir Directory to store downloaded models (default: "~/.cache/edgemodelr")
+#' @param cache_dir Directory to store downloaded models (default: user cache directory via tools::R_user_dir())
 #' @param force_download Force re-download even if file exists
 #' @return Path to the downloaded model file
 #' 
@@ -162,13 +162,29 @@ edge_download_model <- function(model_id, filename, cache_dir = NULL, force_down
     stop("filename cannot be empty")
   }
   
-  # Set default cache directory
+  # Set default cache directory using R_user_dir (CRAN compliant)
   if (is.null(cache_dir)) {
-    cache_dir <- file.path(path.expand("~"), ".cache", "edgemodelr")
+    cache_dir <- tools::R_user_dir("edgemodelr", "cache")
   }
   
-  # Create cache directory if it doesn't exist
+  # Create cache directory if it doesn't exist (with user consent)
   if (!dir.exists(cache_dir)) {
+    # Ask for user consent in interactive sessions
+    if (interactive()) {
+      consent <- utils::askYesNo(
+        paste("edgemodelr needs to create a cache directory to store downloaded models.\n",
+              "Location:", cache_dir, "\n",
+              "This will help avoid re-downloading models.\n",
+              "Create cache directory?"),
+        default = TRUE
+      )
+      
+      if (is.na(consent) || !consent) {
+        stop("User declined to create cache directory. ",
+             "Download cancelled. You can specify a custom cache_dir parameter.")
+      }
+    }
+    
     dir.create(cache_dir, recursive = TRUE)
     message("Created cache directory: ", cache_dir)
   }
@@ -279,7 +295,7 @@ edge_list_models <- function() {
 #' Quick setup for a popular model
 #'
 #' @param model_name Name of the model from edge_list_models()
-#' @param cache_dir Directory to store downloaded models
+#' @param cache_dir Directory to store downloaded models (default: user cache directory via tools::R_user_dir())
 #' @return List with model path and context (if llama.cpp is available)
 #' 
 #' @examples
@@ -353,7 +369,7 @@ edge_quick_setup <- function(model_name, cache_dir = NULL) {
 #' 
 #' @examples
 #' \donttest{
-#' model_path <- "model.gguf"
+#' model_path <- file.path(tempdir(), "model.gguf")
 #' if (file.exists(model_path)) {
 #'   ctx <- edge_load_model(model_path)
 #'   
@@ -362,7 +378,7 @@ edge_quick_setup <- function(model_name, cache_dir = NULL) {
 #'     callback = function(data) {
 #'       if (!data$is_final) {
 #'         cat(data$token)
-#'         flush.console()
+#'         utils::flush.console()
 #'       } else {
 #'         cat("\n[Done: ", data$total_tokens, " tokens]\n")
 #'       }
@@ -508,4 +524,102 @@ build_chat_prompt <- function(history) {
   # Add the start of assistant response
   prompt <- paste(c(prompt_parts, "Assistant:"), collapse = "\n")
   return(prompt)
+}
+
+#' Clean up cache directory and manage storage
+#'
+#' Remove outdated model files from the cache directory to comply with CRAN
+#' policies about actively managing cached content and keeping sizes small.
+#'
+#' @param cache_dir Cache directory path (default: user cache directory)
+#' @param max_age_days Maximum age of files to keep in days (default: 30)
+#' @param max_size_mb Maximum total cache size in MB (default: 500)
+#' @param interactive Whether to ask for user confirmation before deletion
+#' @return Invisible list of deleted files
+#' @examples
+#' \donttest{
+#' # Clean cache files older than 30 days
+#' edge_clean_cache()
+#' 
+#' # Clean cache with custom settings
+#' edge_clean_cache(max_age_days = 7, max_size_mb = 100)
+#' }
+#' @export
+edge_clean_cache <- function(cache_dir = NULL, max_age_days = 30, max_size_mb = 500, interactive = TRUE) {
+  if (is.null(cache_dir)) {
+    cache_dir <- tools::R_user_dir("edgemodelr", "cache")
+  }
+  
+  if (!dir.exists(cache_dir)) {
+    message("Cache directory does not exist: ", cache_dir)
+    return(invisible(character(0)))
+  }
+  
+  files <- list.files(cache_dir, full.names = TRUE, recursive = TRUE)
+  if (length(files) == 0) {
+    message("Cache directory is empty")
+    return(invisible(character(0)))
+  }
+  
+  file_info <- file.info(files)
+  file_info$path <- files
+  file_info$age_days <- as.numeric(difftime(Sys.time(), file_info$mtime, units = "days"))
+  file_info$size_mb <- file_info$size / (1024^2)
+  
+  # Files to delete by age
+  old_files <- file_info[file_info$age_days > max_age_days, ]
+  
+  # Files to delete by size (oldest first if total exceeds limit)
+  total_size <- sum(file_info$size_mb, na.rm = TRUE)
+  size_files <- character(0)
+  if (total_size > max_size_mb) {
+    file_info_sorted <- file_info[order(file_info$mtime), ]
+    cumsum_size <- cumsum(file_info_sorted$size_mb)
+    excess_files <- file_info_sorted[cumsum_size <= (total_size - max_size_mb), ]
+    if (nrow(excess_files) > 0) {
+      size_files <- excess_files$path
+    }
+  }
+  
+  files_to_delete <- unique(c(old_files$path, size_files))
+  
+  if (length(files_to_delete) == 0) {
+    message("No files need cleaning")
+    return(invisible(character(0)))
+  }
+  
+  # Show what will be deleted
+  total_delete_size <- sum(file_info[file_info$path %in% files_to_delete, "size_mb"], na.rm = TRUE)
+  message("Found ", length(files_to_delete), " files to delete (", 
+          round(total_delete_size, 1), " MB)")
+  
+  # Ask for confirmation in interactive mode
+  if (interactive && interactive()) {
+    consent <- utils::askYesNo(
+      paste("Delete", length(files_to_delete), "cached files?"),
+      default = TRUE
+    )
+    
+    if (is.na(consent) || !consent) {
+      message("Cleanup cancelled by user")
+      return(invisible(character(0)))
+    }
+  }
+  
+  # Delete files
+  deleted_files <- character(0)
+  for (file in files_to_delete) {
+    if (file.exists(file)) {
+      success <- file.remove(file)
+      if (success) {
+        deleted_files <- c(deleted_files, file)
+      }
+    }
+  }
+  
+  if (length(deleted_files) > 0) {
+    message("Deleted ", length(deleted_files), " files from cache")
+  }
+  
+  invisible(deleted_files)
 }
