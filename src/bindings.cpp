@@ -3,6 +3,7 @@
 #include <string>
 #include <vector>
 #include <thread>
+#include <cstdio>
 
 #include "llama.h"
 #include "ggml-backend.h"
@@ -15,6 +16,18 @@ extern "C" {
 }
 
 using namespace Rcpp;
+
+// Global variable to control logging
+static bool g_logging_enabled = false;
+
+// Custom log callback to suppress output
+void quiet_log_callback(ggml_log_level level, const char * text, void * user_data) {
+  // Only output errors to stderr, suppress all other output
+  if (g_logging_enabled && level >= GGML_LOG_LEVEL_ERROR) {
+    std::fprintf(stderr, "%s", text);
+  }
+  // Otherwise, completely suppress output
+}
 
 struct EdgeModelContext {
   struct llama_model* model = nullptr;
@@ -35,6 +48,9 @@ struct EdgeModelContext {
 // [[Rcpp::export]]
 SEXP edge_load_model(std::string model_path, int n_ctx = 2048, int n_gpu_layers = 0) {
   try {
+    // Set up quiet logging before any llama operations
+    llama_log_set(quiet_log_callback, nullptr);
+    
     // Load all available backends (including CPU)
     ggml_backend_load_all();
     
@@ -339,4 +355,11 @@ List edge_completion_stream(SEXP model_ptr, std::string prompt, Function callbac
   } catch (const std::exception& e) {
     stop("Error during streaming completion: " + std::string(e.what()));
   }
+}
+
+// [[Rcpp::export]]
+void set_llama_logging(bool enabled) {
+  g_logging_enabled = enabled;
+  // Re-set the callback to ensure it takes effect
+  llama_log_set(quiet_log_callback, nullptr);
 }

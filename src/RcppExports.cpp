@@ -75,6 +75,16 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
+// set_llama_logging
+void set_llama_logging(bool enabled);
+RcppExport SEXP _edgemodelr_set_llama_logging(SEXP enabledSEXP) {
+BEGIN_RCPP
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< bool >::type enabled(enabledSEXP);
+    set_llama_logging(enabled);
+    return R_NilValue;
+END_RCPP
+}
 
 static const R_CallMethodDef CallEntries[] = {
     {"_edgemodelr_edge_load_model", (DL_FUNC) &_edgemodelr_edge_load_model, 3},
@@ -82,6 +92,7 @@ static const R_CallMethodDef CallEntries[] = {
     {"_edgemodelr_edge_free_model", (DL_FUNC) &_edgemodelr_edge_free_model, 1},
     {"_edgemodelr_is_valid_model", (DL_FUNC) &_edgemodelr_is_valid_model, 1},
     {"_edgemodelr_edge_completion_stream", (DL_FUNC) &_edgemodelr_edge_completion_stream, 6},
+    {"_edgemodelr_set_llama_logging", (DL_FUNC) &_edgemodelr_set_llama_logging, 1},
     {NULL, NULL, 0}
 };
 

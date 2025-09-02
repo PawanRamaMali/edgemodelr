@@ -623,3 +623,23 @@ edge_clean_cache <- function(cache_dir = NULL, max_age_days = 30, max_size_mb = 
   
   invisible(deleted_files)
 }
+
+#' Control llama.cpp logging verbosity
+#'
+#' Enable or disable verbose output from the underlying llama.cpp library.
+#' By default, all output except errors is suppressed to comply with CRAN policies.
+#'
+#' @param enabled Logical. If TRUE, enables verbose llama.cpp output. If FALSE (default), 
+#'   suppresses all output except errors.
+#' @return Invisible NULL
+#' @examples
+#' # Enable verbose output (not recommended for normal use)
+#' edge_set_verbose(TRUE)
+#' 
+#' # Disable verbose output (default, recommended)
+#' edge_set_verbose(FALSE)
+#' @export
+edge_set_verbose <- function(enabled = FALSE) {
+  .Call(`_edgemodelr_set_llama_logging`, enabled)
+  invisible(NULL)
+}

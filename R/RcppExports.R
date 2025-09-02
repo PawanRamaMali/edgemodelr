@@ -21,3 +21,7 @@ edge_completion_stream <- function(model_ptr, prompt, callback, n_predict = 128L
     .Call(`_edgemodelr_edge_completion_stream`, model_ptr, prompt, callback, n_predict, temperature, top_p)
 }
 
+set_llama_logging <- function(enabled) {
+    invisible(.Call(`_edgemodelr_set_llama_logging`, enabled))
+}
+
