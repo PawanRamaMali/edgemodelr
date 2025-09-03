@@ -3,8 +3,8 @@ PKG_CXXFLAGS = -DNDEBUG -DGGML_USE_CPU
 PKG_CFLAGS = -DNDEBUG -DGGML_USE_CPU
 
 # Override warnings for ggml source files
-GGML_CXXFLAGS = $(PKG_CXXFLAGS) -Wno-unused-function -Wno-unused-variable -Wno-unused-parameter -Wno-interference-size -Wno-pedantic
-GGML_CFLAGS = $(PKG_CFLAGS) -DUSING_R=1 -Wno-unused-function -Wno-unused-variable -Wno-unused-parameter
+GGML_CXXFLAGS = $(PKG_CXXFLAGS) -fPIC -Wno-unused-function -Wno-unused-variable -Wno-unused-parameter -Wno-interference-size -Wno-pedantic
+GGML_CFLAGS = $(PKG_CFLAGS) -DUSING_R=1 -fPIC -Wno-unused-function -Wno-unused-variable -Wno-unused-parameter
 PKG_LIBS = $(LAPACK_LIBS) $(BLAS_LIBS) $(FLIBS)
 
 # Complete static list of ALL object files - no variables, no wildcards
@@ -39,10 +39,10 @@ ggml/ggml-cpu/ggml-cpu-cpp.o: ggml/ggml-cpu/ggml-cpu.cpp
 
 # Standard compilation rules for main source files
 bindings.o: bindings.cpp
-	$(CXX) $(ALL_CPPFLAGS) $(ALL_CXXFLAGS) -Wno-pedantic -Wno-format -c $< -o $@
+	$(CXX) $(ALL_CPPFLAGS) $(ALL_CXXFLAGS) -fPIC -Wno-pedantic -Wno-format -c $< -o $@
 
 RcppExports.o: RcppExports.cpp
-	$(CXX) $(ALL_CPPFLAGS) $(ALL_CXXFLAGS) -Wno-pedantic -c $< -o $@
+	$(CXX) $(ALL_CPPFLAGS) $(ALL_CXXFLAGS) -fPIC -Wno-pedantic -c $< -o $@
 
 # Special rules for GGML/LLAMA files with warning suppression
 ggml/%.o: ggml/%.c
@@ -56,7 +56,7 @@ llama/%.o: llama/%.cpp
 
 # Standard fallback rules
 %.o: %.c
-	$(CC) $(ALL_CPPFLAGS) $(ALL_CFLAGS) -c $< -o $@
+	$(CC) $(ALL_CPPFLAGS) $(ALL_CFLAGS) -fPIC -c $< -o $@
 
 %.o: %.cpp
-	$(CXX) $(ALL_CPPFLAGS) $(ALL_CXXFLAGS) -c $< -o $@
+	$(CXX) $(ALL_CPPFLAGS) $(ALL_CXXFLAGS) -fPIC -c $< -o $@
