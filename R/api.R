@@ -30,16 +30,28 @@ edge_load_model <- function(model_path, n_ctx = 2048L, n_gpu_layers = 0L) {
          "  3. List models: edge_list_models()")
   }
   
+  # Check if it's a directory instead of a file
+  if (dir.exists(model_path)) {
+    stop("Path is a directory, not a file: ", model_path)
+  }
+  
   if (!grepl("\\.gguf$", model_path, ignore.case = TRUE)) {
     warning("Model file should have .gguf extension for optimal compatibility")
   }
   
+  # Validate parameters
+  if (!is.numeric(n_ctx) || n_ctx <= 0) {
+    stop("n_ctx must be a positive integer")
+  }
+  if (!is.numeric(n_gpu_layers) || n_gpu_layers < 0) {
+    stop("n_gpu_layers must be a non-negative integer")
+  }
+  
   # Try to load the model using the raw Rcpp function
   tryCatch({
-    .Call(`_edgemodelr_edge_load_model`,
-          normalizePath(model_path), 
-          as.integer(n_ctx),
-          as.integer(n_gpu_layers))
+    edge_load_model_internal(normalizePath(model_path), 
+                           as.integer(n_ctx),
+                           as.integer(n_gpu_layers))
   }, error = function(e) {
     # Provide more context about what went wrong
     if (grepl("llama_load_model_from_file", e$message)) {
@@ -77,12 +89,11 @@ edge_completion <- function(ctx, prompt, n_predict = 128L, temperature = 0.8, to
     stop("Prompt must be a single character string")
   }
   
-  .Call(`_edgemodelr_edge_completion`,
-        ctx, 
-        prompt, 
-        as.integer(n_predict),
-        as.numeric(temperature),
-        as.numeric(top_p))
+  edge_completion_internal(ctx, 
+                         prompt, 
+                         as.integer(n_predict),
+                         as.numeric(temperature),
+                         as.numeric(top_p))
 }
 
 #' Free model context and release memory
@@ -109,7 +120,7 @@ edge_free_model <- function(ctx) {
     return(invisible(NULL))
   }
   
-  invisible(.Call(`_edgemodelr_edge_free_model`, ctx))
+  invisible(edge_free_model_internal(ctx))
 }
 
 #' Check if model context is valid
@@ -119,7 +130,7 @@ edge_free_model <- function(ctx) {
 #' @export
 is_valid_model <- function(ctx) {
   tryCatch({
-    .Call(`_edgemodelr_is_valid_model`, ctx)
+    is_valid_model_internal(ctx)
   }, error = function(e) FALSE)
 }
 
@@ -398,11 +409,10 @@ edge_stream_completion <- function(ctx, prompt, callback, n_predict = 128L, temp
     stop("Callback must be a function")
   }
   
-  .Call(`_edgemodelr_edge_completion_stream`,
-        ctx, prompt, callback, 
-        as.integer(n_predict),
-        as.numeric(temperature),
-        as.numeric(top_p))
+  edge_completion_stream_internal(ctx, prompt, callback, 
+                                 as.integer(n_predict),
+                                 as.numeric(temperature),
+                                 as.numeric(top_p))
 }
 
 #' Interactive chat session with streaming responses
@@ -640,6 +650,6 @@ edge_clean_cache <- function(cache_dir = NULL, max_age_days = 30, max_size_mb = 
 #' edge_set_verbose(FALSE)
 #' @export
 edge_set_verbose <- function(enabled = FALSE) {
-  .Call(`_edgemodelr_set_llama_logging`, enabled)
+  set_llama_logging(enabled)
   invisible(NULL)
 }

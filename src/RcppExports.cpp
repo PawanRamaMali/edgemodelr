@@ -10,22 +10,22 @@ Rcpp::Rostream<true>&  Rcpp::Rcout = Rcpp::Rcpp_cout_get();
 Rcpp::Rostream<false>& Rcpp::Rcerr = Rcpp::Rcpp_cerr_get();
 #endif
 
-// edge_load_model
-SEXP edge_load_model(std::string model_path, int n_ctx, int n_gpu_layers);
-RcppExport SEXP _edgemodelr_edge_load_model(SEXP model_pathSEXP, SEXP n_ctxSEXP, SEXP n_gpu_layersSEXP) {
+// edge_load_model_internal
+SEXP edge_load_model_internal(std::string model_path, int n_ctx, int n_gpu_layers);
+RcppExport SEXP _edgemodelr_edge_load_model_internal(SEXP model_pathSEXP, SEXP n_ctxSEXP, SEXP n_gpu_layersSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
     Rcpp::traits::input_parameter< std::string >::type model_path(model_pathSEXP);
     Rcpp::traits::input_parameter< int >::type n_ctx(n_ctxSEXP);
     Rcpp::traits::input_parameter< int >::type n_gpu_layers(n_gpu_layersSEXP);
-    rcpp_result_gen = Rcpp::wrap(edge_load_model(model_path, n_ctx, n_gpu_layers));
+    rcpp_result_gen = Rcpp::wrap(edge_load_model_internal(model_path, n_ctx, n_gpu_layers));
     return rcpp_result_gen;
 END_RCPP
 }
-// edge_completion
-std::string edge_completion(SEXP model_ptr, std::string prompt, int n_predict, double temperature, double top_p);
-RcppExport SEXP _edgemodelr_edge_completion(SEXP model_ptrSEXP, SEXP promptSEXP, SEXP n_predictSEXP, SEXP temperatureSEXP, SEXP top_pSEXP) {
+// edge_completion_internal
+std::string edge_completion_internal(SEXP model_ptr, std::string prompt, int n_predict, double temperature, double top_p);
+RcppExport SEXP _edgemodelr_edge_completion_internal(SEXP model_ptrSEXP, SEXP promptSEXP, SEXP n_predictSEXP, SEXP temperatureSEXP, SEXP top_pSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
@@ -34,34 +34,34 @@ BEGIN_RCPP
     Rcpp::traits::input_parameter< int >::type n_predict(n_predictSEXP);
     Rcpp::traits::input_parameter< double >::type temperature(temperatureSEXP);
     Rcpp::traits::input_parameter< double >::type top_p(top_pSEXP);
-    rcpp_result_gen = Rcpp::wrap(edge_completion(model_ptr, prompt, n_predict, temperature, top_p));
+    rcpp_result_gen = Rcpp::wrap(edge_completion_internal(model_ptr, prompt, n_predict, temperature, top_p));
     return rcpp_result_gen;
 END_RCPP
 }
-// edge_free_model
-void edge_free_model(SEXP model_ptr);
-RcppExport SEXP _edgemodelr_edge_free_model(SEXP model_ptrSEXP) {
+// edge_free_model_internal
+void edge_free_model_internal(SEXP model_ptr);
+RcppExport SEXP _edgemodelr_edge_free_model_internal(SEXP model_ptrSEXP) {
 BEGIN_RCPP
     Rcpp::RNGScope rcpp_rngScope_gen;
     Rcpp::traits::input_parameter< SEXP >::type model_ptr(model_ptrSEXP);
-    edge_free_model(model_ptr);
+    edge_free_model_internal(model_ptr);
     return R_NilValue;
 END_RCPP
 }
-// is_valid_model
-bool is_valid_model(SEXP model_ptr);
-RcppExport SEXP _edgemodelr_is_valid_model(SEXP model_ptrSEXP) {
+// is_valid_model_internal
+bool is_valid_model_internal(SEXP model_ptr);
+RcppExport SEXP _edgemodelr_is_valid_model_internal(SEXP model_ptrSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
     Rcpp::traits::input_parameter< SEXP >::type model_ptr(model_ptrSEXP);
-    rcpp_result_gen = Rcpp::wrap(is_valid_model(model_ptr));
+    rcpp_result_gen = Rcpp::wrap(is_valid_model_internal(model_ptr));
     return rcpp_result_gen;
 END_RCPP
 }
-// edge_completion_stream
-List edge_completion_stream(SEXP model_ptr, std::string prompt, Function callback, int n_predict, double temperature, double top_p);
-RcppExport SEXP _edgemodelr_edge_completion_stream(SEXP model_ptrSEXP, SEXP promptSEXP, SEXP callbackSEXP, SEXP n_predictSEXP, SEXP temperatureSEXP, SEXP top_pSEXP) {
+// edge_completion_stream_internal
+List edge_completion_stream_internal(SEXP model_ptr, std::string prompt, Function callback, int n_predict, double temperature, double top_p);
+RcppExport SEXP _edgemodelr_edge_completion_stream_internal(SEXP model_ptrSEXP, SEXP promptSEXP, SEXP callbackSEXP, SEXP n_predictSEXP, SEXP temperatureSEXP, SEXP top_pSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
@@ -71,7 +71,7 @@ BEGIN_RCPP
     Rcpp::traits::input_parameter< int >::type n_predict(n_predictSEXP);
     Rcpp::traits::input_parameter< double >::type temperature(temperatureSEXP);
     Rcpp::traits::input_parameter< double >::type top_p(top_pSEXP);
-    rcpp_result_gen = Rcpp::wrap(edge_completion_stream(model_ptr, prompt, callback, n_predict, temperature, top_p));
+    rcpp_result_gen = Rcpp::wrap(edge_completion_stream_internal(model_ptr, prompt, callback, n_predict, temperature, top_p));
     return rcpp_result_gen;
 END_RCPP
 }
@@ -87,11 +87,11 @@ END_RCPP
 }
 
 static const R_CallMethodDef CallEntries[] = {
-    {"_edgemodelr_edge_load_model", (DL_FUNC) &_edgemodelr_edge_load_model, 3},
-    {"_edgemodelr_edge_completion", (DL_FUNC) &_edgemodelr_edge_completion, 5},
-    {"_edgemodelr_edge_free_model", (DL_FUNC) &_edgemodelr_edge_free_model, 1},
-    {"_edgemodelr_is_valid_model", (DL_FUNC) &_edgemodelr_is_valid_model, 1},
-    {"_edgemodelr_edge_completion_stream", (DL_FUNC) &_edgemodelr_edge_completion_stream, 6},
+    {"_edgemodelr_edge_load_model_internal", (DL_FUNC) &_edgemodelr_edge_load_model_internal, 3},
+    {"_edgemodelr_edge_completion_internal", (DL_FUNC) &_edgemodelr_edge_completion_internal, 5},
+    {"_edgemodelr_edge_free_model_internal", (DL_FUNC) &_edgemodelr_edge_free_model_internal, 1},
+    {"_edgemodelr_is_valid_model_internal", (DL_FUNC) &_edgemodelr_is_valid_model_internal, 1},
+    {"_edgemodelr_edge_completion_stream_internal", (DL_FUNC) &_edgemodelr_edge_completion_stream_internal, 6},
     {"_edgemodelr_set_llama_logging", (DL_FUNC) &_edgemodelr_set_llama_logging, 1},
     {NULL, NULL, 0}
 };

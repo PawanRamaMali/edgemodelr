@@ -56,7 +56,7 @@ struct EdgeModelContext {
 };
 
 // [[Rcpp::export]]
-SEXP edge_load_model(std::string model_path, int n_ctx = 2048, int n_gpu_layers = 0) {
+SEXP edge_load_model_internal(std::string model_path, int n_ctx = 2048, int n_gpu_layers = 0) {
   try {
     // Set up quiet logging before any llama operations
     llama_log_set(quiet_log_callback, NULL);
@@ -100,7 +100,7 @@ SEXP edge_load_model(std::string model_path, int n_ctx = 2048, int n_gpu_layers 
 }
 
 // [[Rcpp::export]]
-std::string edge_completion(SEXP model_ptr, std::string prompt, int n_predict = 128, double temperature = 0.8, double top_p = 0.95) {
+std::string edge_completion_internal(SEXP model_ptr, std::string prompt, int n_predict = 128, double temperature = 0.8, double top_p = 0.95) {
   try {
     if (TYPEOF(model_ptr) != EXTPTRSXP) {
       stop("Invalid model context");
@@ -192,7 +192,7 @@ std::string edge_completion(SEXP model_ptr, std::string prompt, int n_predict = 
 }
 
 // [[Rcpp::export]]
-void edge_free_model(SEXP model_ptr) {
+void edge_free_model_internal(SEXP model_ptr) {
   try {
     XPtr<EdgeModelContext> edge_ctx(model_ptr);
     
@@ -211,7 +211,7 @@ void edge_free_model(SEXP model_ptr) {
 }
 
 // [[Rcpp::export]]
-bool is_valid_model(SEXP model_ptr) {
+bool is_valid_model_internal(SEXP model_ptr) {
   try {
     XPtr<EdgeModelContext> edge_ctx(model_ptr);
     return edge_ctx->is_valid();
@@ -221,7 +221,7 @@ bool is_valid_model(SEXP model_ptr) {
 }
 
 // [[Rcpp::export]]
-List edge_completion_stream(SEXP model_ptr, std::string prompt, Function callback, int n_predict = 128, double temperature = 0.8, double top_p = 0.95) {
+List edge_completion_stream_internal(SEXP model_ptr, std::string prompt, Function callback, int n_predict = 128, double temperature = 0.8, double top_p = 0.95) {
   try {
     if (TYPEOF(model_ptr) != EXTPTRSXP) {
       stop("Invalid model context");

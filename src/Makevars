@@ -1,6 +1,6 @@
 PKG_CPPFLAGS = -I../inst/include -I./llama -I./ggml -I./ggml/ggml-cpu -DUSING_R=1 -include r_output_redirect.h
-PKG_CXXFLAGS = -DNDEBUG -DGGML_USE_CPU -Wno-array-bounds -Wno-unused-function -Wno-unused-local-typedefs
-PKG_CFLAGS = -DNDEBUG -DGGML_USE_CPU -Wno-array-bounds -Wno-unused-function
+PKG_CXXFLAGS = -DNDEBUG -DGGML_USE_CPU -Wno-array-bounds -Wno-unused-function -Wno-unused-local-typedefs -Wno-unused-variable -Wno-unused-parameter
+PKG_CFLAGS = -DNDEBUG -DGGML_USE_CPU -Wno-array-bounds -Wno-unused-function -Wno-unused-variable -Wno-unused-parameter
 PKG_LIBS = $(LAPACK_LIBS) $(BLAS_LIBS) $(FLIBS)
 
 # Complete static list of ALL object files - no variables, no wildcards
