@@ -2,6 +2,9 @@ PKG_CPPFLAGS = -I../inst/include -I./llama -I./ggml -I./ggml/ggml-cpu -DUSING_R=
 PKG_CXXFLAGS = -std=gnu++17 -O2 -DNDEBUG -DNOMINMAX -D_USE_MATH_DEFINES -DGGML_USE_CPU
 PKG_LIBS = 
 
+# Override warnings for ggml source files
+GGML_CXXFLAGS = $(PKG_CXXFLAGS) -Wno-unused-function -Wno-unused-variable -Wno-unused-parameter
+
 # Main package objects  
 OBJECTS = bindings.o RcppExports.o
 
@@ -42,10 +45,27 @@ clean:
 
 # Special rules for conflicting ggml-cpu files
 ggml/ggml-cpu/ggml-cpu-c.o: ggml/ggml-cpu/ggml-cpu.c
-	$(CC) $(ALL_CPPFLAGS) $(ALL_CFLAGS) -c $< -o $@
+	$(CC) $(ALL_CPPFLAGS) $(ALL_CFLAGS) -Wno-unused-function -Wno-unused-variable -Wno-unused-parameter -c $< -o $@
 
 ggml/ggml-cpu/ggml-cpu-cpp.o: ggml/ggml-cpu/ggml-cpu.cpp
+	$(CXX) $(ALL_CPPFLAGS) $(GGML_CXXFLAGS) -c $< -o $@
+
+# Standard compilation rules for main source files
+bindings.o: bindings.cpp
 	$(CXX) $(ALL_CPPFLAGS) $(ALL_CXXFLAGS) -c $< -o $@
+
+RcppExports.o: RcppExports.cpp
+	$(CXX) $(ALL_CPPFLAGS) $(ALL_CXXFLAGS) -c $< -o $@
+
+# Special rules for GGML/LLAMA files with warning suppression
+ggml/%.o: ggml/%.c
+	$(CC) $(ALL_CPPFLAGS) $(ALL_CFLAGS) -Wno-unused-function -Wno-unused-variable -Wno-unused-parameter -c $< -o $@
+
+ggml/%.o: ggml/%.cpp
+	$(CXX) $(ALL_CPPFLAGS) $(GGML_CXXFLAGS) -c $< -o $@
+
+llama/%.o: llama/%.cpp
+	$(CXX) $(ALL_CPPFLAGS) $(GGML_CXXFLAGS) -c $< -o $@
 
 # Compilation rules
 %.o: %.c
