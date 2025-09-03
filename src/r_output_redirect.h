@@ -11,6 +11,7 @@
 #include <stdio.h>
 #include <stdarg.h>
 #include <string.h>
+#include <stdbool.h>
 
 // Protect against R macros interfering with C++ standard library
 #ifdef __cplusplus
@@ -126,6 +127,7 @@ static inline int r_puts(const char* str) {
 #include <stdio.h>
 #include <stdarg.h>
 #include <string.h>
+#include <stdbool.h>
 
 #endif /* USING_R */
 
