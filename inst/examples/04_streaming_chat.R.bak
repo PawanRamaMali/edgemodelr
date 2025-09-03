@@ -27,7 +27,7 @@ StreamingChat <- function() {
     cat(sprintf("💬 Initializing Streaming Chat with %s...\n", model_name))
     cat(sprintf("🎭 Chat mode: %s\n\n", chat_mode))
     
-    if (!interactive()) stop("Skipping model download during automated testing"); setup <- edge_quick_setup(model_name)
+    setup <- edge_quick_setup(model_name)
     
     # Initialize conversation history
     conversation_history <- list(

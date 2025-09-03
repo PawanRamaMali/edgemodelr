@@ -7,7 +7,7 @@ analyze_documents <- function(texts, model_name = "TinyLlama-1.1B") {
   cat("Setting up", model_name, "for document analysis...\n")
   
   # Use TinyLlama which you already have
-  if (!interactive()) stop("Skipping model download during automated testing"); setup <- edge_quick_setup(model_name)
+  setup <- edge_quick_setup(model_name)
   ctx <- setup$context
   
   results <- data.frame(

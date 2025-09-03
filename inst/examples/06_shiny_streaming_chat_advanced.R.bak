@@ -315,7 +315,7 @@ server <- function(input, output, session) {
     
     # Load new model
     tryCatch({
-      if (!interactive()) stop("Skipping model download during automated testing"); setup <- edge_quick_setup(input$model)
+      setup <- edge_quick_setup(input$model)
       values$ctx <- setup$context
       
       if (!is.null(values$ctx)) {

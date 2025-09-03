@@ -16,7 +16,7 @@ showcase_model <- function(model_name, prompt = "Write a short poem about AI.") 
     if (!interactive()) {
       stop("Skipping model download during automated testing")
     }
-    if (!interactive()) stop("Skipping model download during automated testing"); setup <- edge_quick_setup(model_name)
+    setup <- edge_quick_setup(model_name)
 
     if (is.null(setup$context)) {
       cat("❌ Failed to load", model_name, "\n")

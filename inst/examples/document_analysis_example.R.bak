@@ -10,7 +10,7 @@ analyze_documents <- function(texts, model_name = "TinyLlama-1.1B") {
     if (!interactive()) {
       stop("Skipping model download during automated testing")
     }
-    if (!interactive()) stop("Skipping model download during automated testing"); setup <- edge_quick_setup(model_name)
+    setup <- edge_quick_setup(model_name)
     ctx <- setup$context
   }, error = function(e) {
     cat("Setup failed, trying alternative approach...\n")
@@ -24,7 +24,7 @@ analyze_documents <- function(texts, model_name = "TinyLlama-1.1B") {
     if (!interactive()) {
       stop("Skipping model download during automated testing")
     }
-    if (!interactive()) stop("Skipping model download during automated testing"); setup <- edge_quick_setup("TinyLlama-1.1B")
+    setup <- edge_quick_setup("TinyLlama-1.1B")
     ctx <<- setup$context
   })
   

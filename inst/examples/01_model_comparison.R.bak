@@ -93,7 +93,7 @@ test_model_availability <- function(model_names = c("TinyLlama-1.1B", "Phi-3.5-M
     cat(sprintf("Testing %s...\n", model_name))
 
     tryCatch({
-      if (!interactive()) stop("Skipping model download during automated testing"); setup <- edge_quick_setup(model_name)
+      setup <- edge_quick_setup(model_name)
       ctx <- setup$context
 
       # Quick test

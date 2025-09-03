@@ -123,7 +123,7 @@ ModelBenchmarker <- function() {
     
     # Initialize model
     tryCatch({
-      if (!interactive()) stop("Skipping model download during automated testing"); setup <- edge_quick_setup(model_name)
+      setup <- edge_quick_setup(model_name)
       ctx <- setup$context
     }, error = function(e) {
       cat(sprintf("❌ Failed to initialize %s: %s\n", model_name, e$message))

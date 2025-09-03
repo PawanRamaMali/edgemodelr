@@ -32,7 +32,7 @@ DocumentAnalyzer <- function() {
       cat(sprintf("   Trying %s...\n", model_name))
       
       tryCatch({
-        if (!interactive()) stop("Skipping model download during automated testing"); setup <- edge_quick_setup(model_name)
+        setup <- edge_quick_setup(model_name)
         
         # Test the model works
         test_result <- edge_completion(setup$context, "Test", n_predict = 2)
@@ -52,7 +52,7 @@ DocumentAnalyzer <- function() {
     
     # Fallback to most reliable model
     cat(sprintf("   🔄 Falling back to %s\n", fallback_model))
-    if (!interactive()) stop("Skipping model download during automated testing"); setup <- edge_quick_setup(fallback_model)
+    setup <- edge_quick_setup(fallback_model)
     
     return(list(
       model_name = fallback_model,

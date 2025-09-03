@@ -25,7 +25,7 @@ ContentGenerator <- function() {
   initialize <- function(model_name = "TinyLlama-1.1B") {
     cat(sprintf("🎨 Initializing Content Generator with %s...\n", model_name))
     
-    if (!interactive()) stop("Skipping model download during automated testing"); setup <- edge_quick_setup(model_name)
+    setup <- edge_quick_setup(model_name)
     
     return(list(
       model_name = model_name,
