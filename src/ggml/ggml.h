@@ -272,7 +272,9 @@ __host__ __device__ constexpr inline void ggml_unused_vars_impl(Args&&...) noexc
 #   define GGML_UNREACHABLE() ((void) 0)
 #endif
 
-#ifdef __cplusplus
+#ifdef USING_R
+#   define GGML_NORETURN
+#elif defined(__cplusplus)
 #   define GGML_NORETURN [[noreturn]]
 #elif defined(_MSC_VER)
 #   define GGML_NORETURN __declspec(noreturn)
@@ -280,7 +282,11 @@ __host__ __device__ constexpr inline void ggml_unused_vars_impl(Args&&...) noexc
 #   define GGML_NORETURN _Noreturn
 #endif
 
+#ifdef USING_R
+#define GGML_ABORT(...) do { ggml_abort(__FILE__, __LINE__, __VA_ARGS__); __builtin_unreachable(); } while(0)
+#else
 #define GGML_ABORT(...) ggml_abort(__FILE__, __LINE__, __VA_ARGS__)
+#endif
 #define GGML_ASSERT(x) if (!(x)) GGML_ABORT("GGML_ASSERT(%s) failed", #x)
 
 // used to copy the number of elements and stride in bytes of tensors into local variables.
@@ -338,6 +344,7 @@ __host__ __device__ constexpr inline void ggml_unused_vars_impl(Args&&...) noexc
     GGML_TENSOR_LOCALS(size_t,  nb1, src1, nb)
 
 #ifdef  __cplusplus
+#include <stdexcept>
 extern "C" {
 #endif
 
