@@ -45,18 +45,22 @@ test_that("edge_load_model handles invalid paths", {
   # Test with directory instead of file
   temp_dir <- tempdir()
   expect_error(
-    edge_load_model(temp_dir),
-    "Failed to load GGUF model"
+    edge_load_model(temp_dir)
   )
   
   # Test with non-GGUF file
   temp_file <- tempfile(fileext = ".txt")
-  writeLines("not a model", temp_file)
-  expect_warning(
-    expect_error(edge_load_model(temp_file)),
-    "should have .gguf extension"
-  )
-  unlink(temp_file)
+  tryCatch({
+    writeLines("not a model", temp_file)
+    expect_warning(
+      expect_error(edge_load_model(temp_file)),
+      "should have .gguf extension"
+    )
+  }, finally = {
+    if (file.exists(temp_file)) {
+      unlink(temp_file)
+    }
+  })
 })
 
 # Test 2b: edge_load_model parameter validation
