@@ -1,5 +1,5 @@
 PKG_CPPFLAGS = -I../inst/include -I./llama -I./ggml -I./ggml/ggml-cpu -DUSING_R=1
-PKG_CXXFLAGS = -std=gnu++17 -O2 -DNDEBUG -DNOMINMAX -D_USE_MATH_DEFINES -DGGML_USE_CPU
+PKG_CXXFLAGS = -std=gnu++17 -O2 -DNDEBUG -DNOMINMAX -D_USE_MATH_DEFINES -DGGML_USE_CPU -Wno-array-bounds -Wno-unused-function -Wno-unused-local-typedefs
 PKG_LIBS = 
 
 # Main package objects  
