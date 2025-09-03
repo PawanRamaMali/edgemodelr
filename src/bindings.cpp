@@ -1,8 +1,3 @@
-// Fix for isNull macro conflict with Rcpp on Linux/Unix systems
-#ifdef isNull
-#undef isNull
-#endif
-
 // Suppress warnings from ggml/llama.cpp code
 #ifdef __GNUC__
 #pragma GCC diagnostic push

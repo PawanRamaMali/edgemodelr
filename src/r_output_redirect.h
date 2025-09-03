@@ -17,6 +17,10 @@
 #ifdef length
 #undef length
 #endif
+// Fix for isNull macro conflict with Rcpp
+#ifdef isNull
+#undef isNull
+#endif
 #endif
 
 // Global variable to control console output suppression
