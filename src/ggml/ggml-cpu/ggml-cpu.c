@@ -49,12 +49,10 @@
 #endif
 
 #if defined(__linux__) || defined(__gnu_linux__)
-#ifndef _GNU_SOURCE
-#define _GNU_SOURCE
-#endif
 #include <pthread.h>
 #include <sched.h>
 #include <unistd.h>
+#include <sys/sysinfo.h>
 #endif
 
 #ifdef GGML_USE_OPENMP
@@ -591,7 +589,7 @@ int ggml_threadpool_chunk_add(struct ggml_threadpool * tp, int value) {
     return atomic_fetch_add_explicit(&tp->current_chunk, value, memory_order_relaxed);
 }
 
-#if defined(__gnu_linux__)
+#if defined(__gnu_linux__) && defined(CPU_ZERO) && defined(CPU_SET)
 static cpu_set_t ggml_get_numa_affinity(void) {
     cpu_set_t cpuset;
     pthread_t thread;
@@ -2066,7 +2064,9 @@ static void set_numa_thread_affinity(int thread_n) {
 
     int node_num;
     int rv;
+#ifdef CPU_ALLOC
     size_t setsize = CPU_ALLOC_SIZE(g_state.numa.total_cpus);
+#endif
 
     switch(g_state.numa.numa_strategy) {
         case GGML_NUMA_STRATEGY_DISTRIBUTE:
@@ -2079,10 +2079,14 @@ static void set_numa_thread_affinity(int thread_n) {
             break;
         case GGML_NUMA_STRATEGY_NUMACTL:
             // use the cpuset that numactl gave us
+#ifdef CPU_ALLOC
             rv = pthread_setaffinity_np(pthread_self(), setsize, &g_state.numa.cpuset);
             if (rv) {
                 fprintf(stderr, "warning: pthread_setaffinity_np() failed: %s\n",strerror(rv));
             }
+#else
+            fprintf(stderr, "warning: NUMA strategy not supported on this system\n");
+#endif
             return;
         default:
             return;
@@ -2090,6 +2094,7 @@ static void set_numa_thread_affinity(int thread_n) {
 
     struct ggml_numa_node * node = &g_state.numa.nodes[node_num];
 
+#ifdef CPU_ALLOC
     cpu_set_t * cpus = CPU_ALLOC(g_state.numa.total_cpus);
     CPU_ZERO_S(setsize, cpus);
     for (size_t i = 0; i < node->n_cpus; ++i) {
@@ -2102,6 +2107,10 @@ static void set_numa_thread_affinity(int thread_n) {
     }
 
     CPU_FREE(cpus);
+#else
+    // Fallback for systems without CPU_ALLOC
+    fprintf(stderr, "warning: CPU affinity not supported on this system\n");
+#endif
 }
 
 static void clear_numa_thread_affinity(void) {
@@ -2109,6 +2118,7 @@ static void clear_numa_thread_affinity(void) {
         return;
     }
 
+#ifdef CPU_ALLOC
     size_t setsize = CPU_ALLOC_SIZE(g_state.numa.total_cpus);
 
     cpu_set_t * cpus = CPU_ALLOC(g_state.numa.total_cpus);
@@ -2123,6 +2133,10 @@ static void clear_numa_thread_affinity(void) {
     }
 
     CPU_FREE(cpus);
+#else
+    // Fallback for systems without CPU_ALLOC
+    fprintf(stderr, "warning: CPU affinity not supported on this system\n");
+#endif
 }
 #else
 // TODO: Windows etc.
@@ -2502,6 +2516,7 @@ static bool ggml_thread_apply_priority(int32_t prio) {
 // TODO: this may not work on BSD, to be verified
 
 static bool ggml_thread_apply_affinity(const bool * mask) {
+#ifdef CPU_ZERO
     cpu_set_t cpuset;
     int err;
 
@@ -2528,13 +2543,23 @@ static bool ggml_thread_apply_affinity(const bool * mask) {
     }
 
     return true;
+#else
+    // Fallback for systems without CPU_ZERO/CPU_SET
+    UNUSED(mask);
+    fprintf(stderr, "warn: CPU affinity not supported on this system\n");
+    return false;
+#endif
 }
 
 static bool ggml_thread_apply_priority(int32_t prio) {
     struct sched_param p;
     int32_t policy = SCHED_OTHER;
     switch (prio) {
+#ifdef SCHED_BATCH
         case GGML_SCHED_PRIO_LOW:      policy = SCHED_BATCH; p.sched_priority = 0;  break;
+#else
+        case GGML_SCHED_PRIO_LOW:      policy = SCHED_OTHER; p.sched_priority = 0;  break;
+#endif
         case GGML_SCHED_PRIO_NORMAL:   policy = SCHED_OTHER; p.sched_priority = 0;  break;
         case GGML_SCHED_PRIO_MEDIUM:   policy = SCHED_FIFO;  p.sched_priority = 40; break;
         case GGML_SCHED_PRIO_HIGH:     policy = SCHED_FIFO;  p.sched_priority = 80; break;

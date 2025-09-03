@@ -1,6 +1,16 @@
 #ifndef R_OUTPUT_REDIRECT_H
 #define R_OUTPUT_REDIRECT_H
 
+// Feature test macros must be defined before any system headers
+#if defined(__linux__) || defined(__gnu_linux__)
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
+#ifndef _POSIX_C_SOURCE
+#define _POSIX_C_SOURCE 200809L
+#endif
+#endif
+
 // R-compatible output redirection for CRAN compliance
 // This header redirects problematic C output functions to R-appropriate equivalents
 
