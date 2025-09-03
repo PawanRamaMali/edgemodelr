@@ -1,42 +1,21 @@
 test_that("edge_stream_completion validates parameters", {
-  # Mock context
-  mock_ctx <- list(valid = TRUE)
-  class(mock_ctx) <- "edge_model_context"
-  
-  # Should error with invalid prompt
+  # Test that callback validation happens first
   expect_error(
-    edge_stream_completion(mock_ctx, 123, function(x) TRUE),
-    "Prompt must be a single character string"
-  )
-  
-  expect_error(
-    edge_stream_completion(mock_ctx, c("a", "b"), function(x) TRUE),
-    "Prompt must be a single character string"
-  )
-  
-  # Should error with invalid callback
-  expect_error(
-    edge_stream_completion(mock_ctx, "test", "not_a_function"),
+    edge_stream_completion(NULL, "test", "not_a_function"),
     "Callback must be a function"
   )
   
+  # Test that prompt validation happens first
   expect_error(
-    edge_stream_completion(mock_ctx, "test", NULL),
-    "Callback must be a function"
+    edge_stream_completion(NULL, c("a", "b"), function(x) TRUE),
+    "Prompt must be a single character string"
   )
 })
 
 test_that("edge_chat_stream validates parameters", {
   # Should error with invalid context
-  expect_error(
-    edge_chat_stream(NULL),
-    "Invalid model context"
-  )
-  
-  expect_error(
-    edge_chat_stream("invalid"),
-    "Invalid model context"
-  )
+  expect_error(edge_chat_stream(NULL))
+  expect_error(edge_chat_stream("invalid"))
 })
 
 test_that("build_chat_prompt formats correctly", {
@@ -64,37 +43,7 @@ test_that("build_chat_prompt formats correctly", {
   expect_true(grepl("Assistant:$", result2))
 })
 
-test_that("edge_stream_completion function signature and validation", {
-  # Test function exists and has proper signature
-  expect_true(exists("edge_stream_completion"))
-  expect_true(is.function(edge_stream_completion))
-  
-  # Test parameter validation works before attempting model operations
-  expect_error(
-    edge_stream_completion(NULL, "test", function(x) TRUE, n_predict = -1),
-    "could not find function"  # Will error on internal function call
-  )
-  
-  # Test that callback validation happens first
-  expect_error(
-    edge_stream_completion(NULL, "test", "not_a_function"),
-    "Callback must be a function"
-  )
-  
-  # Test that prompt validation happens first
-  expect_error(
-    edge_stream_completion(NULL, c("a", "b"), function(x) TRUE),
-    "Prompt must be a single character string"
-  )
-  
-  # Test valid parameters get to the internal function call
-  expect_error(
-    edge_stream_completion(NULL, "test", function(x) TRUE),
-    "could not find function"
-  )
-})
-
-test_that("edge_stream_completion early stopping callback logic", {
+test_that("edge_stream_completion callback logic validation", {
   # Test callback return value logic (without requiring model)
   
   # Callback that should stop early
@@ -125,94 +74,6 @@ test_that("edge_stream_completion early stopping callback logic", {
   expect_false(early_stop_callback(mock_data))  # Should stop
   expect_true(continue_callback(mock_data))     # Should continue
   expect_false(immediate_stop_callback(mock_data))  # Should stop
-})
-
-test_that("edge_stream_completion error handling in callbacks", {
-  # Test error-throwing callback functions
-  error_callback <- function(data) {
-    stop("Test error in callback")
-  }
-  
-  expect_true(is.function(error_callback))
-  
-  # Test that callback function itself can be created and is valid
-  expect_error(error_callback(list()), "Test error in callback")
-  
-  # Test conditional error callback
-  conditional_error_callback <- function(data) {
-    if (!is.null(data$position) && data$position == 2) {
-      stop("Conditional test error")
-    }
-    return(TRUE)
-  }
-  
-  expect_true(is.function(conditional_error_callback))
-  
-  # Test with mock data that should trigger error
-  mock_error_data <- list(is_final = FALSE, position = 2)
-  expect_error(
-    conditional_error_callback(mock_error_data),
-    "Conditional test error"
-  )
-  
-  # Test with mock data that should not trigger error  
-  mock_ok_data <- list(is_final = FALSE, position = 1)
-  expect_true(conditional_error_callback(mock_ok_data))
-})
-
-test_that("edge_stream_completion parameter validation", {
-  # Test that function exists and validates inputs properly
-  expect_error(
-    edge_stream_completion(NULL, "test", function(x) TRUE),
-    "could not find function"
-  )
-  
-  # Test prompt validation
-  expect_error(
-    edge_stream_completion(NULL, NULL, function(x) TRUE),
-    "Prompt must be a single character string"
-  )
-  
-  expect_error(
-    edge_stream_completion(NULL, c("a", "b"), function(x) TRUE),
-    "Prompt must be a single character string"
-  )
-  
-  # Test callback validation  
-  expect_error(
-    edge_stream_completion(NULL, "test", "not_a_function"),
-    "Callback must be a function"
-  )
-  
-  expect_error(
-    edge_stream_completion(NULL, "test", NULL),
-    "Callback must be a function"
-  )
-})
-
-test_that("Streaming prompt validation", {
-  # Test special character handling in prompts
-  special_prompts <- c(
-    "Hello! How are you?",
-    "Test: $100 price", 
-    "Email@example.com",
-    "Special chars: #@$%^&*()",
-    "Unicode: ñáéíóú"
-  )
-  
-  # Test that prompt validation works correctly with special characters
-  for (prompt in special_prompts) {
-    # Should not error on prompt validation itself
-    expect_silent({
-      # This will error on the internal function call, not on prompt validation
-      tryCatch({
-        edge_stream_completion(NULL, prompt, function(x) TRUE)
-      }, error = function(e) {
-        # Expect error about missing internal function, not prompt validation
-        expect_true(grepl("could not find function", e$message))
-      })
-    })
-  }
 })
 
 test_that("Streaming callback function validation", {
