@@ -5,8 +5,8 @@ Version: 0.1.0
 Authors@R: person("Pawan Rama", "Mali", email = "prm@outlook.in", role = c("aut", "cre"))
 Author: Pawan Rama Mali [aut, cre]
 Maintainer: Pawan Rama Mali <prm@outlook.in>
-Description: Enables R users to run large language models locally using GPU 
-    Generative Pre-trained Transformer Unified Format model files and 'llama.cpp' as the inference 
+Description: Enables R users to run large language models locally using 'GGUF' 
+    (Generative Pretrained Transformer Unified Format) model files and 'llama.cpp' as the inference 
     engine. Provides a complete R interface for loading models, generating text 
     completions, and streaming responses in real-time. Supports on-device 
     inference without requiring cloud APIs or internet connectivity, ensuring 

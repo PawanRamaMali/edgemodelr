@@ -1,3 +1,8 @@
+// Fix for isNull macro conflict with Rcpp on Linux/Unix systems
+#ifdef isNull
+#undef isNull
+#endif
+
 #include <Rcpp.h>
 #include <memory>
 #include <string>
