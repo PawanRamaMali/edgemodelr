@@ -48,7 +48,7 @@ demo_streaming_completion <- function() {
     if (!interactive()) {
       stop("Skipping model download during automated testing")
     }
-    if (!interactive()) stop("Skipping model download during automated testing"); setup <- edge_quick_setup("llama3.2-1b")
+    setup <- edge_quick_setup("llama3.2-1b")
     
     if (is.null(setup$context)) {
       cat("❌ Failed to load Llama 3.2 model\n")
@@ -107,7 +107,7 @@ demo_streaming_chat <- function() {
     if (!interactive()) {
       stop("Skipping model download during automated testing")
     }
-    if (!interactive()) stop("Skipping model download during automated testing"); setup <- edge_quick_setup("llama3.2-1b")
+    setup <- edge_quick_setup("llama3.2-1b")
     
     if (is.null(setup$context)) {
       cat("❌ Failed to load model\n")
@@ -170,7 +170,7 @@ compare_streaming_performance <- function() {
     if (!interactive()) {
       stop("Skipping model download during automated testing")
     }
-    if (!interactive()) stop("Skipping model download during automated testing"); setup <- edge_quick_setup("llama3.2-1b")
+    setup <- edge_quick_setup("llama3.2-1b")
     
     if (is.null(setup$context)) {
       cat("❌ Failed to load model\n")
@@ -246,7 +246,7 @@ creative_writing_demo <- function() {
     if (!interactive()) {
       stop("Skipping model download during automated testing")
     }
-    if (!interactive()) stop("Skipping model download during automated testing"); setup <- edge_quick_setup("llama3.2-1b")
+    setup <- edge_quick_setup("llama3.2-1b")
     
     if (is.null(setup$context)) {
       cat("❌ Failed to load model\n")

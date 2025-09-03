@@ -34,6 +34,26 @@
 #' edge_chat_stream(setup$context)
 #' }
 #' 
+#' @section Examples:
+#' 
+#' See comprehensive examples in the package:
+#' \itemize{
+#'   \item \code{system.file("examples/getting_started_example.R", package = "edgemodelr")}
+#'   \item \code{system.file("examples/data_science_assistant_example.R", package = "edgemodelr")}
+#'   \item \code{system.file("examples/text_analysis_example.R", package = "edgemodelr")}
+#'   \item \code{system.file("examples/creative_writing_example.R", package = "edgemodelr")}
+#'   \item \code{system.file("examples/advanced_usage_example.R", package = "edgemodelr")}
+#' }
+#' 
+#' Run examples:
+#' \preformatted{
+#' # Getting started guide
+#' source(system.file("examples/getting_started_example.R", package = "edgemodelr"))
+#' 
+#' # Data science assistant
+#' source(system.file("examples/data_science_assistant_example.R", package = "edgemodelr"))
+#' }
+#' 
 #' @section System Requirements:
 #' 
 #' \itemize{

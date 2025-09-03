@@ -19,7 +19,7 @@ manual_model_setup <- function() {
     if (!interactive()) {
       stop("Skipping model download during automated testing")
     }
-    if (!interactive()) stop("Skipping model download during automated testing"); setup <- edge_quick_setup("TinyLlama-1.1B")
+    setup <- edge_quick_setup("TinyLlama-1.1B")
     cat("✓ TinyLlama-1.1B setup successful!\n")
     
     # Test it works

@@ -7,16 +7,24 @@
 #' 
 #' @examples
 #' \donttest{
-#' # Load a TinyLlama model (example path)
-#' model_path <- file.path(tempdir(), "TinyLlama-1.1B-Chat.Q4_K_M.gguf")
-#' if (file.exists(model_path)) {
-#'   ctx <- edge_load_model(model_path, n_ctx = 2048)
+#' # Quick setup with automatic model download
+#' setup <- edge_quick_setup("TinyLlama-1.1B")
+#' if (!is.null(setup$context)) {
+#'   ctx <- setup$context
 #'   
 #'   # Generate completion
 #'   result <- edge_completion(ctx, "Explain R data.frame:", n_predict = 100)
 #'   cat(result)
 #'   
 #'   # Free model when done
+#'   edge_free_model(ctx)
+#' }
+#' 
+#' # Manual model loading from downloaded file
+#' model_path <- "path/to/your/model.gguf"
+#' if (file.exists(model_path)) {
+#'   ctx <- edge_load_model(model_path, n_ctx = 2048, n_gpu_layers = 0)
+#'   # ... use model ...
 #'   edge_free_model(ctx)
 #' }
 #' }
@@ -75,11 +83,25 @@ edge_load_model <- function(model_path, n_ctx = 2048L, n_gpu_layers = 0L) {
 #' 
 #' @examples
 #' \donttest{
-#' model_path <- file.path(tempdir(), "model.gguf")
-#' if (file.exists(model_path)) {
-#'   ctx <- edge_load_model(model_path)
+#' # Basic completion example
+#' setup <- edge_quick_setup("TinyLlama-1.1B")
+#' if (!is.null(setup$context)) {
+#'   ctx <- setup$context
+#'   
+#'   # Simple completion
 #'   result <- edge_completion(ctx, "The capital of France is", n_predict = 50)
-#'   cat(result)
+#'   cat("Result:", result, "\n")
+#'   
+#'   # Completion with custom parameters
+#'   creative_result <- edge_completion(
+#'     ctx, 
+#'     "Write a short poem about data science:",
+#'     n_predict = 100,
+#'     temperature = 0.9,
+#'     top_p = 0.8
+#'   )
+#'   cat("Creative result:", creative_result, "\n")
+#'   
 #'   edge_free_model(ctx)
 #' }
 #' }
@@ -103,12 +125,22 @@ edge_completion <- function(ctx, prompt, n_predict = 128L, temperature = 0.8, to
 #' 
 #' @examples
 #' \donttest{
-#' model_path <- file.path(tempdir(), "model.gguf")
-#' if (file.exists(model_path)) {
-#'   ctx <- edge_load_model(model_path)
-#'   # ... use model ...
-#'   edge_free_model(ctx)  # Clean up
+#' # Proper cleanup after model usage
+#' setup <- edge_quick_setup("TinyLlama-1.1B")
+#' if (!is.null(setup$context)) {
+#'   ctx <- setup$context
+#'   
+#'   # Use model for various tasks
+#'   result <- edge_completion(ctx, "Hello", n_predict = 20)
+#'   cat(result)
+#'   
+#'   # Always clean up when done
+#'   edge_free_model(ctx)
 #' }
+#' 
+#' # Safe cleanup - handles invalid contexts gracefully
+#' edge_free_model(NULL)  # Safe, no error
+#' edge_free_model("invalid")  # Safe, no error
 #' }
 #' @export
 edge_free_model <- function(ctx) {
