@@ -26,10 +26,13 @@
 // Use function approach instead of macro redefinition to avoid conflicts
 
 // Define format attribute for GCC/Clang compatibility
-#ifndef __GNUC__
-#    define R_PRINTF_FORMAT(...)
-#else
-#    define R_PRINTF_FORMAT(...) __attribute__((format(printf, __VA_ARGS__)))
+// Check if R_PRINTF_FORMAT is already defined by R headers
+#ifndef R_PRINTF_FORMAT
+#    ifndef __GNUC__
+#        define R_PRINTF_FORMAT(...)
+#    else
+#        define R_PRINTF_FORMAT(...) __attribute__((format(printf, __VA_ARGS__)))
+#    endif
 #endif
 
 // Protect against R macros interfering with C++ standard library
@@ -112,6 +115,12 @@ static inline int r_puts(const char* str) {
     return strlen(str) + 1; /* Return positive value for success */
 }
 
+static inline int r_fflush(FILE* stream) {
+    // For CRAN compliance, ignore fflush calls to stdout/stderr
+    // R handles buffering automatically
+    return 0;
+}
+
 // Redirect macros (only define if not already defined)
 #ifndef fputs
 #define fputs r_fputs
@@ -131,6 +140,10 @@ static inline int r_puts(const char* str) {
 
 #ifndef puts
 #define puts r_puts
+#endif
+
+#ifndef fflush
+#define fflush r_fflush
 #endif
 
 // Redirect stderr and stdout to prevent direct access

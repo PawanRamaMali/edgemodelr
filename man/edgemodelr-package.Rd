@@ -6,7 +6,7 @@
 \alias{edgemodelr-package}
 \title{edgemodelr: Local Language Model Inference via 'llama.cpp'}
 \description{
-Enables R users to run large language models locally using 'GGUF' (Generative Pretrained Transformer Unified Format) model files and 'llama.cpp' as the inference engine. Provides a complete R interface for loading models, generating text completions, and streaming responses in real-time. Supports on-device inference without requiring cloud APIs or internet connectivity, ensuring complete data privacy and control.
+Enables R users to run large language models locally using 'GGUF' ('GPT'-Generated Unified Format) model files and the 'llama.cpp' inference engine. Provides a complete R interface for loading models, generating text completions, and streaming responses in real-time. Supports local inference without requiring cloud APIs or internet connectivity, ensuring complete data privacy and control.
 }
 \details{
 The edgemodelr package provides R bindings for local language model inference
@@ -47,6 +47,28 @@ For interactive chat:
 \preformatted{
 setup <- edge_quick_setup("TinyLlama-1.1B")
 edge_chat_stream(setup$context)
+}
+}
+
+\section{Examples}{
+
+
+See comprehensive examples in the package:
+\itemize{
+\item \code{system.file("examples/getting_started_example.R", package = "edgemodelr")}
+\item \code{system.file("examples/data_science_assistant_example.R", package = "edgemodelr")}
+\item \code{system.file("examples/text_analysis_example.R", package = "edgemodelr")}
+\item \code{system.file("examples/creative_writing_example.R", package = "edgemodelr")}
+\item \code{system.file("examples/advanced_usage_example.R", package = "edgemodelr")}
+}
+
+Run examples:
+\preformatted{
+# Getting started guide
+source(system.file("examples/getting_started_example.R", package = "edgemodelr"))
+
+# Data science assistant
+source(system.file("examples/data_science_assistant_example.R", package = "edgemodelr"))
 }
 }
 
