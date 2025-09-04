@@ -433,12 +433,12 @@ edge_quick_setup <- function(model_name, cache_dir = NULL) {
 #' }
 #' @export
 edge_stream_completion <- function(ctx, prompt, callback, n_predict = 128L, temperature = 0.8, top_p = 0.95) {
-  if (!is.character(prompt) || length(prompt) != 1L) {
-    stop("Prompt must be a single character string")
-  }
-  
   if (!is.function(callback)) {
     stop("Callback must be a function")
+  }
+  
+  if (!is.character(prompt) || length(prompt) != 1L) {
+    stop("Prompt must be a single character string")
   }
   
   edge_completion_stream_internal(ctx, prompt, callback, 
@@ -546,6 +546,7 @@ edge_chat_stream <- function(ctx, system_prompt = NULL, max_history = 10, n_pred
 #' Build chat prompt from conversation history
 #' @param history List of conversation turns with role and content
 #' @return Formatted prompt string
+#' @export
 build_chat_prompt <- function(history) {
   if (length(history) == 0) {
     return("")

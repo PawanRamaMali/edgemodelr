@@ -3,8 +3,8 @@ PKG_CXXFLAGS = -DNDEBUG -DGGML_USE_CPU
 PKG_CFLAGS = -DNDEBUG -DGGML_USE_CPU
 
 # Override warnings for ggml source files
-GGML_CXXFLAGS = $(PKG_CXXFLAGS) -fPIC -Wno-unused-function -Wno-unused-variable -Wno-unused-parameter -Wno-interference-size -Wno-pedantic
-GGML_CFLAGS = $(PKG_CFLAGS) -DUSING_R=1 -fPIC -Wno-unused-function -Wno-unused-variable -Wno-unused-parameter
+GGML_CXXFLAGS = $(PKG_CXXFLAGS) -fPIC -Wno-interference-size -Wno-pedantic
+GGML_CFLAGS = $(PKG_CFLAGS) -DUSING_R=1 -fPIC
 PKG_LIBS = $(LAPACK_LIBS) $(BLAS_LIBS) $(FLIBS)
 
 # Complete static list of ALL object files - no variables, no wildcards

@@ -888,6 +888,7 @@ int32_t ggml_get_i32_1d(const struct ggml_tensor * tensor, int i) {
         default:
             {
                 GGML_ABORT("fatal error");
+                return 0; // This line will never be reached but satisfies compiler
             }
     }
 }
@@ -954,6 +955,7 @@ int32_t ggml_get_i32_nd(const struct ggml_tensor * tensor, int i0, int i1, int i
             return ((float *) data)[0];
         default:
             GGML_ABORT("fatal error");
+            return 0; // This line will never be reached but satisfies compiler
     }
 }
 
@@ -1025,6 +1027,7 @@ float ggml_get_f32_1d(const struct ggml_tensor * tensor, int i) {
         default:
             {
                 GGML_ABORT("fatal error");
+                return 0.0f; // This line will never be reached but satisfies compiler
             }
     }
 }
@@ -1085,6 +1088,7 @@ float ggml_get_f32_nd(const struct ggml_tensor * tensor, int i0, int i1, int i2,
             return ((float *) data)[0];
         default:
             GGML_ABORT("fatal error");
+            return 0.0f; // This line will never be reached but satisfies compiler
     }
 }
 
