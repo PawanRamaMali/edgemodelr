@@ -133,6 +133,15 @@ static inline int r_puts(const char* str) {
 #define puts r_puts
 #endif
 
+// Redirect stderr and stdout to prevent direct access
+#ifndef stderr
+#define stderr ((FILE*)0)
+#endif
+
+#ifndef stdout  
+#define stdout ((FILE*)0)
+#endif
+
 #else
 /* Not using R - use standard functions */
 #include <stdio.h>

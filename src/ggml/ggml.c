@@ -215,10 +215,6 @@ GGML_API ggml_abort_callback_t ggml_set_abort_callback(ggml_abort_callback_t cal
     return ret_val;
 }
 
-#ifdef __GNUC__
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wreturn-type"
-#endif
 void ggml_abort(const char * file, int line, const char * fmt, ...) {
     fflush(stdout);
 
@@ -247,9 +243,6 @@ void ggml_abort(const char * file, int line, const char * fmt, ...) {
     abort();
     #endif
 }
-#ifdef __GNUC__
-#pragma GCC diagnostic pop
-#endif
 
 // ggml_print_backtrace is registered with std::set_terminate by ggml.cpp
 

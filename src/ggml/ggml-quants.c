@@ -5001,12 +5001,12 @@ void quantize_row_iq2_s_ref(const float * GGML_RESTRICT x, block_iq2_s * GGML_RE
 
 static bool validate_float(float f, size_t i) {
     if (isinf(f)) {
-        fprintf(stderr, "ggml_validate_row_data: found inf value at block %zu\n", i);
+        fprintf(stderr, "ggml_validate_row_data: found inf value at block %u\n", (unsigned)i);
         return false;
     }
 
     if (isnan(f)) {
-        fprintf(stderr, "ggml_validate_row_data: found nan value at block %zu\n", i);
+        fprintf(stderr, "ggml_validate_row_data: found nan value at block %u\n", (unsigned)i);
         return false;
     }
 
@@ -5023,12 +5023,12 @@ static bool isnan_fp16(ggml_fp16_t f) {
 
 static bool validate_fp16(ggml_fp16_t f, size_t i) {
     if (isinf_fp16(f)) {
-        fprintf(stderr, "ggml_validate_row_data: found inf value at block %zu\n", i);
+        fprintf(stderr, "ggml_validate_row_data: found inf value at block %u\n", (unsigned)i);
         return false;
     }
 
     if (isnan_fp16(f)) {
-        fprintf(stderr, "ggml_validate_row_data: found nan value at block %zu\n", i);
+        fprintf(stderr, "ggml_validate_row_data: found nan value at block %u\n", (unsigned)i);
         return false;
     }
 
@@ -5037,7 +5037,7 @@ static bool validate_fp16(ggml_fp16_t f, size_t i) {
 
 static bool validate_e_e8m0(uint8_t e, size_t i) {
     if (e == 0xff) {
-        fprintf(stderr, "ggml_validate_row_data: found invalid e value %d at block %zu\n", e, i);
+        fprintf(stderr, "ggml_validate_row_data: found invalid e value %d at block %u\n", e, (unsigned)i);
         return false;
     }
 
@@ -5085,7 +5085,7 @@ bool ggml_validate_row_data(enum ggml_type type, const void * data, size_t nbyte
     }
 
     if (nbytes % ggml_type_size(type) != 0) {
-        fprintf(stderr, "%s: invalid size %zu for type %s (type size = %zu)\n", __func__, nbytes, ggml_type_name(type), ggml_type_size(type));
+        fprintf(stderr, "%s: invalid size %u for type %s (type size = %u)\n", __func__, (unsigned)nbytes, ggml_type_name(type), (unsigned)ggml_type_size(type));
         return false;
     }
 
@@ -5102,11 +5102,11 @@ bool ggml_validate_row_data(enum ggml_type type, const void * data, size_t nbyte
                     infs += (f[i] & 0x7fff) == 0x7f80;
                 }
                 if (nans) {
-                    fprintf(stderr, "%s: found %d NaNs in row of %zu BF16 values\n", __func__, nans, nb);
+                    fprintf(stderr, "%s: found %d NaNs in row of %u BF16 values\n", __func__, nans, (unsigned)nb);
                     return false;
                 }
                 if (infs) {
-                    fprintf(stderr, "%s: found %d infinities in row of %zu BF16 values\n", __func__, infs, nb);
+                    fprintf(stderr, "%s: found %d infinities in row of %u BF16 values\n", __func__, infs, (unsigned)nb);
                     return false;
                 }
             } break;

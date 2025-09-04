@@ -4,8 +4,8 @@ PKG_CFLAGS = -DNDEBUG -DGGML_USE_CPU
 PKG_LIBS = 
 
 # Override warnings for ggml source files
-GGML_CXXFLAGS = $(PKG_CXXFLAGS) -Wno-format
-GGML_CFLAGS = $(PKG_CFLAGS) -DUSING_R=1 -Wno-format
+GGML_CXXFLAGS = $(PKG_CXXFLAGS)
+GGML_CFLAGS = $(PKG_CFLAGS) -DUSING_R=1
 
 # Main package objects  
 OBJECTS = bindings.o RcppExports.o
@@ -52,12 +52,12 @@ ggml/ggml-cpu/ggml-cpu-c.o: ggml/ggml-cpu/ggml-cpu.c
 ggml/ggml-cpu/ggml-cpu-cpp.o: ggml/ggml-cpu/ggml-cpu.cpp
 	$(CXX) $(ALL_CPPFLAGS) $(GGML_CXXFLAGS) -c $< -o $@
 
-# Standard compilation rules for main source files (with suppression for Rcpp and format) 
+# Standard compilation rules for main source files
 bindings.o: bindings.cpp
-	$(CXX) $(ALL_CPPFLAGS) $(ALL_CXXFLAGS) -Wno-pedantic -Wno-format -c $< -o $@
+	$(CXX) $(ALL_CPPFLAGS) $(ALL_CXXFLAGS) -c $< -o $@
 
 RcppExports.o: RcppExports.cpp
-	$(CXX) $(ALL_CPPFLAGS) $(ALL_CXXFLAGS) -Wno-pedantic -c $< -o $@
+	$(CXX) $(ALL_CPPFLAGS) $(ALL_CXXFLAGS) -c $< -o $@
 
 # Special rules for GGML/LLAMA files
 ggml/%.o: ggml/%.c
