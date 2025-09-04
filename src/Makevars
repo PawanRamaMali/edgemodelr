@@ -3,8 +3,8 @@ PKG_CXXFLAGS = -DNDEBUG -DGGML_USE_CPU
 PKG_CFLAGS = -DNDEBUG -DGGML_USE_CPU
 
 # Override warnings for ggml source files
-GGML_CXXFLAGS = $(PKG_CXXFLAGS) -fPIC
-GGML_CFLAGS = $(PKG_CFLAGS) -DUSING_R=1 -fPIC
+GGML_CXXFLAGS = $(PKG_CXXFLAGS) -fPIC -Wno-format
+GGML_CFLAGS = $(PKG_CFLAGS) -DUSING_R=1 -fPIC -Wno-format
 PKG_LIBS = $(LAPACK_LIBS) $(BLAS_LIBS) $(FLIBS)
 
 # Complete static list of ALL object files - no variables, no wildcards
@@ -37,9 +37,9 @@ ggml/ggml-cpu/ggml-cpu-c.o: ggml/ggml-cpu/ggml-cpu.c
 ggml/ggml-cpu/ggml-cpu-cpp.o: ggml/ggml-cpu/ggml-cpu.cpp
 	$(CXX) $(ALL_CPPFLAGS) $(GGML_CXXFLAGS) -c $< -o $@
 
-# Standard compilation rules for main source files (with pedantic suppression for Rcpp)
+# Standard compilation rules for main source files (with suppression for Rcpp and format)
 bindings.o: bindings.cpp
-	$(CXX) $(ALL_CPPFLAGS) $(ALL_CXXFLAGS) -fPIC -Wno-pedantic -c $< -o $@
+	$(CXX) $(ALL_CPPFLAGS) $(ALL_CXXFLAGS) -fPIC -Wno-pedantic -Wno-format -c $< -o $@
 
 RcppExports.o: RcppExports.cpp
 	$(CXX) $(ALL_CPPFLAGS) $(ALL_CXXFLAGS) -fPIC -Wno-pedantic -c $< -o $@
