@@ -37,12 +37,12 @@ ggml/ggml-cpu/ggml-cpu-c.o: ggml/ggml-cpu/ggml-cpu.c
 ggml/ggml-cpu/ggml-cpu-cpp.o: ggml/ggml-cpu/ggml-cpu.cpp
 	$(CXX) $(ALL_CPPFLAGS) $(GGML_CXXFLAGS) -c $< -o $@
 
-# Standard compilation rules for main source files
+# Standard compilation rules for main source files (with pedantic suppression for Rcpp)
 bindings.o: bindings.cpp
-	$(CXX) $(ALL_CPPFLAGS) $(ALL_CXXFLAGS) -fPIC -c $< -o $@
+	$(CXX) $(ALL_CPPFLAGS) $(ALL_CXXFLAGS) -fPIC -Wno-pedantic -c $< -o $@
 
 RcppExports.o: RcppExports.cpp
-	$(CXX) $(ALL_CPPFLAGS) $(ALL_CXXFLAGS) -fPIC -c $< -o $@
+	$(CXX) $(ALL_CPPFLAGS) $(ALL_CXXFLAGS) -fPIC -Wno-pedantic -c $< -o $@
 
 # Special rules for GGML/LLAMA files with warning suppression
 ggml/%.o: ggml/%.c

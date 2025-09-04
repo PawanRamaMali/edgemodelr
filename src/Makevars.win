@@ -50,12 +50,12 @@ ggml/ggml-cpu/ggml-cpu-c.o: ggml/ggml-cpu/ggml-cpu.c
 ggml/ggml-cpu/ggml-cpu-cpp.o: ggml/ggml-cpu/ggml-cpu.cpp
 	$(CXX) $(ALL_CPPFLAGS) $(GGML_CXXFLAGS) -c $< -o $@
 
-# Standard compilation rules for main source files
+# Standard compilation rules for main source files (with pedantic suppression for Rcpp)
 bindings.o: bindings.cpp
-	$(CXX) $(ALL_CPPFLAGS) $(ALL_CXXFLAGS) -c $< -o $@
+	$(CXX) $(ALL_CPPFLAGS) $(ALL_CXXFLAGS) -Wno-pedantic -c $< -o $@
 
 RcppExports.o: RcppExports.cpp
-	$(CXX) $(ALL_CPPFLAGS) $(ALL_CXXFLAGS) -c $< -o $@
+	$(CXX) $(ALL_CPPFLAGS) $(ALL_CXXFLAGS) -Wno-pedantic -c $< -o $@
 
 # Special rules for GGML/LLAMA files
 ggml/%.o: ggml/%.c

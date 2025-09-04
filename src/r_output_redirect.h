@@ -23,9 +23,14 @@
 #include <string.h>
 #include <stdbool.h>
 
-// Redefine stderr and stdout to avoid CRAN detection
-#define stderr ((FILE*)0)
-#define stdout ((FILE*)0)
+// Use function approach instead of macro redefinition to avoid conflicts
+
+// Define format attribute for GCC/Clang compatibility
+#ifndef __GNUC__
+#    define R_PRINTF_FORMAT(...)
+#else
+#    define R_PRINTF_FORMAT(...) __attribute__((format(printf, __VA_ARGS__)))
+#endif
 
 // Protect against R macros interfering with C++ standard library
 #ifdef __cplusplus
@@ -43,43 +48,35 @@ extern bool g_suppress_console_output;
 
 // Create R-compatible output functions that can be suppressed
 static inline void r_fputs(const char* text, FILE* stream) {
-    // For stderr/stdout (now NULL), always use Rprintf - CRAN compliance
-    if (stream == NULL || stream == (FILE*)0) {
-        if (!g_suppress_console_output) {
-            Rprintf("%s", text);
-        }
-    } else {
-        // For real file streams, use original function
-        fputs(text, stream);
+    // Always use Rprintf for CRAN compliance - ignore stream parameter
+    if (!g_suppress_console_output) {
+        Rprintf("%s", text);
     }
 }
 
+R_PRINTF_FORMAT(2, 3)
 static inline int r_fprintf(FILE* stream, const char* format, ...) {
     va_list args;
     va_start(args, format);
     int result = 0;
     
-    // For stderr/stdout (now NULL), use Rprintf - CRAN compliance
-    if (stream == NULL || stream == (FILE*)0) {
-        if (!g_suppress_console_output) {
-            char buffer[4096];
-            result = vsnprintf(buffer, sizeof(buffer), format, args);
-            if (result > 0) {
-                Rprintf("%s", buffer);
-            }
-        } else {
-            // Still calculate result for compatibility but don't output
-            result = vsnprintf(NULL, 0, format, args);
+    // Always use Rprintf for CRAN compliance - ignore stream parameter  
+    if (!g_suppress_console_output) {
+        char buffer[4096];
+        result = vsnprintf(buffer, sizeof(buffer), format, args);
+        if (result > 0) {
+            Rprintf("%s", buffer);
         }
     } else {
-        // For real file streams, use original function
-        result = vfprintf(stream, format, args);
+        // Still calculate result for compatibility but don't output
+        result = vsnprintf(NULL, 0, format, args);
     }
     
     va_end(args);
     return result;
 }
 
+R_PRINTF_FORMAT(1, 2)
 static inline int r_printf(const char* format, ...) {
     va_list args;
     va_start(args, format);
