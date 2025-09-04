@@ -3,7 +3,7 @@ PKG_CXXFLAGS = -DNDEBUG -DGGML_USE_CPU
 PKG_CFLAGS = -DNDEBUG -DGGML_USE_CPU
 
 # Override warnings for ggml source files
-GGML_CXXFLAGS = $(PKG_CXXFLAGS) -fPIC -Wno-interference-size -Wno-pedantic
+GGML_CXXFLAGS = $(PKG_CXXFLAGS) -fPIC
 GGML_CFLAGS = $(PKG_CFLAGS) -DUSING_R=1 -fPIC
 PKG_LIBS = $(LAPACK_LIBS) $(BLAS_LIBS) $(FLIBS)
 
@@ -39,10 +39,10 @@ ggml/ggml-cpu/ggml-cpu-cpp.o: ggml/ggml-cpu/ggml-cpu.cpp
 
 # Standard compilation rules for main source files
 bindings.o: bindings.cpp
-	$(CXX) $(ALL_CPPFLAGS) $(ALL_CXXFLAGS) -fPIC -Wno-pedantic -Wno-format -c $< -o $@
+	$(CXX) $(ALL_CPPFLAGS) $(ALL_CXXFLAGS) -fPIC -c $< -o $@
 
 RcppExports.o: RcppExports.cpp
-	$(CXX) $(ALL_CPPFLAGS) $(ALL_CXXFLAGS) -fPIC -Wno-pedantic -c $< -o $@
+	$(CXX) $(ALL_CPPFLAGS) $(ALL_CXXFLAGS) -fPIC -c $< -o $@
 
 # Special rules for GGML/LLAMA files with warning suppression
 ggml/%.o: ggml/%.c

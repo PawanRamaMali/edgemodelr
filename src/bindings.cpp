@@ -1,10 +1,4 @@
-// Suppress warnings from ggml/llama.cpp code
-#ifdef __GNUC__
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wunused-function"
-#pragma GCC diagnostic ignored "-Wunused-variable" 
-#pragma GCC diagnostic ignored "-Wunused-parameter"
-#endif
+// Main bindings file - should compile cleanly
 
 #include <Rcpp.h>
 #include <memory>
@@ -18,10 +12,7 @@
 #include "ggml-cpu.h"
 #include "r_output_redirect.h"
 
-// Restore compiler warnings
-#ifdef __GNUC__
-#pragma GCC diagnostic pop
-#endif
+// End of includes
 
 // Forward declaration for CPU backend registration
 extern "C" {

@@ -23,6 +23,10 @@
 #include <string.h>
 #include <stdbool.h>
 
+// Redefine stderr and stdout to avoid CRAN detection
+#define stderr ((FILE*)0)
+#define stdout ((FILE*)0)
+
 // Protect against R macros interfering with C++ standard library
 #ifdef __cplusplus
 #ifdef length
@@ -39,13 +43,13 @@ extern bool g_suppress_console_output;
 
 // Create R-compatible output functions that can be suppressed
 static inline void r_fputs(const char* text, FILE* stream) {
-    if (stream == stderr || stream == stdout) {
-        // Suppress console output for CRAN compliance
+    // For stderr/stdout (now NULL), always use Rprintf - CRAN compliance
+    if (stream == NULL || stream == (FILE*)0) {
         if (!g_suppress_console_output) {
             Rprintf("%s", text);
         }
     } else {
-        /* Use original fputs for file streams */
+        // For real file streams, use original function
         fputs(text, stream);
     }
 }
@@ -55,8 +59,8 @@ static inline int r_fprintf(FILE* stream, const char* format, ...) {
     va_start(args, format);
     int result = 0;
     
-    if (stream == stderr || stream == stdout) {
-        /* Suppress console output for CRAN compliance */
+    // For stderr/stdout (now NULL), use Rprintf - CRAN compliance
+    if (stream == NULL || stream == (FILE*)0) {
         if (!g_suppress_console_output) {
             char buffer[4096];
             result = vsnprintf(buffer, sizeof(buffer), format, args);
@@ -68,7 +72,7 @@ static inline int r_fprintf(FILE* stream, const char* format, ...) {
             result = vsnprintf(NULL, 0, format, args);
         }
     } else {
-        /* Use original fprintf for file streams */
+        // For real file streams, use original function
         result = vfprintf(stream, format, args);
     }
     

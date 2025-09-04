@@ -3,7 +3,7 @@ PKG_CXXFLAGS = -std=gnu++17 -O2 -DNDEBUG -DNOMINMAX -D_USE_MATH_DEFINES -DGGML_U
 PKG_LIBS = 
 
 # Override warnings for ggml source files
-GGML_CXXFLAGS = $(PKG_CXXFLAGS) -Wno-interference-size
+GGML_CXXFLAGS = $(PKG_CXXFLAGS)
 
 # Main package objects  
 OBJECTS = bindings.o RcppExports.o
