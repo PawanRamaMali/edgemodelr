@@ -2,6 +2,7 @@
 #include "llama-impl.h"
 #include "llama-model.h"
 #include "llama-model-loader.h"
+#include "../r_output_redirect.h"
 
 #include <algorithm>
 #include <cmath>

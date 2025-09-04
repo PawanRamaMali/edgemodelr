@@ -4,6 +4,7 @@
 
 #include "unicode.h"
 #include "unicode-data.h"
+#include "../r_output_redirect.h"
 
 #include <algorithm>
 #include <cassert>
