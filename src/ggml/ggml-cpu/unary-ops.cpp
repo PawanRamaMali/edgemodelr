@@ -116,7 +116,7 @@ static void unary_op(const ggml_compute_params * params, ggml_tensor * dst) {
     } else if (src0->type == GGML_TYPE_F16  && dst->type == GGML_TYPE_F32) {
         apply_unary_op<op, ggml_fp16_t, float>(params, dst);
     } else {
-        fprintf(stderr, "%s: unsupported types: dst: %s, src0: %s\n", __func__,
+        GGML_LOG_ERROR("%s: unsupported types: dst: %s, src0: %s", __func__,
             ggml_type_name(dst->type), ggml_type_name(src0->type));
         GGML_ABORT("fatal error");
     }

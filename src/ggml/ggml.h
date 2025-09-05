@@ -257,12 +257,12 @@ __host__ __device__ constexpr inline void ggml_unused_vars_impl(Args&&...) noexc
 #ifndef NDEBUG
 #   ifdef USING_R
 #       define GGML_UNREACHABLE() do { \
-            fprintf(stderr, "GGML: statement should be unreachable\n"); \
+            GGML_LOG_ERROR("GGML: statement should be unreachable"); \
             /* In R packages, avoid abort() - use a non-terminating approach */ \
             __builtin_unreachable(); \
         } while(0)
 #   else
-#       define GGML_UNREACHABLE() do { fprintf(stderr, "statement should be unreachable\n"); abort(); } while(0)
+#       define GGML_UNREACHABLE() do { GGML_LOG_ERROR("statement should be unreachable"); abort(); } while(0)
 #   endif
 #elif defined(__GNUC__)
 #   define GGML_UNREACHABLE() __builtin_unreachable()
@@ -351,7 +351,7 @@ extern "C" {
     // Function type used in fatal error callbacks
     typedef void (*ggml_abort_callback_t)(const char * error_message);
 
-    // Set the abort callback (passing null will restore original abort functionality: printing a message to stdout)
+    // Set the abort callback (passing null will restore original abort functionality: logging error message)
     // Returns the old callback for chaining
     GGML_API ggml_abort_callback_t ggml_set_abort_callback(ggml_abort_callback_t callback);
 

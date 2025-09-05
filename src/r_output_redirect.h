@@ -146,13 +146,19 @@ static inline int r_fflush(FILE* stream) {
 #define fflush r_fflush
 #endif
 
-// Redirect stderr and stdout to prevent direct access
-#ifndef stderr
+// Completely nullify stderr and stdout access for CRAN compliance
+// This prevents any direct access to these streams
+#undef stderr
+#undef stdout
 #define stderr ((FILE*)0)
-#endif
-
-#ifndef stdout  
 #define stdout ((FILE*)0)
+
+// Also nullify the file handle numbers to prevent direct access
+#ifndef STDERR_FILENO
+#define STDERR_FILENO (-1)
+#endif
+#ifndef STDOUT_FILENO  
+#define STDOUT_FILENO (-1)
 #endif
 
 #else

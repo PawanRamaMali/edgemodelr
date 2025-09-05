@@ -561,7 +561,7 @@ bool llama_grammar_parser::parse(const char * src) {
             }
         }
     } catch (const std::exception & err) {
-        fprintf(stderr, "%s: error parsing grammar: %s\n\n%s\n", __func__, err.what(), src);
+        LLAMA_LOG_ERROR("%s: error parsing grammar: %s\n%s", __func__, err.what(), src);
         rules.clear();
         return false;
     }
@@ -582,7 +582,7 @@ void llama_grammar_parser::print(FILE * file) {
             // fprintf(file, "\n");
         }
     } catch (const std::exception & err) {
-        fprintf(stderr, "\n%s: error printing grammar: %s\n", __func__, err.what());
+        LLAMA_LOG_ERROR("%s: error printing grammar: %s", __func__, err.what());
     }
 }
 
@@ -988,13 +988,13 @@ struct llama_grammar * llama_grammar_init_impl(
     // if there is a grammar, parse it
     // rules will be empty (default) if there are parse errors
     if (!parser.parse(grammar_str) || parser.rules.empty()) {
-        fprintf(stderr, "%s: failed to parse grammar\n", __func__);
+        LLAMA_LOG_ERROR("%s: failed to parse grammar", __func__);
         return nullptr;
     }
 
     // Ensure that there is a "root" node.
     if (parser.symbol_ids.find("root") == parser.symbol_ids.end()) {
-        fprintf(stderr, "%s: grammar does not contain a 'root' symbol\n", __func__);
+        LLAMA_LOG_ERROR("%s: grammar does not contain a 'root' symbol", __func__);
         return nullptr;
     }
 

@@ -4,6 +4,7 @@
 
 #include "unicode.h"
 #include "unicode-data.h"
+#include "llama-impl.h"
 #include "../r_output_redirect.h"
 
 #include <algorithm>
@@ -1040,8 +1041,8 @@ std::vector<std::string> unicode_regex_split(const std::string & text, const std
                 bpe_offsets = unicode_regex_split_stl(wtext, wregex_expr, bpe_offsets);
             }
         } catch (std::regex_error & e) {
-            fprintf(stderr, "Failed to process regex: '%s'\n", regex_expr.c_str());
-            fprintf(stderr, "Regex error: %s\n", e.what());
+            LLAMA_LOG_ERROR("Failed to process regex: '%s'", regex_expr.c_str());
+            LLAMA_LOG_ERROR("Regex error: %s", e.what());
             throw std::runtime_error("Failed to process regex");
         }
     }

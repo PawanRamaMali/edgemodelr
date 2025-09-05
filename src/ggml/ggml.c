@@ -117,7 +117,8 @@ static void ggml_print_backtrace_symbols(void) {
             symbol = info.dli_sname;
         }
 
-        fprintf(stderr, "%d: %p %s\n", idx, addr, symbol);
+        // Debug backtrace output disabled for R package compliance
+        // fprintf(stderr, "%d: %p %s\n", idx, addr, symbol);
     }
 }
 #elif defined(__linux__) && defined(__GLIBC__)
@@ -208,7 +209,7 @@ void ggml_print_backtrace(void) {
 
 static ggml_abort_callback_t g_abort_callback = NULL;
 
-// Set the abort callback (passing null will restore original abort functionality: printing a message to stdout)
+// Set the abort callback (passing null will restore original abort functionality: logging error message)
 GGML_API ggml_abort_callback_t ggml_set_abort_callback(ggml_abort_callback_t callback) {
     ggml_abort_callback_t ret_val = g_abort_callback;
     g_abort_callback = callback;
@@ -216,7 +217,7 @@ GGML_API ggml_abort_callback_t ggml_set_abort_callback(ggml_abort_callback_t cal
 }
 
 void ggml_abort(const char * file, int line, const char * fmt, ...) {
-    fflush(stdout);
+    // fflush(stdout); // Disabled for R package compliance
 
     char message[2048];
     int offset = snprintf(message, sizeof(message), "%s:%d: ", file, line);
@@ -230,7 +231,7 @@ void ggml_abort(const char * file, int line, const char * fmt, ...) {
         g_abort_callback(message);
     } else {
         // default: print error and backtrace to stderr
-        fprintf(stderr, "%s\n", message);
+        GGML_LOG_ERROR("%s", message);
         ggml_print_backtrace();
     }
 
@@ -286,8 +287,9 @@ void ggml_log_internal(enum ggml_log_level level, const char * format, ...) {
 void ggml_log_callback_default(enum ggml_log_level level, const char * text, void * user_data) {
     (void) level;
     (void) user_data;
-    fputs(text, stderr);
-    fflush(stderr);
+    // For R package compliance, disable direct stderr output
+    // fputs(text, stderr);
+    // fflush(stderr);
 }
 
 //
@@ -6212,7 +6214,7 @@ static void ggml_compute_backward(
                     }
                 } break;
                 default: {
-                    fprintf(stderr, "%s: unsupported unary op for backward pass: %s\n",
+                    GGML_LOG_ERROR("%s: unsupported unary op for backward pass: %s",
                         __func__, ggml_unary_op_name(ggml_get_unary_op(tensor)));
                     GGML_ABORT("fatal error");
                 } //break;

@@ -2,13 +2,7 @@
 
 // GGML internal header
 
-// Suppress unused function warnings for static utility functions
-#ifdef __GNUC__
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wunused-function"
-#pragma GCC diagnostic ignored "-Wunused-variable"
-#pragma GCC diagnostic ignored "-Wunused-parameter"
-#endif
+// Pragma suppressions removed for CRAN compliance
 
 #include "ggml.h"
 #include "gguf.h"
@@ -631,7 +625,4 @@ GGML_API struct gguf_context * gguf_init_from_file_impl(FILE * file, struct gguf
 GGML_API void gguf_write_to_buf(const struct gguf_context * ctx, std::vector<int8_t> & buf, bool only_meta);
 #endif // __cplusplus
 
-// Restore compiler warnings
-#ifdef __GNUC__
-#pragma GCC diagnostic pop
-#endif
+// Pragma pop removed for CRAN compliance
