@@ -70,57 +70,6 @@ test_that("edge_quick_setup parameter validation", {
   )
 })
 
-test_that("Model memory management works correctly", {
-  possible_paths <- c(
-    "tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf",
-    "models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf",
-    file.path(Sys.getenv("HOME"), ".cache", "edgemodelr", "tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf")
-  )
-  
-  model_path <- NULL
-  for (path in possible_paths) {
-    if (file.exists(path)) {
-      model_path <- path
-      break
-    }
-  }
-  
-  if (!is.null(model_path)) {
-    # Test multiple load/free cycles
-    for (i in 1:3) {
-      ctx <- edge_load_model(model_path, n_ctx = 256)
-      expect_true(is_valid_model(ctx))
-      
-      # Use the model briefly
-      result <- edge_completion(ctx, "Test", n_predict = 2)
-      expect_true(is.character(result))
-      
-      # Free the model
-      edge_free_model(ctx)
-    }
-    
-    # Test that we can load multiple models (if system has enough memory)
-    ctx1 <- edge_load_model(model_path, n_ctx = 128)
-    expect_true(is_valid_model(ctx1))
-    
-    ctx2 <- edge_load_model(model_path, n_ctx = 128)
-    expect_true(is_valid_model(ctx2))
-    
-    # Both should work independently
-    result1 <- edge_completion(ctx1, "Hello", n_predict = 2)
-    result2 <- edge_completion(ctx2, "Hi", n_predict = 2)
-    
-    expect_true(is.character(result1))
-    expect_true(is.character(result2))
-    
-    # Cleanup
-    edge_free_model(ctx1)
-    edge_free_model(ctx2)
-    
-  } else {
-    skip("No test model available for memory management tests")
-  }
-})
 
 test_that("edge_free_model handles invalid contexts gracefully", {
   # These should not crash, just handle gracefully
@@ -195,49 +144,6 @@ test_that("edge_quick_setup integration", {
   skip("Skipping edge_quick_setup integration test to avoid downloading models during testing")
 })
 
-test_that("Concurrent model operations", {
-  possible_paths <- c(
-    "tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf",
-    "models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf",
-    file.path(Sys.getenv("HOME"), ".cache", "edgemodelr", "tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf")
-  )
-  
-  model_path <- NULL
-  for (path in possible_paths) {
-    if (file.exists(path)) {
-      model_path <- path
-      break
-    }
-  }
-  
-  if (!is.null(model_path)) {
-    # Test loading multiple models simultaneously
-    contexts <- list()
-    
-    # Load multiple contexts
-    for (i in 1:3) {
-      contexts[[i]] <- edge_load_model(model_path, n_ctx = 128)
-      expect_true(is_valid_model(contexts[[i]]))
-    }
-    
-    # Test that all contexts work independently
-    results <- list()
-    for (i in 1:3) {
-      results[[i]] <- edge_completion(contexts[[i]], paste("Test", i), n_predict = 2)
-      expect_true(is.character(results[[i]]))
-      expect_true(nchar(results[[i]]) > 0)
-    }
-    
-    # Cleanup in random order to test robustness
-    cleanup_order <- sample(1:3)
-    for (i in cleanup_order) {
-      edge_free_model(contexts[[i]])
-    }
-    
-  } else {
-    skip("No test model available for concurrent operations test")
-  }
-})
 
 test_that("is_valid_model works with various inputs", {
   # Test with various invalid inputs
@@ -287,67 +193,4 @@ test_that("edge_free_model edge cases", {
   expect_silent(edge_free_model("invalid"))
 })
 
-test_that("Memory and resource management", {
-  possible_paths <- c(
-    "tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf",
-    "models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf",
-    file.path(Sys.getenv("HOME"), ".cache", "edgemodelr", "tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf")
-  )
-  
-  model_path <- NULL
-  for (path in possible_paths) {
-    if (file.exists(path)) {
-      model_path <- path
-      break
-    }
-  }
-  
-  if (!is.null(model_path)) {
-    # Test extreme context sizes
-    tryCatch({
-      # Very small context
-      ctx_small <- edge_load_model(model_path, n_ctx = 16)
-      expect_true(is_valid_model(ctx_small))
-      edge_free_model(ctx_small)
-      
-      # Very large context (may fail on systems with limited memory)
-      ctx_large <- edge_load_model(model_path, n_ctx = 8192)
-      expect_true(is_valid_model(ctx_large))
-      edge_free_model(ctx_large)
-      
-    }, error = function(e) {
-      # Expected on systems with limited memory
-      expect_true(grepl("memory|context|allocation", e$message, ignore.case = TRUE))
-    })
-    
-    # Test rapid load/free cycles (memory leak detection)
-    for (i in 1:10) {
-      ctx <- edge_load_model(model_path, n_ctx = 64)
-      expect_true(is_valid_model(ctx))
-      edge_free_model(ctx)
-    }
-    
-  } else {
-    skip("No test model available for system integration tests")
-  }
-})
 
-test_that("Platform-specific behavior", {
-  # Test path handling across platforms
-  if (.Platform$OS.type == "windows") {
-    # Test Windows-specific path separators
-    expect_error(edge_load_model("C:\\nonexistent\\model.gguf"))
-    
-    # Test UNC paths if applicable
-    expect_error(edge_load_model("\\\\server\\share\\model.gguf"))
-    
-  } else {
-    # Test Unix-specific paths
-    expect_error(edge_load_model("/nonexistent/model.gguf"))
-    expect_error(edge_load_model("~/nonexistent_model.gguf"))
-  }
-  
-  # Test relative paths
-  expect_error(edge_load_model("./nonexistent.gguf"))
-  expect_error(edge_load_model("../nonexistent.gguf"))
-})

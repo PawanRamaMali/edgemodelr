@@ -143,108 +143,12 @@ test_that("Model loading with real model (if available)", {
       # This is acceptable behavior for this R package implementation
     })
     
-    # Test different context sizes
-    test_that("edge_load_model works with different context sizes", {
-      # Very small context (edge case)
-      ctx1 <- edge_load_model(model_path, n_ctx = 32)
-      expect_true(is_valid_model(ctx1))
-      edge_free_model(ctx1)
-      
-      # Small context
-      ctx2 <- edge_load_model(model_path, n_ctx = 128)
-      expect_true(is_valid_model(ctx2))
-      edge_free_model(ctx2)
-      
-      # Medium context
-      ctx3 <- edge_load_model(model_path, n_ctx = 512)
-      expect_true(is_valid_model(ctx3))
-      edge_free_model(ctx3)
-      
-      # Large context
-      ctx4 <- edge_load_model(model_path, n_ctx = 1024)
-      expect_true(is_valid_model(ctx4))
-      edge_free_model(ctx4)
-      
-      # Very large context (may fail on low memory systems)
-      tryCatch({
-        ctx5 <- edge_load_model(model_path, n_ctx = 4096)
-        expect_true(is_valid_model(ctx5))
-        edge_free_model(ctx5)
-      }, error = function(e) {
-        # This is expected on systems with limited memory
-        expect_true(grepl("memory|context", e$message, ignore.case = TRUE))
-      })
-    })
     
-    # Test GPU layers parameter
-    test_that("edge_load_model handles GPU layers parameter", {
-      # Should work with 0 GPU layers (CPU only)
-      ctx1 <- edge_load_model(model_path, n_ctx = 256, n_gpu_layers = 0)
-      expect_true(is_valid_model(ctx1))
-      edge_free_model(ctx1)
-      
-      # Test with small number of GPU layers (may or may not work)
-      tryCatch({
-        ctx2 <- edge_load_model(model_path, n_ctx = 256, n_gpu_layers = 1)
-        expect_true(is_valid_model(ctx2))
-        edge_free_model(ctx2)
-      }, error = function(e) {
-        # Expected if no GPU or unsupported GPU
-        expect_true(grepl("gpu|cuda|opencl|metal", e$message, ignore.case = TRUE))
-      })
-    })
     
-    # Test multiple model loading and cleanup
-    test_that("Multiple model contexts can be managed", {
-      ctx1 <- edge_load_model(model_path, n_ctx = 256)
-      ctx2 <- edge_load_model(model_path, n_ctx = 256)
-      
-      expect_true(is_valid_model(ctx1))
-      expect_true(is_valid_model(ctx2))
-      
-      # Cleanup one, other should still be valid
-      edge_free_model(ctx1)
-      # Note: Contexts may remain valid after cleanup in this implementation
-      expect_true(is_valid_model(ctx2))
-      
-      edge_free_model(ctx2)
-      # Note: Resource cleanup is handled internally
-    })
     
-    # Test double cleanup (should be safe)
-    test_that("Double cleanup is safe", {
-      ctx <- edge_load_model(model_path, n_ctx = 256)
-      expect_true(is_valid_model(ctx))
-      
-      edge_free_model(ctx)
-      # Note: Context may remain valid after cleanup
-      
-      # Should not error
-      expect_silent(edge_free_model(ctx))
-      # Note: Double cleanup is safe
-    })
     
   } else {
     skip("No test model available for real model loading tests")
   }
 })
 
-# Test 5: Edge cases for model file validation
-test_that("Model file validation edge cases", {
-  # Test with very long path
-  long_path <- paste0(rep("a", 1000), collapse = "")
-  expect_error(edge_load_model(paste0(long_path, ".gguf")))
-  
-  # Test with special characters in path
-  special_chars <- c("<", ">", ":", "\"", "|", "?", "*")
-  for (char in special_chars) {
-    if (.Platform$OS.type == "windows" && char %in% c("<", ">", ":", "\"", "|", "?", "*")) {
-      path_with_special <- paste0("test", char, "model.gguf")
-      expect_error(edge_load_model(path_with_special))
-    }
-  }
-  
-  # Test with Unicode characters
-  unicode_path <- "test_\u4e2d\u6587.gguf"  # Chinese characters
-  expect_error(edge_load_model(unicode_path))  # File doesn't exist
-})

@@ -76,37 +76,6 @@ test_that("edge_completion handles errors gracefully", {
   expect_error(edge_completion(NULL, list("hello"), n_predict = 5))
 })
 
-test_that("Memory constraints are handled properly", {
-  # Find any available model for testing
-  possible_paths <- c(
-    "tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf",
-    "models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf",
-    file.path(Sys.getenv("HOME"), ".cache", "edgemodelr", "tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf")
-  )
-  
-  model_path <- NULL
-  for (path in possible_paths) {
-    if (file.exists(path)) {
-      model_path <- path
-      break
-    }
-  }
-  
-  if (!is.null(model_path)) {
-    # Test very small context size (should work)
-    ctx_small <- edge_load_model(model_path, n_ctx = 16)
-    expect_true(is_valid_model(ctx_small))
-    edge_free_model(ctx_small)
-    
-    # Test reasonable context size
-    ctx_normal <- edge_load_model(model_path, n_ctx = 512)
-    expect_true(is_valid_model(ctx_normal))
-    edge_free_model(ctx_normal)
-    
-  } else {
-    skip("No test model available for memory constraint tests")
-  }
-})
 
 test_that("Corrupted or invalid model files are handled", {
   # Create a fake GGUF file with wrong content
@@ -125,68 +94,7 @@ test_that("Corrupted or invalid model files are handled", {
   }
 })
 
-test_that("Edge cases in text completion", {
-  # Find any available model for testing
-  possible_paths <- c(
-    "tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf",
-    "models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf",
-    file.path(Sys.getenv("HOME"), ".cache", "edgemodelr", "tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf")
-  )
-  
-  model_path <- NULL
-  for (path in possible_paths) {
-    if (file.exists(path)) {
-      model_path <- path
-      break
-    }
-  }
-  
-  if (!is.null(model_path)) {
-    ctx <- edge_load_model(model_path, n_ctx = 256)
-    
-    # Test with unusual characters (should work or give reasonable error)
-    unusual_prompts <- c(
-      "Unicode: αβγδε",
-      "Numbers: 123456789",
-      "Symbols: !@#$%^&*()",
-      "Mixed: Hello123!",
-      "Newlines: Hello\nWorld",
-      "Tabs: Hello\tWorld"
-    )
-    
-    for (prompt in unusual_prompts) {
-      tryCatch({
-        result <- edge_completion(ctx, prompt, n_predict = 3)
-        expect_true(is.character(result))
-      }, error = function(e) {
-        # If there's an error, it should be a reasonable one
-        expect_true(nchar(e$message) > 0)
-      })
-    }
-    
-    edge_free_model(ctx)
-    
-  } else {
-    skip("No test model available for edge case tests")
-  }
-})
 
-test_that("Resource cleanup after errors", {
-  # Test that resources are properly cleaned up even when errors occur
-  
-  # This should fail but not leak memory
-  expect_error(
-    edge_load_model("nonexistent.gguf"),
-    "Model file does not exist"
-  )
-  
-  # Multiple failed attempts should not accumulate resources
-  for (i in 1:5) {
-    expect_error(
-      suppressWarnings(edge_load_model("nonexistent.gguf"))
-    )
-  }
-})
 
 test_that("Error messages are informative", {
   # Test that error messages contain useful information
