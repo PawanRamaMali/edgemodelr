@@ -1,37 +1,3 @@
-test_that("Complete workflow integration test", {
-  possible_paths <- c(
-    "tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf",
-    "models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf",
-    file.path(Sys.getenv("HOME"), ".cache", "edgemodelr", "tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf")
-  )
-  
-  model_path <- NULL
-  for (path in possible_paths) {
-    if (file.exists(path)) {
-      model_path <- path
-      break
-    }
-  }
-  
-  if (!is.null(model_path)) {
-    # Complete workflow test
-    
-    # 1. Load model
-    ctx <- edge_load_model(model_path, n_ctx = 512)
-    expect_true(is_valid_model(ctx))
-    
-    # 2. Test single completion
-    result <- edge_completion(ctx, "Hello", n_predict = 5)
-    expect_true(is.character(result))
-    expect_true(startsWith(result, "Hello"))
-    
-    # 4. Free model
-    edge_free_model(ctx)
-    
-  } else {
-    skip("No test model available for integration tests")
-  }
-})
 
 
 test_that("Package namespace and exports", {

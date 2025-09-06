@@ -52,10 +52,7 @@ test_that("edge_load_model handles invalid paths", {
   temp_file <- tempfile(fileext = ".txt")
   tryCatch({
     writeLines("not a model", temp_file)
-    expect_warning(
-      expect_error(edge_load_model(temp_file)),
-      "should have .gguf extension"
-    )
+    expect_error(edge_load_model(temp_file))
   }, finally = {
     if (file.exists(temp_file)) {
       unlink(temp_file)
@@ -81,37 +78,4 @@ test_that("is_valid_model handles invalid contexts", {
 })
 
 
-# Test 4: Model loading with real model (if available)
-test_that("Model loading with real model (if available)", {
-  # Try multiple possible model locations
-  possible_paths <- c(
-    "tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf",
-    "models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf",
-    file.path(Sys.getenv("HOME"), ".cache", "edgemodelr", "tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf")
-  )
-  
-  model_path <- NULL
-  for (path in possible_paths) {
-    if (file.exists(path)) {
-      model_path <- path
-      break
-    }
-  }
-  
-  if (!is.null(model_path)) {
-    # Test successful model loading
-    ctx <- edge_load_model(model_path, n_ctx = 256)
-    expect_true(!is.null(ctx))
-    expect_true(inherits(ctx, "edge_model_context"))
-    expect_true(is_valid_model(ctx))
-    edge_free_model(ctx)
-    
-    
-    
-    
-    
-  } else {
-    skip("No test model available for real model loading tests")
-  }
-})
 

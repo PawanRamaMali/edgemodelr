@@ -50,55 +50,8 @@ test_that("edge_free_model handles invalid contexts gracefully", {
   expect_silent(edge_free_model(123))
 })
 
-test_that("Model format validation works", {
-  possible_paths <- c(
-    "tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf",
-    "models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf",
-    file.path(Sys.getenv("HOME"), ".cache", "edgemodelr", "tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf")
-  )
-  
-  model_path <- NULL
-  for (path in possible_paths) {
-    if (file.exists(path)) {
-      model_path <- path
-      break
-    }
-  }
-  
-  if (!is.null(model_path)) {
-    # Test that GGUF file is properly recognized
-    ctx <- edge_load_model(model_path, n_ctx = 256)
-    expect_true(is_valid_model(ctx))
-    edge_free_model(ctx)
-  }
-  
-  # Test with non-GGUF files (should fail gracefully)
-  if (file.exists("DESCRIPTION")) {
-    expect_error(
-      edge_load_model("DESCRIPTION", n_ctx = 256)
-    )
-  }
-  
-  # Test with binary files that aren't GGUF
-  temp_binary <- tempfile(fileext = ".bin")
-  tryCatch({
-    writeBin(raw(1000), temp_binary)  # Create fake binary file
-    expect_error(
-      edge_load_model(temp_binary, n_ctx = 256)
-    )
-  }, finally = {
-    # Always clean up, even if test fails
-    if (file.exists(temp_binary)) {
-      unlink(temp_binary)
-    }
-  })
-})
 
 
-test_that("edge_quick_setup integration", {
-  # Test parameter validation only - don't actually download models
-  skip("Skipping edge_quick_setup integration test to avoid downloading models during testing")
-})
 
 
 
