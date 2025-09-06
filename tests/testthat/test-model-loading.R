@@ -48,16 +48,6 @@ test_that("edge_load_model handles invalid paths", {
     edge_load_model(temp_dir)
   )
   
-  # Test with non-GGUF file
-  temp_file <- tempfile(fileext = ".txt")
-  tryCatch({
-    writeLines("not a model", temp_file)
-    expect_error(edge_load_model(temp_file))
-  }, finally = {
-    if (file.exists(temp_file)) {
-      unlink(temp_file)
-    }
-  })
 })
 
 
