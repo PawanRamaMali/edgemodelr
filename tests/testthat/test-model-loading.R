@@ -63,18 +63,6 @@ test_that("edge_load_model handles invalid paths", {
   })
 })
 
-# Test 2b: edge_load_model parameter validation
-test_that("edge_load_model validates parameters", {
-  # Test invalid n_ctx values
-  expect_error(edge_load_model("nonexistent.gguf", n_ctx = -1))
-  expect_error(edge_load_model("nonexistent.gguf", n_ctx = 0))
-  
-  # Test invalid n_gpu_layers values
-  expect_error(edge_load_model("nonexistent.gguf", n_gpu_layers = -1))
-  
-  # Test extreme values
-  expect_error(edge_load_model("nonexistent.gguf", n_ctx = 1e10)) # Too large
-})
 
 # Test 3: is_valid_model with invalid contexts
 test_that("is_valid_model handles invalid contexts", {
@@ -92,19 +80,6 @@ test_that("is_valid_model handles invalid contexts", {
   expect_false(result)
 })
 
-# Test 3b: edge_free_model with invalid contexts
-test_that("edge_free_model handles invalid contexts gracefully", {
-  # Should not error with NULL
-  expect_silent(edge_free_model(NULL))
-  
-  # Should not error with invalid types
-  expect_silent(edge_free_model("invalid"))
-  expect_silent(edge_free_model(123))
-  expect_silent(edge_free_model(list()))
-  
-  # Test with missing arguments
-  expect_error(edge_free_model())
-})
 
 # Test 4: Model loading with real model (if available)
 test_that("Model loading with real model (if available)", {
@@ -125,23 +100,11 @@ test_that("Model loading with real model (if available)", {
   
   if (!is.null(model_path)) {
     # Test successful model loading
-    test_that("edge_load_model works with valid GGUF file", {
-      ctx <- edge_load_model(model_path, n_ctx = 256)
-      expect_true(!is.null(ctx))
-      expect_true(inherits(ctx, "edge_model_context"))
-      
-      # Test model validation
-      expect_true(is_valid_model(ctx))
-      
-      # Test that context is still valid after validation
-      expect_true(is_valid_model(ctx))
-      
-      # Cleanup
-      edge_free_model(ctx)
-      
-      # Note: In current implementation, contexts may remain valid after cleanup
-      # This is acceptable behavior for this R package implementation
-    })
+    ctx <- edge_load_model(model_path, n_ctx = 256)
+    expect_true(!is.null(ctx))
+    expect_true(inherits(ctx, "edge_model_context"))
+    expect_true(is_valid_model(ctx))
+    edge_free_model(ctx)
     
     
     

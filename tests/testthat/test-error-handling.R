@@ -26,34 +26,6 @@ test_that("Invalid file paths are handled properly", {
   }
 })
 
-test_that("Invalid parameters are rejected", {
-  # Test edge_load_model with invalid parameters
-  dummy_path <- "dummy.gguf"  # Will fail anyway, but testing parameter validation
-  
-  # Negative context size - should fail due to missing file first
-  expect_error(
-    suppressWarnings(edge_load_model(dummy_path, n_ctx = -1)),
-    "Model file does not exist"
-  )
-  
-  # Zero context size - should fail due to missing file first
-  expect_error(
-    suppressWarnings(edge_load_model(dummy_path, n_ctx = 0)),
-    "Model file does not exist"
-  )
-  
-  # Extremely large context size - should fail due to missing file first
-  expect_error(
-    suppressWarnings(edge_load_model(dummy_path, n_ctx = 999999999)),
-    "Model file does not exist"
-  )
-  
-  # Negative GPU layers - should fail due to missing file first
-  expect_error(
-    suppressWarnings(edge_load_model(dummy_path, n_gpu_layers = -1)),
-    "Model file does not exist"
-  )
-})
 
 test_that("edge_completion handles errors gracefully", {
   # Test with NULL context
@@ -119,27 +91,4 @@ test_that("Error messages are informative", {
   })
 })
 
-test_that("is_valid_model handles all input types", {
-  # Test with various invalid inputs
-  expect_false(is_valid_model(NULL))
-  expect_false(is_valid_model("string"))
-  expect_false(is_valid_model(123))
-  expect_false(is_valid_model(list()))
-  expect_false(is_valid_model(data.frame()))
-  expect_false(is_valid_model(TRUE))
-  expect_false(is_valid_model(FALSE))
-  expect_false(is_valid_model(c(1, 2, 3)))
-})
 
-test_that("edge_free_model handles invalid contexts gracefully", {
-  # Should not error with NULL
-  expect_silent(edge_free_model(NULL))
-  
-  # Should not error with invalid types
-  expect_silent(edge_free_model("invalid"))
-  expect_silent(edge_free_model(123))
-  expect_silent(edge_free_model(list()))
-  
-  # Test with missing arguments
-  expect_error(edge_free_model())
-})

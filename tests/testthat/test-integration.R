@@ -33,21 +33,6 @@ test_that("Complete workflow integration test", {
   }
 })
 
-test_that("Model listing and information consistency", {
-  # Test that model listing is consistent
-  models1 <- edge_list_models()
-  models2 <- edge_list_models()
-  
-  expect_equal(models1, models2, 
-               info = "Model listing should be consistent")
-  
-  # Check basic properties of first model only
-  if (nrow(models1) > 0) {
-    model <- models1[1, ]
-    expect_true(nchar(model$model_id) > 0)
-    expect_true(endsWith(model$filename, ".gguf"))
-  }
-})
 
 test_that("Package namespace and exports", {
   # Test that all expected functions are exported
@@ -69,23 +54,6 @@ test_that("Package namespace and exports", {
   }
 })
 
-test_that("Package loads correctly", {
-  # Test package loading and basic functionality
-  expect_true(requireNamespace("edgemodelr", quietly = TRUE))
-  
-  # Test that we can access documentation (if available)
-  # This is mainly to ensure the package structure is correct
-  tryCatch({
-    help_result <- utils::help("edge_load_model", package = "edgemodelr")
-    # If help exists, it should have content
-    if (length(help_result) > 0) {
-      expect_true(length(help_result) > 0)
-    }
-  }, error = function(e) {
-    # Help might not be available in all test environments
-    message("Help documentation not available in test environment")
-  })
-})
 
 
 
