@@ -190,7 +190,7 @@ is_valid_model <- function(ctx) {
 #' }
 #' }
 #' @export
-edge_download_model <- function(model_id, filename, cache_dir = NULL, force_download = FALSE) {
+edge_download_model <- function(model_id, filename, cache_dir = NULL, force_download = FALSE, verbose = TRUE) {
   # Parameter validation
   if (is.null(model_id) || !is.character(model_id) || length(model_id) != 1) {
     stop("model_id must be a string")
@@ -229,7 +229,7 @@ edge_download_model <- function(model_id, filename, cache_dir = NULL, force_down
     }
     
     dir.create(cache_dir, recursive = TRUE)
-    message("Created cache directory: ", cache_dir)
+    if (verbose) message("Created cache directory: ", cache_dir)
   }
   
   # Construct local file path
@@ -237,7 +237,7 @@ edge_download_model <- function(model_id, filename, cache_dir = NULL, force_down
   
   # Check if file already exists
   if (file.exists(local_path) && !force_download) {
-    message("Model already exists: ", local_path)
+    if (verbose) message("Model already exists: ", local_path)
     return(local_path)
   }
   
@@ -245,9 +245,11 @@ edge_download_model <- function(model_id, filename, cache_dir = NULL, force_down
   base_url <- "https://huggingface.co"
   download_url <- file.path(base_url, model_id, "resolve", "main", filename)
   
-  message("Downloading model...")
-  message("From: ", download_url)
-  message("To: ", local_path)
+  if (verbose) {
+    message("Downloading model...")
+    message("From: ", download_url)
+    message("To: ", local_path)
+  }
   
   # Download the file
   tryCatch({
@@ -268,8 +270,10 @@ edge_download_model <- function(model_id, filename, cache_dir = NULL, force_down
     }
     
     if (download_success) {
-      message("Download completed successfully!")
-      message("Model size: ", round(file.info(local_path)$size / (1024^2), 1), "MB")
+      if (verbose) {
+        message("Download completed successfully!")
+        message("Model size: ", round(file.info(local_path)$size / (1024^2), 1), "MB")
+      }
       return(local_path)
     } else {
       stop("All download methods failed")
@@ -339,6 +343,7 @@ edge_list_models <- function() {
 #'
 #' @param model_name Name of the model from edge_list_models()
 #' @param cache_dir Directory to store downloaded models (default: user cache directory via tools::R_user_dir())
+#' @param verbose Whether to print status messages (default: TRUE)
 #' @return List with model path and context (if llama.cpp is available)
 #' 
 #' @examples
@@ -354,7 +359,7 @@ edge_list_models <- function() {
 #' }
 #' }
 #' @export  
-edge_quick_setup <- function(model_name, cache_dir = NULL) {
+edge_quick_setup <- function(model_name, cache_dir = NULL, verbose = TRUE) {
   # Parameter validation
   if (is.null(model_name)) {
     model_name <- ""
@@ -374,13 +379,14 @@ edge_quick_setup <- function(model_name, cache_dir = NULL) {
          paste(models$name, collapse = ", "))
   }
   
-  message("Setting up ", model_name, "...")
+  if (verbose) message("Setting up ", model_name, "...")
   
   # Download model
   model_path <- edge_download_model(
     model_id = model_info$model_id,
     filename = model_info$filename,
-    cache_dir = cache_dir
+    cache_dir = cache_dir,
+    verbose = verbose
   )
   
   # Try to load model (will show helpful error if llama.cpp not available)
@@ -454,6 +460,7 @@ edge_stream_completion <- function(ctx, prompt, callback, n_predict = 128L, temp
 #' @param max_history Maximum conversation turns to keep in context (default: 10)
 #' @param n_predict Maximum tokens per response (default: 200)
 #' @param temperature Sampling temperature (default: 0.8)
+#' @param verbose Whether to print status messages (default: TRUE)
 #' @return NULL (runs interactively)
 #' 
 #' @examples
@@ -470,7 +477,7 @@ edge_stream_completion <- function(ctx, prompt, callback, n_predict = 128L, temp
 #' }
 #' }
 #' @export
-edge_chat_stream <- function(ctx, system_prompt = NULL, max_history = 10, n_predict = 200L, temperature = 0.8) {
+edge_chat_stream <- function(ctx, system_prompt = NULL, max_history = 10, n_predict = 200L, temperature = 0.8, verbose = TRUE) {
   if (!is_valid_model(ctx)) {
     stop("Invalid model context. Load a model first with edge_load_model()")
   }
@@ -481,11 +488,12 @@ edge_chat_stream <- function(ctx, system_prompt = NULL, max_history = 10, n_pred
   if (!is.null(system_prompt)) {
     conversation_history <- append(conversation_history, 
                                  list(list(role = "system", content = system_prompt)))
-    message("System prompt set.")
-  }
+    }
   
-  message("Chat started! Type 'quit', 'exit', or 'bye' to end.")
-  message("Responses will stream in real-time.")
+  if (verbose) {
+    message("Chat started! Type 'quit', 'exit', or 'bye' to end.")
+    message("Responses will stream in real-time.")
+  }
   cat("\n")
   
   while (TRUE) {
@@ -493,7 +501,7 @@ edge_chat_stream <- function(ctx, system_prompt = NULL, max_history = 10, n_pred
     
     # Check for exit commands
     if (tolower(trimws(user_input)) %in% c("quit", "exit", "bye", "")) {
-      message("Chat ended!")
+      if (verbose) message("Chat ended!")
       break
     }
     
@@ -588,19 +596,19 @@ build_chat_prompt <- function(history) {
 #' edge_clean_cache(max_age_days = 7, max_size_mb = 100)
 #' }
 #' @export
-edge_clean_cache <- function(cache_dir = NULL, max_age_days = 30, max_size_mb = 500, interactive = TRUE) {
+edge_clean_cache <- function(cache_dir = NULL, max_age_days = 30, max_size_mb = 500, interactive = TRUE, verbose = TRUE) {
   if (is.null(cache_dir)) {
     cache_dir <- tools::R_user_dir("edgemodelr", "cache")
   }
   
   if (!dir.exists(cache_dir)) {
-    message("Cache directory does not exist: ", cache_dir)
+    if (verbose) message("Cache directory does not exist: ", cache_dir)
     return(invisible(character(0)))
   }
   
   files <- list.files(cache_dir, full.names = TRUE, recursive = TRUE)
   if (length(files) == 0) {
-    message("Cache directory is empty")
+    if (verbose) message("Cache directory is empty")
     return(invisible(character(0)))
   }
   
@@ -627,14 +635,16 @@ edge_clean_cache <- function(cache_dir = NULL, max_age_days = 30, max_size_mb = 
   files_to_delete <- unique(c(old_files$path, size_files))
   
   if (length(files_to_delete) == 0) {
-    message("No files need cleaning")
+    if (verbose) message("No files need cleaning")
     return(invisible(character(0)))
   }
   
   # Show what will be deleted
   total_delete_size <- sum(file_info[file_info$path %in% files_to_delete, "size_mb"], na.rm = TRUE)
-  message("Found ", length(files_to_delete), " files to delete (", 
-          round(total_delete_size, 1), " MB)")
+  if (verbose) {
+    message("Found ", length(files_to_delete), " files to delete (", 
+            round(total_delete_size, 1), " MB)")
+  }
   
   # Ask for confirmation in interactive mode
   if (interactive && interactive()) {
@@ -644,7 +654,7 @@ edge_clean_cache <- function(cache_dir = NULL, max_age_days = 30, max_size_mb = 
     )
     
     if (is.na(consent) || !consent) {
-      message("Cleanup cancelled by user")
+      if (verbose) message("Cleanup cancelled by user")
       return(invisible(character(0)))
     }
   }
@@ -661,7 +671,7 @@ edge_clean_cache <- function(cache_dir = NULL, max_age_days = 30, max_size_mb = 
   }
   
   if (length(deleted_files) > 0) {
-    message("Deleted ", length(deleted_files), " files from cache")
+    if (verbose) message("Deleted ", length(deleted_files), " files from cache")
   }
   
   invisible(deleted_files)
