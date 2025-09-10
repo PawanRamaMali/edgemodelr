@@ -1,6 +1,6 @@
 Package: edgemodelr
 Type: Package
-Title: Local Language Model Inference via 'llama.cpp'
+Title: Inference for Local Language Models
 Version: 0.1.0
 Authors@R: person("Pawan Rama", "Mali", email = "prm@outlook.in", role = c("aut", "cre"))
 Author: Pawan Rama Mali [aut, cre]

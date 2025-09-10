@@ -47,4 +47,4 @@
 * Robust error handling and validation
 * Thread-safe model operations
 
-This release provides a complete, production-ready solution for local language model inference in R, enabling private, offline text generation workflows.
+This release provides a complete, production-ready solution for Inference for Local Language Models in R, enabling private, offline text generation workflows.
