@@ -494,7 +494,7 @@ edge_chat_stream <- function(ctx, system_prompt = NULL, max_history = 10, n_pred
     message("Chat started! Type 'quit', 'exit', or 'bye' to end.")
     message("Responses will stream in real-time.")
   }
-  cat("\n")
+  if (verbose) cat("\n")
   
   while (TRUE) {
     user_input <- readline("You: ")
@@ -513,19 +513,23 @@ edge_chat_stream <- function(ctx, system_prompt = NULL, max_history = 10, n_pred
     prompt <- build_chat_prompt(conversation_history)
     
     # Stream the response
-    cat("Assistant: ")
-    utils::flush.console()
+    if (verbose) {
+      cat("Assistant: ")
+      utils::flush.console()
+    }
     
     current_response <- ""
     
     result <- edge_stream_completion(ctx, prompt, 
       callback = function(data) {
         if (!data$is_final) {
-          cat(data$token)
-          utils::flush.console()
+          if (verbose) {
+            cat(data$token)
+            utils::flush.console()
+          }
           return(TRUE)  # Continue generation
         } else {
-          cat("\n\n")
+          if (verbose) cat("\n\n")
           current_response <<- data$full_response
           return(TRUE)
         }
