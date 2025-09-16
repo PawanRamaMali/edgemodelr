@@ -377,21 +377,21 @@ demo_creative_writing <- function() {
   story <- generate_story(ctx, "science fiction", "first contact with aliens", "short")
   cat("Generated Story:\n", story, "\n\n")
   
-  Sys.sleep(2)
-  
+  if (interactive()) Sys.sleep(2)
+
   # Poetry demo
-  cat("🎭 Poetry Generation Demo\n") 
+  cat("🎭 Poetry Generation Demo\n")
   poem <- generate_poem(ctx, "romantic", "autumn leaves", "sonnet")
   cat("Generated Poem:\n", poem, "\n\n")
-  
-  Sys.sleep(2)
-  
+
+  if (interactive()) Sys.sleep(2)
+
   # Character creation demo
   cat("👤 Character Creation Demo\n")
   character <- create_character(ctx, "detective", "cyberpunk city")
   cat("Character Profile:\n", character, "\n\n")
-  
-  Sys.sleep(2)
+
+  if (interactive()) Sys.sleep(2)
   
   # Writing prompts demo
   cat("💡 Writing Prompts Demo\n")

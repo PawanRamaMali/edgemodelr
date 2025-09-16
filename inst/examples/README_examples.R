@@ -353,22 +353,22 @@ run_all_examples <- function() {
   cat(rep("=", 60), "\n\n")
   
   quick_start_example()
-  Sys.sleep(1)
-  
+  if (interactive()) Sys.sleep(1)
+
   manual_setup_example()
-  Sys.sleep(1)
-  
+  if (interactive()) Sys.sleep(1)
+
   text_generation_example()
-  Sys.sleep(1)
-  
+  if (interactive()) Sys.sleep(1)
+
   streaming_example()
-  Sys.sleep(1)
-  
+  if (interactive()) Sys.sleep(1)
+
   chat_example()
-  Sys.sleep(1)
-  
+  if (interactive()) Sys.sleep(1)
+
   practical_examples()
-  Sys.sleep(1)
+  if (interactive()) Sys.sleep(1)
   
   best_practices_example()
   

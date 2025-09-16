@@ -27,7 +27,7 @@ test_that("edge_list_models returns valid data", {
 })
 
 # Test 2: edge_load_model with invalid inputs
-test_that("edge_load_model handles invalid paths", {
+test_that("edge_load_model handles invalid paths gracefully", {
   expect_error(
     edge_load_model("nonexistent_model.gguf"),
     "Model file does not exist"
