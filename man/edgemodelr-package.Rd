@@ -4,9 +4,9 @@
 \name{edgemodelr-package}
 \alias{edgemodelr}
 \alias{edgemodelr-package}
-\title{edgemodelr: Inference for Local Language Models}
+\title{edgemodelr: Local Language Model Inference}
 \description{
-Enables R users to run large language models locally using 'GGUF' ('GPT'-Generated Unified Format) model files and the 'llama.cpp' inference engine. Provides a complete R interface for loading models, generating text completions, and streaming responses in real-time. Supports local inference without requiring cloud APIs or internet connectivity, ensuring complete data privacy and control.
+Enables R users to run large language models locally using 'GGUF' model files and the 'llama.cpp' inference engine. Provides a complete R interface for loading models, generating text completions, and streaming responses in real-time. Supports local inference without requiring cloud APIs or internet connectivity, ensuring complete data privacy and control. References: Gerganov et al. (2023) \url{https://github.com/ggml-org/llama.cpp}.
 }
 \details{
 The edgemodelr package provides R bindings for Inference for Local Language Models

@@ -2,8 +2,8 @@
 \alias{edge_chat_stream}
 \title{Interactive chat session with streaming responses}
 \usage{
-edge_chat_stream(ctx, system_prompt = NULL, max_history = 10, n_predict = 200L, 
-                 temperature = 0.8)
+edge_chat_stream(ctx, system_prompt = NULL, max_history = 10, n_predict = 200L,
+                 temperature = 0.8, verbose = TRUE)
 }
 \arguments{
 \item{ctx}{Model context from edge_load_model()}
@@ -15,6 +15,8 @@ edge_chat_stream(ctx, system_prompt = NULL, max_history = 10, n_predict = 200L,
 \item{n_predict}{Maximum tokens per response (default: 200)}
 
 \item{temperature}{Sampling temperature (default: 0.8)}
+
+\item{verbose}{Whether to print responses to console (default: TRUE)}
 }
 \value{
 NULL (runs interactively)

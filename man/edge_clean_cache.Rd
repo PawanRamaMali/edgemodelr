@@ -8,7 +8,8 @@ edge_clean_cache(
   cache_dir = NULL,
   max_age_days = 30,
   max_size_mb = 500,
-  interactive = TRUE
+  interactive = TRUE,
+  verbose = TRUE
 )
 }
 \arguments{
@@ -19,6 +20,7 @@ edge_clean_cache(
 \item{max_size_mb}{Maximum total cache size in MB (default: 500)}
 
 \item{interactive}{Whether to ask for user confirmation before deletion}
+item{verbose}{Whether to print detailed messages about cleaning progress}
 }
 \value{
 Invisible list of deleted files
