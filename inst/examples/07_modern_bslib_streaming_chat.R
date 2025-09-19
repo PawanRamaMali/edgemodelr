@@ -261,7 +261,9 @@ server <- function(input, output, session) {
     is_generating = FALSE,
     current_stream = "",
     model_loaded = FALSE,
-    stream_file = NULL
+    stream_file = NULL,
+    stop_file = NULL,
+    user_requested_stop = FALSE
   )
 
   # Note: Direct streaming approach - no timer needed
@@ -304,24 +306,41 @@ server <- function(input, output, session) {
 
     # Free existing model if any
     if (!is.null(values$model_context)) {
-      tryCatch(edge_free_model(values$model_context), error = function(e) {})
+      tryCatch({
+        if (is_valid_model(values$model_context)) {
+          edge_free_model(values$model_context)
+        }
+      }, error = function(e) {
+        cat("Error freeing existing model:", e$message, "\n")
+      })
       values$model_context <- NULL
       values$model_loaded <- FALSE
     }
 
-    # Load new model
+    # Load new model with enhanced validation
     tryCatch({
       setup_result <- edge_quick_setup(input$model_choice)
-      values$model_context <- setup_result$context
-      values$model_loaded <- TRUE
 
-      updateStatus(paste("✅ Model", input$model_choice, "loaded successfully!"))
-      showNotification("Model loaded successfully!", type = "message")
+      # Validate the context before accepting it
+      if (!is.null(setup_result$context) && is_valid_model(setup_result$context)) {
+        values$model_context <- setup_result$context
+        values$model_loaded <- TRUE
+
+        updateStatus(paste("✅ Model", input$model_choice, "loaded successfully!"))
+        showNotification("Model loaded successfully!", type = "message")
+
+        cat("Model loaded successfully:", input$model_choice, "\n")
+      } else {
+        stop("Model context validation failed")
+      }
 
     }, error = function(e) {
       updateStatus(paste("❌ Failed to load model:", e$message))
       showNotification(paste("Model loading failed:", e$message), type = "error")
       values$model_loaded <- FALSE
+      values$model_context <- NULL
+
+      cat("Model loading error:", e$message, "\n")
     })
 
     values$is_loading_model <- FALSE
@@ -362,6 +381,7 @@ server <- function(input, output, session) {
     # Start generation
     values$is_generating <- TRUE
     values$current_stream <- ""
+    values$user_requested_stop <- FALSE  # Reset stop flag
     updateStatus("🤖 Generating response...")
     session$sendCustomMessage("showGenerationSpinner", list(show = TRUE))
     session$sendCustomMessage("toggleStopButton", list(show = TRUE))
@@ -382,17 +402,32 @@ server <- function(input, output, session) {
       collapse = "\n"
     )
 
+    # Create stop file for reliable cross-context communication
+    stop_file <- tempfile(fileext = ".stop")
+    values$stop_file <- stop_file
+
     # Generate response with direct streaming
     tryCatch({
 
       # Direct streaming callback - updates UI immediately
       response_text <- ""
+      token_count <- 0
       streaming_callback <- function(data) {
-        if (!values$is_generating) return(FALSE)
+        # Check stop file - most reliable method for cross-context communication
+        stop_file_exists <- file.exists(stop_file)
+        if (stop_file_exists) {
+          cat("🛑 Stop file detected - stopping streaming at token", token_count, "\n")
+          return(FALSE)
+        }
 
         if (!data$is_final && !is.null(data$token)) {
-          # Debug: Print token to console
-          cat("Token received:", data$token, "\n")
+          token_count <<- token_count + 1
+
+          # Debug: Print token to console every 10 tokens to reduce spam
+          if (token_count %% 10 == 0) {
+            cat("Token #", token_count, "received, checking stop file...\n")
+            cat("Stop file exists:", file.exists(stop_file), "\n")
+          }
 
           # Update response text directly
           response_text <<- paste0(response_text, data$token)
@@ -402,25 +437,48 @@ server <- function(input, output, session) {
             text = response_text
           ))
 
+          # Check stop again before continuing
+          if (file.exists(stop_file)) {
+            cat("🛑 Stop file detected mid-token - stopping\n")
+            return(FALSE)
+          }
+
           return(TRUE)
         } else {
           # Mark end of stream
-          cat("Stream completed\n")
+          cat("Stream completed with", token_count, "tokens\n")
+
+          # Check if stopped or completed normally
+          was_stopped <- file.exists(stop_file)
 
           # Finalize response
           if (response_text != "") {
+            final_content <- if (was_stopped) paste(response_text, " [stopped]") else response_text
             values$chat_history <- append(values$chat_history, list(list(
               type = "assistant",
-              content = response_text,
+              content = final_content,
               timestamp = Sys.time()
             )))
           }
 
           values$current_stream <- ""
           values$is_generating <- FALSE
-          updateStatus("✅ Response completed!")
+
+          if (was_stopped) {
+            updateStatus("⏹️ Generation stopped by user.")
+          } else {
+            updateStatus("✅ Response completed!")
+          }
+
           session$sendCustomMessage("showGenerationSpinner", list(show = FALSE))
           session$sendCustomMessage("toggleStopButton", list(show = FALSE))
+
+          # Clean up stop file
+          if (file.exists(stop_file)) {
+            cat("Cleaning up stop file:", stop_file, "\n")
+            unlink(stop_file)
+          }
+          values$stop_file <- NULL
 
           # Update final chat display
           updateChatDisplay()
@@ -429,12 +487,12 @@ server <- function(input, output, session) {
         }
       }
 
-      # Start streaming
+      # Start streaming with more tokens and lower temperature for testing stop
       edge_stream_completion(
         ctx = values$model_context,
         prompt = conversation,
-        n_predict = 150,
-        temperature = 0.8,
+        n_predict = 300,  # More tokens to give time to test stop
+        temperature = 0.3,  # Lower temp for more consistent output
         callback = streaming_callback
       )
 
@@ -444,33 +502,45 @@ server <- function(input, output, session) {
       updateStatus(paste("❌ Generation error:", e$message))
       showNotification(paste("Error:", e$message), type = "error")
 
-      # Clean up temp file
-      if (file.exists(stream_file)) {
-        unlink(stream_file)
+      # Clean up stop file
+      if (!is.null(values$stop_file) && file.exists(values$stop_file)) {
+        unlink(values$stop_file)
       }
+      values$stop_file <- NULL
+
+      session$sendCustomMessage("showGenerationSpinner", list(show = FALSE))
+      session$sendCustomMessage("toggleStopButton", list(show = FALSE))
     })
 
     # Note: UI state changes are handled by the streaming timer monitor
   })
 
-  # Stop generation
+  # Stop generation using file-based communication
   observeEvent(input$stop_generation_btn, {
-    if (values$is_generating) {
-      values$is_generating <- FALSE
-      updateStatus("⏹️ Generation stopped by user.")
-      session$sendCustomMessage("showGenerationSpinner", list(show = FALSE))
-      session$sendCustomMessage("toggleStopButton", list(show = FALSE))
+    cat("=== STOP BUTTON CLICKED ===\n")
+    cat("is_generating:", values$is_generating, "\n")
+    cat("stop_file:", values$stop_file, "\n")
 
-      if (values$current_stream != "") {
-        values$chat_history <- append(values$chat_history, list(list(
-          type = "assistant",
-          content = paste(values$current_stream, "(stopped)"),
-          timestamp = Sys.time()
-        )))
-      }
+    if (values$is_generating && !is.null(values$stop_file)) {
+      # Create stop file - most reliable method for cross-context communication
+      tryCatch({
+        writeLines("STOP", values$stop_file)
+        cat("✅ Stop file created successfully:", values$stop_file, "\n")
+        cat("File exists after creation:", file.exists(values$stop_file), "\n")
 
-      values$current_stream <- ""
-      updateChatDisplay()
+        # Also set a flag for additional safety
+        values$user_requested_stop <- TRUE
+
+      }, error = function(e) {
+        cat("❌ Error creating stop file:", e$message, "\n")
+      })
+
+      updateStatus("⏹️ Stopping generation...")
+      showNotification("Stopping generation...", type = "message")
+    } else {
+      cat("❌ Stop button clicked but:")
+      cat(" - is_generating:", values$is_generating, "\n")
+      cat(" - stop_file:", if(is.null(values$stop_file)) "NULL" else values$stop_file, "\n")
     }
   })
 
