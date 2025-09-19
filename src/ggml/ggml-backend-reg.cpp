@@ -3,12 +3,35 @@
 #include "ggml-impl.h"
 #include <algorithm>
 #include <cstring>
-#include <filesystem>
 #include <memory>
 #include <string>
 #include <type_traits>
 #include <vector>
 #include <cctype>
+
+// Conditional filesystem support for macOS compatibility
+#ifndef GGML_DISABLE_FS
+    // Only include filesystem if not explicitly disabled
+    #if defined(__APPLE__) && defined(__MACH__)
+        // Check macOS version and C++ standard support
+        #if __cplusplus >= 201703L && defined(__MAC_OS_X_VERSION_MIN_REQUIRED) && __MAC_OS_X_VERSION_MIN_REQUIRED >= 101500
+            #include <filesystem>
+            #define GGML_HAS_FILESYSTEM 1
+        #else
+            #define GGML_HAS_FILESYSTEM 0
+        #endif
+    #else
+        // Non-macOS systems
+        #if __cplusplus >= 201703L
+            #include <filesystem>
+            #define GGML_HAS_FILESYSTEM 1
+        #else
+            #define GGML_HAS_FILESYSTEM 0
+        #endif
+    #endif
+#else
+    #define GGML_HAS_FILESYSTEM 0
+#endif
 
 #ifdef _WIN32
 #    define WIN32_LEAN_AND_MEAN
@@ -17,11 +40,30 @@
 #    endif
 #    include <windows.h>
 #elif defined(__APPLE__)
+// Prevent boolean enum conflicts with R
+#    ifdef TRUE
+#        undef TRUE
+#    endif
+#    ifdef FALSE
+#        undef FALSE
+#    endif
 #    include <mach-o/dyld.h>
 #    include <dlfcn.h>
+// Restore R boolean definitions if needed
+#    ifndef TRUE
+#        define TRUE 1
+#    endif
+#    ifndef FALSE
+#        define FALSE 0
+#    endif
 #else
 #    include <dlfcn.h>
 #    include <unistd.h>
+#endif
+
+// Filesystem namespace alias
+#if GGML_HAS_FILESYSTEM
+namespace fs = std::filesystem;
 #endif
 
 // Backend registry
@@ -78,8 +120,7 @@
 #    pragma GCC diagnostic ignored "-Wdeprecated-declarations"
 #endif
 
-namespace fs = std::filesystem;
-
+#if GGML_HAS_FILESYSTEM
 static std::string path_str(const fs::path & path) {
     std::string u8path;
     try {
@@ -95,6 +136,7 @@ static std::string path_str(const fs::path & path) {
     }
     return u8path;
 }
+#endif // GGML_HAS_FILESYSTEM
 
 #if defined(__clang__)
 #    pragma clang diagnostic pop
@@ -410,6 +452,7 @@ ggml_backend_t ggml_backend_init_best(void) {
 }
 
 // Dynamic loading
+#if GGML_HAS_FILESYSTEM
 ggml_backend_reg_t ggml_backend_load(const char * path) {
     return get_reg().load_backend(path, false);
 }
@@ -417,7 +460,18 @@ ggml_backend_reg_t ggml_backend_load(const char * path) {
 void ggml_backend_unload(ggml_backend_reg_t reg) {
     get_reg().unload_backend(reg, true);
 }
+#else
+// Stub implementations when filesystem is not available
+ggml_backend_reg_t ggml_backend_load(const char * /*path*/) {
+    return nullptr;
+}
 
+void ggml_backend_unload(ggml_backend_reg_t /*reg*/) {
+    // No-op
+}
+#endif
+
+#if GGML_HAS_FILESYSTEM
 static fs::path get_executable_path() {
 #if defined(__APPLE__)
     // get executable path
@@ -598,3 +652,25 @@ void ggml_backend_load_all_from_path(const char * dir_path) {
         ggml_backend_load(backend_path);
     }
 }
+
+#else // !GGML_HAS_FILESYSTEM
+// Stub implementations when filesystem is not available
+
+static std::string path_str(const char * /*path*/) {
+    return ""; // Return empty string when filesystem is not available
+}
+
+ggml_backend_reg_t ggml_backend_load_best(const char * /*name*/) {
+    // Dynamic loading not supported without filesystem
+    return nullptr;
+}
+
+void ggml_backend_load_all() {
+    // Dynamic loading not supported without filesystem
+}
+
+void ggml_backend_load_all_from_path(const char * /*dir_path*/) {
+    // Dynamic loading not supported without filesystem
+}
+
+#endif // GGML_HAS_FILESYSTEM

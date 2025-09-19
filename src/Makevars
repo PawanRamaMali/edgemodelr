@@ -1,13 +1,21 @@
 PKG_CPPFLAGS = -I../inst/include -I./llama -I./ggml -I./ggml/ggml-cpu -DUSING_R=1 -include r_output_redirect.h
-PKG_CXXFLAGS = -DNDEBUG -DGGML_USE_CPU 
+PKG_CXXFLAGS = -DNDEBUG -DGGML_USE_CPU
 PKG_CFLAGS = -DNDEBUG -DGGML_USE_CPU
+
+# Platform-specific compatibility flags
+ifeq ($(shell uname),Darwin)
+    # macOS specific flags to handle filesystem and boolean conflicts
+    PKG_CPPFLAGS += -DGGML_DISABLE_FS=1 -DR_NO_REMAP -DSTRICT_R_HEADERS=1
+    PKG_CXXFLAGS += -mmacosx-version-min=10.15 -Wno-ignored-attributes -Wno-enum-conversion
+    PKG_CFLAGS += -mmacosx-version-min=10.15 -Wno-ignored-attributes
+endif
 
 # Override warnings for ggml source files
 GGML_CXXFLAGS = $(PKG_CXXFLAGS) -fPIC
 GGML_CFLAGS = $(PKG_CFLAGS) -DUSING_R=1 -fPIC
 PKG_LIBS = $(LAPACK_LIBS) $(BLAS_LIBS) $(FLIBS)
 
-# Complete static list of ALL object files - no variables, no wildcards
+# Complete static list of ALL object files - platform specific backend registry
 OBJECTS = bindings.o RcppExports.o \
 	ggml/ggml.o ggml/ggml-alloc.o ggml/gguf.o \
 	ggml/ggml-backend.o ggml/ggml-backend-reg.o \
