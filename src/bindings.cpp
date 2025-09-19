@@ -6,6 +6,7 @@
 #include <vector>
 #include <thread>
 #include <cstdio>
+#include <fstream>
 
 #include "llama.h"
 #include "ggml-backend.h"
@@ -38,6 +39,26 @@ void quiet_log_callback(ggml_log_level level, const char * text, void * user_dat
   // Otherwise, completely suppress output
 }
 
+// Helper function to ensure initialization is done
+static void ensure_llama_initialized() {
+  static bool initialized = false;
+  if (!initialized) {
+    // Set up quiet logging
+    llama_log_set(quiet_log_callback, NULL);
+
+    // Load all available backends (including CPU)
+    ggml_backend_load_all();
+
+    // Initialize llama backend
+    llama_backend_init();
+
+    // Register CPU backend explicitly
+    ggml_backend_register(ggml_backend_cpu_reg());
+
+    initialized = true;
+  }
+}
+
 struct EdgeModelContext {
   struct llama_model* model = NULL;
   struct llama_context* ctx = NULL;
@@ -57,21 +78,20 @@ struct EdgeModelContext {
 // [[Rcpp::export]]
 SEXP edge_load_model_internal(std::string model_path, int n_ctx = 2048, int n_gpu_layers = 0) {
   try {
-    // Set up quiet logging before any llama operations
-    llama_log_set(quiet_log_callback, NULL);
-    
-    // Load all available backends (including CPU)
-    ggml_backend_load_all();
-    
-    // Initialize llama backend
-    llama_backend_init();
+    // Ensure llama is properly initialized
+    ensure_llama_initialized();
     
     llama_model_params model_params = llama_model_default_params();
     model_params.n_gpu_layers = n_gpu_layers;
     
     struct llama_model* model = llama_model_load_from_file(model_path.c_str(), model_params);
     if (!model) {
-      stop("Failed to load GGUF model from: " + model_path);
+      // Check if file exists
+      std::ifstream file(model_path);
+      if (!file.good()) {
+        stop("Model file does not exist or is not readable: " + model_path);
+      }
+      stop("Failed to load GGUF model from: " + model_path + ". The file exists but llama.cpp cannot parse it. Check if it's a valid GGUF file.");
     }
     
     llama_context_params ctx_params = llama_context_default_params();
@@ -373,4 +393,11 @@ void set_llama_logging(bool enabled) {
   g_suppress_console_output = !enabled;
   // Re-set the callback to ensure it takes effect
   llama_log_set(quiet_log_callback, NULL);
+}
+
+// Package initialization function - called when the package is loaded
+// [[Rcpp::init]]
+void edgemodelr_init(DllInfo *dll) {
+  // Call the helper to ensure initialization
+  ensure_llama_initialized();
 }
