@@ -264,59 +264,7 @@ server <- function(input, output, session) {
     stream_file = NULL
   )
 
-  # Streaming monitor - checks for new tokens every 50ms during generation
-  streaming_timer <- reactiveTimer(50)
-
-  observe({
-    streaming_timer()
-
-    if (values$is_generating && !is.null(values$stream_file) && file.exists(values$stream_file)) {
-      tryCatch({
-        # Read current stream content
-        current_content <- readLines(values$stream_file, warn = FALSE)
-        if (length(current_content) > 0) {
-          new_content <- paste(current_content, collapse = "")
-
-          # Check if stream finished (marked with special ending)
-          if (endsWith(new_content, "<<STREAM_END>>")) {
-            new_content <- gsub("<<STREAM_END>>$", "", new_content)
-
-            # Finalize stream
-            if (new_content != "") {
-              values$chat_history <- append(values$chat_history, list(list(
-                type = "assistant",
-                content = new_content,
-                timestamp = Sys.time()
-              )))
-            }
-
-            values$current_stream <- ""
-            values$is_generating <- FALSE
-            updateStatus("✅ Response completed!")
-            session$sendCustomMessage("showGenerationSpinner", list(show = FALSE))
-            session$sendCustomMessage("toggleStopButton", list(show = FALSE))
-
-            # Clear stream file
-            if (!is.null(values$stream_file) && file.exists(values$stream_file)) {
-              unlink(values$stream_file)
-            }
-            values$stream_file <- NULL
-
-            # Update final chat display
-            updateChatDisplay()
-          } else {
-            # Update streaming display in real-time
-            values$current_stream <- new_content
-            session$sendCustomMessage("updateStreaming", list(
-              text = new_content
-            ))
-          }
-        }
-      }, error = function(e) {
-        # Handle file read errors silently during streaming
-      })
-    }
-  })
+  # Note: Direct streaming approach - no timer needed
 
   # Initialize: Load available models
   observe({
@@ -418,6 +366,9 @@ server <- function(input, output, session) {
     session$sendCustomMessage("showGenerationSpinner", list(show = TRUE))
     session$sendCustomMessage("toggleStopButton", list(show = TRUE))
 
+    # Initialize streaming bubble in UI
+    session$sendCustomMessage("updateStreaming", list(text = "..."))
+
     # Build conversation context
     recent_messages <- tail(values$chat_history, 6)
     conversation <- paste(
@@ -431,35 +382,49 @@ server <- function(input, output, session) {
       collapse = "\n"
     )
 
-    # Create temporary file for streaming communication
-    stream_file <- tempfile(fileext = ".txt")
-    file.create(stream_file)
-    values$stream_file <- stream_file
-
-    # Generate response with file-based streaming (works better with Shiny)
+    # Generate response with direct streaming
     tryCatch({
-      # Clear any existing content
-      writeLines("", stream_file)
 
-      # Run streaming in background using callback that writes to file
+      # Direct streaming callback - updates UI immediately
+      response_text <- ""
       streaming_callback <- function(data) {
         if (!values$is_generating) return(FALSE)
 
         if (!data$is_final && !is.null(data$token)) {
-          # Append token to file
-          current <- ""
-          if (file.exists(stream_file)) {
-            current <- paste(readLines(stream_file, warn = FALSE), collapse = "")
-          }
-          writeLines(paste0(current, data$token), stream_file)
+          # Debug: Print token to console
+          cat("Token received:", data$token, "\n")
+
+          # Update response text directly
+          response_text <<- paste0(response_text, data$token)
+
+          # Update UI directly
+          session$sendCustomMessage("updateStreaming", list(
+            text = response_text
+          ))
+
           return(TRUE)
         } else {
           # Mark end of stream
-          current <- ""
-          if (file.exists(stream_file)) {
-            current <- paste(readLines(stream_file, warn = FALSE), collapse = "")
+          cat("Stream completed\n")
+
+          # Finalize response
+          if (response_text != "") {
+            values$chat_history <- append(values$chat_history, list(list(
+              type = "assistant",
+              content = response_text,
+              timestamp = Sys.time()
+            )))
           }
-          writeLines(paste0(current, "<<STREAM_END>>"), stream_file)
+
+          values$current_stream <- ""
+          values$is_generating <- FALSE
+          updateStatus("✅ Response completed!")
+          session$sendCustomMessage("showGenerationSpinner", list(show = FALSE))
+          session$sendCustomMessage("toggleStopButton", list(show = FALSE))
+
+          # Update final chat display
+          updateChatDisplay()
+
           return(TRUE)
         }
       }
@@ -618,11 +583,22 @@ $(document).ready(function() {
 
   // Streaming update handler
   Shiny.addCustomMessageHandler('updateStreaming', function(data) {
+    console.log('Streaming update:', data.text);
+    var chatDisplay = $('#chat_display');
     var streamingBubble = $('.streaming-bubble');
+
     if (streamingBubble.length > 0) {
+      // Update existing streaming bubble
       streamingBubble.html('🤖 ' + escapeHtml(data.text) + '<span class=\"spinner-border spinner-border-sm ms-2\"></span>');
-      $('#chat_display').scrollTop($('#chat_display')[0].scrollHeight);
+    } else {
+      // Create new streaming bubble
+      var streamingHtml = '<div class=\"message-bubble streaming-bubble\">🤖 ' +
+                         escapeHtml(data.text) + '<span class=\"spinner-border spinner-border-sm ms-2\"></span></div>';
+      chatDisplay.append(streamingHtml);
     }
+
+    // Auto-scroll to bottom
+    chatDisplay.scrollTop(chatDisplay[0].scrollHeight);
   });
 
   // HTML escape function
