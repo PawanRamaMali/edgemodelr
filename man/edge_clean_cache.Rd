@@ -20,7 +20,8 @@ edge_clean_cache(
 \item{max_size_mb}{Maximum total cache size in MB (default: 500)}
 
 \item{interactive}{Whether to ask for user confirmation before deletion}
-item{verbose}{Whether to print detailed messages about cleaning progress}
+
+\item{verbose}{Whether to print detailed messages about cleaning progress}
 }
 \value{
 Invisible list of deleted files
