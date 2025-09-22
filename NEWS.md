@@ -3,9 +3,10 @@
 ## Bug Fixes and Improvements
 
 ### Compilation Fixes
-* **macOS Boolean Conflicts**: Resolved Boolean type redefinition conflicts by defining `Rboolean` before including R headers on macOS
-* **Header Inclusion Order**: Fixed `Rboolean` type definition order to prevent "unknown type name" errors in R headers
-* **System Header Protection**: Added comprehensive guards around macOS system headers (`mach-o/dyld.h`, `mach/mach.h`) to prevent enum conflicts
+* **macOS Boolean Conflicts**: Completely resolved Boolean enum conflicts by avoiding problematic system headers and using direct function declarations
+* **Filesystem Compatibility**: Added comprehensive fallback implementation for disabled `std::filesystem` on macOS builds
+* **Header Protection**: Implemented robust cross-platform header inclusion strategy that works with R, Rcpp, and system headers
+* **System Header Workarounds**: Replaced `<mach-o/dyld.h>` inclusion with direct function declarations to avoid enum conflicts
 * **Format Attribute Warnings**: Suppressed unsupported printf format attribute warnings on macOS Apple Clang compiler
 * **CRAN Compliance**: Removed non-portable optimization flags (`-march=native`, `-mtune=native`, etc.) from Makevars for CRAN compatibility
 * **Cross-platform Build**: Enhanced Makevars configuration for better macOS compatibility with R package requirements

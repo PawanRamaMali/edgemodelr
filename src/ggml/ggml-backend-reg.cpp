@@ -45,10 +45,13 @@
 // Handle boolean conflicts on macOS when using R
 #    ifdef USING_R
        // Under R, prevent system headers from defining conflicting enums
-       // Define macros to prevent conflicting enum definitions
-#      define DYLD_BOOL int
-#      include <mach-o/dyld.h>
+       // Completely avoid the problematic dyld.h header by using dlfcn directly
 #      include <dlfcn.h>
+       // Define what we need from dyld.h without the enum conflicts
+       extern "C" {
+           uint32_t _dyld_image_count(void);
+           const char* _dyld_get_image_name(uint32_t image_index);
+       }
 #    else
        // Standard non-R compilation
 #      include <mach-o/dyld.h>
@@ -62,6 +65,32 @@
 // Filesystem namespace alias
 #if GGML_HAS_FILESYSTEM
 namespace fs = std::filesystem;
+#else
+// Minimal filesystem fallback for when std::filesystem is not available
+namespace fs {
+    struct path {
+        std::string s;
+        path() = default;
+        path(const std::string& str) : s(str) {}
+        path(const char* str) : s(str) {}
+        std::string native() const { return s; }
+        std::string string() const { return s; }
+        path operator/(const path& other) const { return path(s + "/" + other.s); }
+    };
+    inline path u8path(const std::string& s) { return path(s); }
+    inline path current_path() { return path("."); }
+    inline bool exists(const path&) { return false; }
+    struct directory_iterator {
+        directory_iterator(const path&, int = 0) {}
+        directory_iterator() {}
+        bool operator!=(const directory_iterator&) const { return false; }
+        directory_iterator& operator++() { return *this; }
+        path operator*() const { return path(""); }
+    };
+    enum class directory_options { skip_permission_denied };
+    inline directory_iterator begin(directory_iterator it) { return it; }
+    inline directory_iterator end(directory_iterator) { return {}; }
+}
 #endif
 
 // Backend registry
