@@ -36,21 +36,10 @@ The package now includes a **complete, self-contained implementation** that can 
 - C++17 compatible compiler (GCC, Clang, or MSVC)
 - devtools package for development installation
 
-### Development Installation
+### Installation
 
 ```r
-# Install dependencies
-install.packages(c("Rcpp", "devtools"))
-
-# Clone the repository
-# git clone https://github.com/PawanRamaMali/edgemodelr.git
-# cd edgemodelr
-
-# Install from local source (recommended for development)
-devtools::load_all()  # Load without installing
-
-# Or install to R library
-devtools::install()
+install.packages('edgemodelr')
 ```
 
 ### Ready to Use!
