@@ -21,31 +21,10 @@
 #define R_NO_REMAP
 #endif
 
-// For macOS: Define Rboolean and boolean values BEFORE including any R headers
-#ifdef __APPLE__
-// Define Rboolean type before any R headers
-#ifndef Rboolean
-typedef int Rboolean;
-#endif
-// Define boolean values before any system headers
-#ifndef FALSE
-#define FALSE ((Rboolean) 0)
-#endif
-#ifndef TRUE
-#define TRUE ((Rboolean) 1)
-#endif
-// Prevent R_ext/Boolean.h from redefining these
-#define R_EXT_BOOLEAN_H_
-#endif
-
-// Include R headers
+// Include R headers (including Boolean.h) first
 #include <R.h>
 #include <Rinternals.h>
-
-// For non-macOS systems, include Boolean.h normally
-#ifndef __APPLE__
 #include <R_ext/Boolean.h>
-#endif
 #include <stdio.h>
 #include <stdarg.h>
 #include <string.h>

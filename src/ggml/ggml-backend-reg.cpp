@@ -45,27 +45,10 @@
 // Handle boolean conflicts on macOS when using R
 #    ifdef USING_R
        // Under R, prevent system headers from defining conflicting enums
-       // Save current boolean definitions
-#      ifdef TRUE
-#         define SAVED_TRUE TRUE
-#         undef TRUE
-#      endif
-#      ifdef FALSE
-#         define SAVED_FALSE FALSE
-#         undef FALSE
-#      endif
-       // Include system headers without boolean conflicts
+       // Define macros to prevent conflicting enum definitions
+#      define DYLD_BOOL int
 #      include <mach-o/dyld.h>
 #      include <dlfcn.h>
-       // Restore R boolean definitions
-#      ifdef SAVED_FALSE
-#         define FALSE SAVED_FALSE
-#         undef SAVED_FALSE
-#      endif
-#      ifdef SAVED_TRUE
-#         define TRUE SAVED_TRUE
-#         undef SAVED_TRUE
-#      endif
 #    else
        // Standard non-R compilation
 #      include <mach-o/dyld.h>
