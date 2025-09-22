@@ -96,7 +96,9 @@ static const R_CallMethodDef CallEntries[] = {
     {NULL, NULL, 0}
 };
 
+void edgemodelr_init(DllInfo *dll);
 RcppExport void R_init_edgemodelr(DllInfo *dll) {
     R_registerRoutines(dll, NULL, CallEntries, NULL, NULL);
     R_useDynamicSymbols(dll, FALSE);
+    edgemodelr_init(dll);
 }

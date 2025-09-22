@@ -1,19 +1,23 @@
 PKG_CPPFLAGS = -I../inst/include -I./llama -I./ggml -I./ggml/ggml-cpu -DUSING_R=1 -include r_output_redirect.h
-PKG_CXXFLAGS = -DNDEBUG -DGGML_USE_CPU
-PKG_CFLAGS = -DNDEBUG -DGGML_USE_CPU
+PKG_CXXFLAGS = -O3 -DNDEBUG -DGGML_USE_CPU -march=native -mtune=native -funroll-loops -fno-finite-math-only
+PKG_CFLAGS = -O3 -DNDEBUG -DGGML_USE_CPU -march=native -mtune=native -funroll-loops -fno-finite-math-only
 
-# Platform-specific compatibility flags
+# Platform-specific optimization flags
 ifeq ($(shell uname),Darwin)
-    # macOS specific flags to handle filesystem and boolean conflicts
+    # macOS specific flags with optimizations
     PKG_CPPFLAGS += -DGGML_DISABLE_FS=1 -DR_NO_REMAP -DSTRICT_R_HEADERS=1
-    PKG_CXXFLAGS += -mmacosx-version-min=10.15 -Wno-ignored-attributes -Wno-enum-conversion
-    PKG_CFLAGS += -mmacosx-version-min=10.15 -Wno-ignored-attributes
+    PKG_CXXFLAGS += -mmacosx-version-min=10.15 -Wno-ignored-attributes -Wno-enum-conversion -mavx -mavx2 -mfma
+    PKG_CFLAGS += -mmacosx-version-min=10.15 -Wno-ignored-attributes -mavx -mavx2 -mfma
+else
+    # Linux/Unix optimizations - enable SIMD where available
+    PKG_CXXFLAGS += -mavx -mavx2 -mfma -msse4.1 -msse4.2 -mf16c
+    PKG_CFLAGS += -mavx -mavx2 -mfma -msse4.1 -msse4.2 -mf16c
 endif
 
-# Override warnings for ggml source files
-GGML_CXXFLAGS = $(PKG_CXXFLAGS) -fPIC
-GGML_CFLAGS = $(PKG_CFLAGS) -DUSING_R=1 -fPIC
-PKG_LIBS = $(LAPACK_LIBS) $(BLAS_LIBS) $(FLIBS)
+# Optimized flags for ggml source files
+GGML_CXXFLAGS = $(PKG_CXXFLAGS) -fPIC -fopenmp-simd -DGGML_USE_OPENMP
+GGML_CFLAGS = $(PKG_CFLAGS) -DUSING_R=1 -fPIC -fopenmp-simd -DGGML_USE_OPENMP
+PKG_LIBS = $(LAPACK_LIBS) $(BLAS_LIBS) $(FLIBS) -lgomp
 
 # Complete static list of ALL object files - platform specific backend registry
 OBJECTS = bindings.o RcppExports.o \

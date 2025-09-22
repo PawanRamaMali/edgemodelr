@@ -1,3 +1,21 @@
+# edgemodelr 0.1.1
+
+## Bug Fixes and Improvements
+
+### Compilation Fixes
+* **macOS Compatibility**: Resolved compilation errors on macOS systems for better cross-platform support
+
+### Demo and Documentation Updates
+* **Modern UI**: Updated streaming chat demo with modern bslib interface for enhanced user experience
+* **Documentation**: Improved documentation for `edge_clean_cache()` function
+* **Examples**: Enhanced streaming chat example with better UI components
+
+### Technical Improvements
+* **Build System**: Updated Makevars files for improved compilation on Windows and Unix systems
+* **Core Bindings**: Enhanced C++ bindings for better performance and stability
+
+---
+
 # edgemodelr 0.1.0
 
 ## Initial CRAN Release

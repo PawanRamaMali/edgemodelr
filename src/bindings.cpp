@@ -96,8 +96,8 @@ SEXP edge_load_model_internal(std::string model_path, int n_ctx = 2048, int n_gp
     
     llama_context_params ctx_params = llama_context_default_params();
     ctx_params.n_ctx = n_ctx;
-    ctx_params.n_batch = 512;
-    ctx_params.n_threads = std::max(1, (int)std::thread::hardware_concurrency() / 2);
+    ctx_params.n_batch = std::min(2048, n_ctx / 4);  // Larger batch for better throughput
+    ctx_params.n_threads = std::max(1, (int)std::thread::hardware_concurrency());  // Use all available cores
     
     struct llama_context* ctx = llama_init_from_model(model, ctx_params);
     if (!ctx) {
@@ -159,27 +159,25 @@ std::string edge_completion_internal(SEXP model_ptr, std::string prompt, int n_p
     }
     
     std::string result = prompt;  // Start with the original prompt
-    result.reserve(prompt.size() + n_predict * 4);
+    result.reserve(prompt.size() + n_predict * 8);  // Reserve more space to avoid reallocations
     
-    // Generate tokens one by one using simple greedy sampling
+    // Create a sampler chain for better token generation
+    auto sampler_chain_params = llama_sampler_chain_default_params();
+    auto * sampler = llama_sampler_chain_init(sampler_chain_params);
+
+    // Add samplers in the right order for quality generation
+    if (top_p < 1.0f) {
+      llama_sampler_chain_add(sampler, llama_sampler_init_top_p(top_p, 1));
+    }
+    if (temperature > 0.0f) {
+      llama_sampler_chain_add(sampler, llama_sampler_init_temp(temperature));
+    }
+    llama_sampler_chain_add(sampler, llama_sampler_init_dist(12345)); // Random seed
+
+    // Generate tokens using the new sampler API
     for (int i = 0; i < n_predict; ++i) {
-      // Get logits from the context
-      const float* logits = llama_get_logits_ith(edge_ctx->ctx, -1);
-      if (!logits) {
-        break;
-      }
-      
-      // Get vocabulary size using the correct API
-      const int n_vocab = llama_vocab_n_tokens(vocab);
-      llama_token new_token = 0;
-      float max_logit = logits[0];
-      
-      for (int j = 1; j < n_vocab; ++j) {
-        if (logits[j] > max_logit) {
-          max_logit = logits[j];
-          new_token = j;
-        }
-      }
+      // Sample next token using the sampler chain
+      llama_token new_token = llama_sampler_sample(sampler, edge_ctx->ctx, -1);
       
       // Check if it's end of generation
       if (llama_vocab_is_eog(vocab, new_token)) {
@@ -194,15 +192,21 @@ std::string edge_completion_internal(SEXP model_ptr, std::string prompt, int n_p
         result.append(piece, n_chars);
       }
       
+      // Accept the token for sampling history
+      llama_sampler_accept(sampler, new_token);
+
       // Prepare next batch with the new token
       batch = llama_batch_get_one(&new_token, 1);
-      
+
       // Process the new token
       if (llama_decode(edge_ctx->ctx, batch)) {
         break;
       }
     }
-    
+
+    // Clean up sampler
+    llama_sampler_free(sampler);
+
     return result;
     
   } catch (const std::exception& e) {
@@ -283,28 +287,24 @@ List edge_completion_stream_internal(SEXP model_ptr, std::string prompt, Functio
     std::vector<std::string> tokens_generated;
     int tokens_count = 0;
     bool stopped_early = false;
-    
-    // Generate tokens one by one and stream them
+
+    // Create sampler chain for streaming
+    auto sampler_chain_params = llama_sampler_chain_default_params();
+    auto * sampler = llama_sampler_chain_init(sampler_chain_params);
+
+    // Add samplers for quality generation
+    if (top_p < 1.0f) {
+      llama_sampler_chain_add(sampler, llama_sampler_init_top_p(top_p, 1));
+    }
+    if (temperature > 0.0f) {
+      llama_sampler_chain_add(sampler, llama_sampler_init_temp(temperature));
+    }
+    llama_sampler_chain_add(sampler, llama_sampler_init_dist(12345)); // Random seed
+
+    // Generate tokens one by one and stream them with proper sampling
     for (int i = 0; i < n_predict; ++i) {
-      // Get logits from the context
-      const float* logits = llama_get_logits_ith(edge_ctx->ctx, -1);
-      if (!logits) {
-        stopped_early = true;
-        break;
-      }
-      
-      // Get vocabulary size using the correct API
-      const int n_vocab = llama_vocab_n_tokens(vocab);
-      llama_token new_token = 0;
-      float max_logit = logits[0];
-      
-      // Simple greedy sampling (could be enhanced with temperature/top_p)
-      for (int j = 1; j < n_vocab; ++j) {
-        if (logits[j] > max_logit) {
-          max_logit = logits[j];
-          new_token = j;
-        }
-      }
+      // Sample next token using the sampler chain
+      llama_token new_token = llama_sampler_sample(sampler, edge_ctx->ctx, -1);
       
       // Check if it's end of generation
       if (llama_vocab_is_eog(vocab, new_token)) {
@@ -346,10 +346,13 @@ List edge_completion_stream_internal(SEXP model_ptr, std::string prompt, Functio
           warning("Callback error: " + std::string(e.what()));
         }
       }
-      
+
+      // Accept the token for sampling history
+      llama_sampler_accept(sampler, new_token);
+
       // Prepare next batch with the new token
       batch = llama_batch_get_one(&new_token, 1);
-      
+
       // Process the new token
       if (llama_decode(edge_ctx->ctx, batch)) {
         stopped_early = true;
@@ -371,7 +374,10 @@ List edge_completion_stream_internal(SEXP model_ptr, std::string prompt, Functio
     } catch (const std::exception& e) {
       warning("Final callback error: " + std::string(e.what()));
     }
-    
+
+    // Clean up sampler
+    llama_sampler_free(sampler);
+
     // Return summary information
     return List::create(
       Named("full_response") = full_response,

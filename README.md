@@ -623,6 +623,34 @@ analyze_sentiment <- function(model_path, df, text_column) {
 # results <- analyze_sentiment("model.gguf", data, "review")
 ```
 
+## Performance Optimizations
+
+### 🚀 Built-in Optimizations
+
+This package includes several performance optimizations:
+
+- **SIMD Instructions**: Automatically uses AVX, AVX2, FMA when available
+- **Optimized Compilation**: `-O3 -march=native -mtune=native` for maximum performance
+- **Smart Sampling**: Proper temperature/top_p sampling instead of basic greedy
+- **Memory Management**: Pre-allocated buffers and optimized batch sizes
+- **Multi-threading**: Uses all available CPU cores for inference
+
+### 📊 Benchmark Your Performance
+
+```r
+library(edgemodelr)
+
+# Quick performance test
+setup <- edge_quick_setup("TinyLlama-1.1B")
+ctx <- setup$context
+
+# Run benchmark to see tokens/second
+perf <- edge_benchmark(ctx, iterations = 5)
+print(perf)
+
+edge_free_model(ctx)
+```
+
 ## Hardware Requirements
 
 ### Minimum Requirements

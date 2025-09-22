@@ -47,14 +47,22 @@ edge_load_model <- function(model_path, n_ctx = 2048L, n_gpu_layers = 0L) {
     warning("Model file should have .gguf extension for optimal compatibility")
   }
   
-  # Validate parameters
+  # Validate and optimize parameters
   if (!is.numeric(n_ctx) || n_ctx <= 0) {
     stop("n_ctx must be a positive integer")
   }
   if (!is.numeric(n_gpu_layers) || n_gpu_layers < 0) {
     stop("n_gpu_layers must be a non-negative integer")
   }
-  
+
+  # Optimize context size for better performance
+  n_ctx <- max(512, min(n_ctx, 32768))  # Clamp to reasonable range
+
+  # Inform user about optimizations
+  if (n_ctx > 8192) {
+    message("Large context size (", n_ctx, ") may impact performance. Consider using smaller values for faster inference.")
+  }
+
   # Try to load the model using the raw Rcpp function
   tryCatch({
     edge_load_model_internal(normalizePath(model_path), 
@@ -110,9 +118,14 @@ edge_completion <- function(ctx, prompt, n_predict = 128L, temperature = 0.8, to
   if (!is.character(prompt) || length(prompt) != 1L) {
     stop("Prompt must be a single character string")
   }
-  
-  edge_completion_internal(ctx, 
-                         prompt, 
+
+  # Optimize parameters for better performance and quality
+  n_predict <- max(1, min(n_predict, 4096))  # Clamp to reasonable range
+  temperature <- max(0.0, min(temperature, 2.0))  # Clamp temperature
+  top_p <- max(0.1, min(top_p, 1.0))  # Clamp top_p
+
+  edge_completion_internal(ctx,
+                         prompt,
                          as.integer(n_predict),
                          as.numeric(temperature),
                          as.numeric(top_p))
@@ -699,4 +712,59 @@ edge_clean_cache <- function(cache_dir = NULL, max_age_days = 30, max_size_mb = 
 edge_set_verbose <- function(enabled = FALSE) {
   set_llama_logging(enabled)
   invisible(NULL)
+}
+
+#' Performance benchmarking for model inference
+#'
+#' Test inference speed and throughput with the current model to measure
+#' the effectiveness of optimizations.
+#'
+#' @param ctx Model context from edge_load_model()
+#' @param prompt Test prompt to use for benchmarking (default: standard test)
+#' @param n_predict Number of tokens to generate for the test
+#' @param iterations Number of test iterations to average results
+#' @return List with performance metrics
+#'
+#' @examples
+#' \donttest{
+#' setup <- edge_quick_setup("TinyLlama-1.1B")
+#' if (!is.null(setup$context)) {
+#'   ctx <- setup$context
+#'   perf <- edge_benchmark(ctx)
+#'   print(perf)
+#'   edge_free_model(ctx)
+#' }
+#' }
+#' @export
+edge_benchmark <- function(ctx, prompt = "The quick brown fox", n_predict = 50, iterations = 3) {
+  if (!is_valid_model(ctx)) {
+    stop("Invalid model context")
+  }
+
+  times <- numeric(iterations)
+  tokens_per_sec <- numeric(iterations)
+
+  message("Running performance benchmark with ", iterations, " iterations...")
+
+  for (i in 1:iterations) {
+    start_time <- Sys.time()
+    result <- edge_completion(ctx, prompt, n_predict = n_predict, temperature = 0.0)
+    end_time <- Sys.time()
+
+    elapsed <- as.numeric(end_time - start_time, units = "secs")
+    times[i] <- elapsed
+    tokens_per_sec[i] <- n_predict / elapsed
+
+    message("Iteration ", i, ": ", round(elapsed, 3), "s (", round(tokens_per_sec[i], 1), " tokens/sec)")
+  }
+
+  list(
+    avg_time_per_token = mean(times) / n_predict,
+    avg_tokens_per_second = mean(tokens_per_sec),
+    min_tokens_per_second = min(tokens_per_sec),
+    max_tokens_per_second = max(tokens_per_sec),
+    total_time = sum(times),
+    iterations = iterations,
+    tokens_per_iteration = n_predict
+  )
 }

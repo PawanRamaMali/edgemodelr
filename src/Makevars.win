@@ -1,9 +1,9 @@
 PKG_CPPFLAGS = -I../inst/include -I./llama -I./ggml -I./ggml/ggml-cpu -DUSING_R=1 -include r_output_redirect.h
-PKG_CXXFLAGS = -std=gnu++17 -O2 -DNDEBUG -DNOMINMAX -D_USE_MATH_DEFINES -DGGML_USE_CPU
-PKG_CFLAGS = -DNDEBUG -DGGML_USE_CPU
+PKG_CXXFLAGS = -std=gnu++17 -O2 -DNDEBUG -DNOMINMAX -D_USE_MATH_DEFINES -DGGML_USE_CPU -fno-finite-math-only
+PKG_CFLAGS = -O2 -DNDEBUG -DGGML_USE_CPU -fno-finite-math-only
 PKG_LIBS = -static-libgcc -static-libstdc++ 
 
-# Override warnings for ggml source files
+# Optimized flags for ggml source files with OpenMP support
 GGML_CXXFLAGS = $(PKG_CXXFLAGS)
 GGML_CFLAGS = $(PKG_CFLAGS) -DUSING_R=1
 
