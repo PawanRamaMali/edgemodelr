@@ -6,6 +6,7 @@
 * **macOS Boolean Conflicts**: Fixed Boolean type redefinition conflicts between R headers and macOS system headers (`mach-o/dyld.h`, `mach/mach.h`)
 * **Format Attribute Warnings**: Suppressed unsupported printf format attribute warnings on macOS Apple Clang compiler
 * **Header Protection**: Added comprehensive header guards in `ggml-backend-reg.cpp`, `ggml.c`, and `ggml-cpu.c` to prevent compilation failures
+* **CRAN Compliance**: Removed non-portable optimization flags (`-march=native`, `-mtune=native`, etc.) from Makevars for CRAN compatibility
 * **Cross-platform Build**: Enhanced Makevars configuration for better macOS compatibility with R package requirements
 
 ### Demo and Documentation Updates

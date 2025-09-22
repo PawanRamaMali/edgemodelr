@@ -1,17 +1,13 @@
 PKG_CPPFLAGS = -I../inst/include -I./llama -I./ggml -I./ggml/ggml-cpu -DUSING_R=1 -include r_output_redirect.h
-PKG_CXXFLAGS = -O3 -DNDEBUG -DGGML_USE_CPU -march=native -mtune=native -funroll-loops -fno-finite-math-only
-PKG_CFLAGS = -O3 -DNDEBUG -DGGML_USE_CPU -march=native -mtune=native -funroll-loops -fno-finite-math-only
+PKG_CXXFLAGS = -O2 -DNDEBUG -DGGML_USE_CPU -fno-finite-math-only
+PKG_CFLAGS = -O2 -DNDEBUG -DGGML_USE_CPU -fno-finite-math-only
 
 # Platform-specific optimization flags
 ifeq ($(shell uname),Darwin)
-    # macOS specific flags with optimizations and conflict prevention
+    # macOS specific flags with conflict prevention - no non-portable optimizations
     PKG_CPPFLAGS += -DGGML_DISABLE_FS=1 -DR_NO_REMAP -DSTRICT_R_HEADERS=1 -DR_EXT_BOOLEAN_H_
-    PKG_CXXFLAGS += -mmacosx-version-min=10.15 -Wno-ignored-attributes -Wno-enum-conversion -Wno-format -mavx -mavx2 -mfma
-    PKG_CFLAGS += -mmacosx-version-min=10.15 -Wno-ignored-attributes -Wno-format -mavx -mavx2 -mfma
-else
-    # Linux/Unix optimizations - enable SIMD where available
-    PKG_CXXFLAGS += -mavx -mavx2 -mfma -msse4.1 -msse4.2 -mf16c
-    PKG_CFLAGS += -mavx -mavx2 -mfma -msse4.1 -msse4.2 -mf16c
+    PKG_CXXFLAGS += -mmacosx-version-min=10.15 -Wno-ignored-attributes -Wno-enum-conversion -Wno-format
+    PKG_CFLAGS += -mmacosx-version-min=10.15 -Wno-ignored-attributes -Wno-format
 endif
 
 # Optimized flags for ggml source files
