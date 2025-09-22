@@ -4,10 +4,10 @@ PKG_CFLAGS = -O3 -DNDEBUG -DGGML_USE_CPU -march=native -mtune=native -funroll-lo
 
 # Platform-specific optimization flags
 ifeq ($(shell uname),Darwin)
-    # macOS specific flags with optimizations
-    PKG_CPPFLAGS += -DGGML_DISABLE_FS=1 -DR_NO_REMAP -DSTRICT_R_HEADERS=1
-    PKG_CXXFLAGS += -mmacosx-version-min=10.15 -Wno-ignored-attributes -Wno-enum-conversion -mavx -mavx2 -mfma
-    PKG_CFLAGS += -mmacosx-version-min=10.15 -Wno-ignored-attributes -mavx -mavx2 -mfma
+    # macOS specific flags with optimizations and conflict prevention
+    PKG_CPPFLAGS += -DGGML_DISABLE_FS=1 -DR_NO_REMAP -DSTRICT_R_HEADERS=1 -DR_EXT_BOOLEAN_H_
+    PKG_CXXFLAGS += -mmacosx-version-min=10.15 -Wno-ignored-attributes -Wno-enum-conversion -Wno-format -mavx -mavx2 -mfma
+    PKG_CFLAGS += -mmacosx-version-min=10.15 -Wno-ignored-attributes -Wno-format -mavx -mavx2 -mfma
 else
     # Linux/Unix optimizations - enable SIMD where available
     PKG_CXXFLAGS += -mavx -mavx2 -mfma -msse4.1 -msse4.2 -mf16c

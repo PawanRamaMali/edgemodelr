@@ -3,7 +3,8 @@
 ## Bug Fixes and Improvements
 
 ### Compilation Fixes
-* **macOS Compatibility**: Resolved compilation errors on macOS systems for better cross-platform support
+* **macOS Compatibility**: Fixed Boolean type conflicts between R and system headers on macOS
+* **Format Warnings**: Suppressed unsupported format attribute warnings on macOS compilation
 
 ### Demo and Documentation Updates
 * **Modern UI**: Updated streaming chat demo with modern bslib interface for enhanced user experience

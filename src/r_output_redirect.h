@@ -16,8 +16,36 @@
 
 #ifdef USING_R
 
+// Define this before including R headers to prevent Boolean conflicts on macOS
+#ifndef R_NO_REMAP
+#define R_NO_REMAP
+#endif
+
+// Prevent conflicts with system Boolean definitions on macOS
+#ifdef __APPLE__
+// Prevent inclusion of R_ext/Boolean.h which conflicts with system headers
+#define R_EXT_BOOLEAN_H_
+// Also prevent any system headers from defining TRUE/FALSE after R headers
+#define __AVAILABILITYMACROS__
+#endif
+
 #include <R.h>
 #include <Rinternals.h>
+
+// For macOS: manually define what we need from Boolean.h without conflicts
+#ifdef __APPLE__
+#ifndef FALSE
+#define FALSE 0
+#endif
+#ifndef TRUE
+#define TRUE 1
+#endif
+// Define Rboolean type
+typedef int Rboolean;
+#else
+// On non-macOS systems, include Boolean.h normally
+#include <R_ext/Boolean.h>
+#endif
 #include <stdio.h>
 #include <stdarg.h>
 #include <string.h>
@@ -28,7 +56,7 @@
 // Define format attribute for GCC/Clang compatibility
 // Check if R_PRINTF_FORMAT is already defined by R headers
 #ifndef R_PRINTF_FORMAT
-#    ifndef __GNUC__
+#    if !defined(__GNUC__) || defined(__APPLE__)
 #        define R_PRINTF_FORMAT(...)
 #    else
 #        define R_PRINTF_FORMAT(...) __attribute__((format(printf, __VA_ARGS__)))
