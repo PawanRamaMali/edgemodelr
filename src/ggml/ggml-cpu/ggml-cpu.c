@@ -207,8 +207,27 @@ typedef pthread_t ggml_thread_t;
 
 #if defined(__APPLE__)
 #include <unistd.h>
+#ifdef USING_R
+// Protect against boolean conflicts when using R
+#ifdef TRUE
+#undef TRUE
+#endif
+#ifdef FALSE
+#undef FALSE
+#endif
 #include <mach/mach.h>
 #include <TargetConditionals.h>
+// Restore R boolean definitions
+#ifndef TRUE
+#define TRUE 1
+#endif
+#ifndef FALSE
+#define FALSE 0
+#endif
+#else
+#include <mach/mach.h>
+#include <TargetConditionals.h>
+#endif
 #endif
 
 static const struct ggml_type_traits_cpu type_traits_cpu[GGML_TYPE_COUNT] = {

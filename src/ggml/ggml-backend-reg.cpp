@@ -1,3 +1,20 @@
+// Ensure R compatibility for macOS boolean conflicts
+#ifdef USING_R
+#ifdef __APPLE__
+// Define Rboolean type manually to avoid header conflicts
+#ifndef Rboolean
+typedef int Rboolean;
+#endif
+// Pre-define R boolean values to prevent conflicts
+#ifndef FALSE
+#define FALSE ((Rboolean) 0)
+#endif
+#ifndef TRUE
+#define TRUE ((Rboolean) 1)
+#endif
+#endif
+#endif
+
 #include "ggml-backend-impl.h"
 #include "ggml-backend.h"
 #include "ggml-impl.h"
@@ -40,21 +57,31 @@
 #    endif
 #    include <windows.h>
 #elif defined(__APPLE__)
-// Prevent boolean enum conflicts with R
-#    ifdef TRUE
-#        undef TRUE
-#    endif
-#    ifdef FALSE
-#        undef FALSE
-#    endif
-#    include <mach-o/dyld.h>
-#    include <dlfcn.h>
-// Restore R boolean definitions if needed
-#    ifndef TRUE
-#        define TRUE 1
-#    endif
-#    ifndef FALSE
-#        define FALSE 0
+// Handle boolean conflicts on macOS when using R
+#    ifdef USING_R
+       // Under R, prevent system headers from defining conflicting enums
+#      define __AVAILABILITY__
+#      define __AVAILABILITYMACROS__
+       // Include system headers with enum protection
+#      ifdef TRUE
+#         undef TRUE
+#      endif
+#      ifdef FALSE
+#         undef FALSE
+#      endif
+#      include <mach-o/dyld.h>
+#      include <dlfcn.h>
+       // Restore R-compatible boolean values
+#      ifndef TRUE
+#         define TRUE ((Rboolean) 1)
+#      endif
+#      ifndef FALSE
+#         define FALSE ((Rboolean) 0)
+#      endif
+#    else
+       // Standard non-R compilation
+#      include <mach-o/dyld.h>
+#      include <dlfcn.h>
 #    endif
 #else
 #    include <dlfcn.h>
