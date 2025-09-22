@@ -21,29 +21,24 @@
 #define R_NO_REMAP
 #endif
 
-// Prevent conflicts with system Boolean definitions on macOS
-#ifdef __APPLE__
-// Prevent inclusion of R_ext/Boolean.h which conflicts with system headers
-#define R_EXT_BOOLEAN_H_
-// Also prevent any system headers from defining TRUE/FALSE after R headers
-#define __AVAILABILITYMACROS__
-#endif
-
+// Include R headers first
 #include <R.h>
 #include <Rinternals.h>
 
-// For macOS: manually define what we need from Boolean.h without conflicts
+// Custom Boolean.h replacement for macOS to avoid enum conflicts
 #ifdef __APPLE__
+// Manually define Rboolean to avoid enum conflicts with system headers
+#ifndef Rboolean
+typedef int Rboolean;
+#endif
 #ifndef FALSE
-#define FALSE 0
+#define FALSE ((Rboolean) 0)
 #endif
 #ifndef TRUE
-#define TRUE 1
+#define TRUE ((Rboolean) 1)
 #endif
-// Define Rboolean type
-typedef int Rboolean;
 #else
-// On non-macOS systems, include Boolean.h normally
+// On non-macOS, use standard R Boolean header
 #include <R_ext/Boolean.h>
 #endif
 #include <stdio.h>

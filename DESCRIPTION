@@ -1,7 +1,7 @@
 Package: edgemodelr
 Type: Package
 Title: Local Language Model Inference
-Version: 0.1.0
+Version: 0.1.1
 Authors@R: person("Pawan Rama", "Mali", email = "prm@outlook.in", role = c("aut", "cre"))
 Author: Pawan Rama Mali [aut, cre]
 Maintainer: Pawan Rama Mali <prm@outlook.in>
