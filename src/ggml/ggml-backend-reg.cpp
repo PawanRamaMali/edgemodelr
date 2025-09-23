@@ -75,21 +75,40 @@ namespace fs {
         path(const char* str) : s(str) {}
         std::string native() const { return s; }
         std::string string() const { return s; }
+        std::string u8string() const { return s; }
         path operator/(const path& other) const { return path(s + "/" + other.s); }
+        path filename() const {
+            auto pos = s.find_last_of('/');
+            return (pos != std::string::npos) ? path(s.substr(pos + 1)) : path(s);
+        }
+        path extension() const {
+            auto pos = s.find_last_of('.');
+            return (pos != std::string::npos) ? path(s.substr(pos)) : path("");
+        }
+        bool operator==(const path& other) const { return s == other.s; }
     };
     inline path u8path(const std::string& s) { return path(s); }
     inline path current_path() { return path("."); }
     inline bool exists(const path&) { return false; }
+    struct directory_entry {
+        directory_entry() {}
+        path path() const { return path(""); }
+        bool is_regular_file() const { return false; }
+    };
     struct directory_iterator {
         directory_iterator(const path&, int = 0) {}
         directory_iterator() {}
         bool operator!=(const directory_iterator&) const { return false; }
         directory_iterator& operator++() { return *this; }
-        path operator*() const { return path(""); }
+        directory_entry operator*() const { return directory_entry(); }
     };
     enum class directory_options { skip_permission_denied };
     inline directory_iterator begin(directory_iterator it) { return it; }
     inline directory_iterator end(directory_iterator) { return {}; }
+}
+// Add missing path_str function for fallback
+static std::string path_str(const fs::path & path) {
+    return path.string();
 }
 #endif
 
