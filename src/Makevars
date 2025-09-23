@@ -1,27 +1,11 @@
 PKG_CPPFLAGS = -I../inst/include -I./llama -I./ggml -I./ggml/ggml-cpu -DUSING_R=1
-PKG_CXXFLAGS = -O2 -DNDEBUG -DGGML_USE_CPU -fno-finite-math-only
-PKG_CFLAGS = -O2 -DNDEBUG -DGGML_USE_CPU -fno-finite-math-only
+PKG_CXXFLAGS = -DNDEBUG -DGGML_USE_CPU
+PKG_CFLAGS = -DNDEBUG -DGGML_USE_CPU
 
-# Platform-specific optimization flags
-# x86/x86_64 specific configuration
-ARCH_OBJECTS = ggml/ggml-cpu/arch/x86/cpu-feats.o ggml/ggml-cpu/arch/x86/quants.o ggml/ggml-cpu/arch/x86/repack.o
-PKG_CPPFLAGS += -DGGML_USE_X86
-
-# OpenMP configuration (disable on macOS, enable elsewhere)
-ifeq ($(shell uname),Darwin)
-    # macOS specific flags - disable OpenMP
-    PKG_CPPFLAGS += -DGGML_DISABLE_FS=1 -DR_NO_REMAP -DSTRICT_R_HEADERS=1
-    PKG_CXXFLAGS += -mmacosx-version-min=10.15 -Wno-ignored-attributes -Wno-enum-conversion -Wno-format
-    PKG_CFLAGS += -mmacosx-version-min=10.15 -Wno-ignored-attributes -Wno-format
-    GGML_CXXFLAGS = $(PKG_CXXFLAGS) -fPIC
-    GGML_CFLAGS = $(PKG_CFLAGS) -DUSING_R=1 -fPIC
-    PKG_LIBS = $(LAPACK_LIBS) $(BLAS_LIBS) $(FLIBS)
-else
-    # Enable OpenMP on other platforms
-    GGML_CXXFLAGS = $(PKG_CXXFLAGS) -fPIC -fopenmp-simd -DGGML_USE_OPENMP
-    GGML_CFLAGS = $(PKG_CFLAGS) -DUSING_R=1 -fPIC -fopenmp-simd -DGGML_USE_OPENMP
-    PKG_LIBS = $(LAPACK_LIBS) $(BLAS_LIBS) $(FLIBS) -lgomp
-endif
+# Simple cross-platform configuration without architecture-specific optimizations
+GGML_CXXFLAGS = $(PKG_CXXFLAGS) -fPIC
+GGML_CFLAGS = $(PKG_CFLAGS) -DUSING_R=1 -fPIC
+PKG_LIBS = $(LAPACK_LIBS) $(BLAS_LIBS) $(FLIBS)
 
 # Core object files (common to all architectures)
 CORE_OBJECTS = bindings.o RcppExports.o \
@@ -39,8 +23,8 @@ CORE_OBJECTS = bindings.o RcppExports.o \
 	ggml/ggml-cpu/binary-ops.o ggml/ggml-cpu/unary-ops.o ggml/ggml-cpu/vec.o \
 	ggml/ggml-cpu/traits.o ggml/ggml-cpu/repack.o ggml/ggml-cpu/quants.o
 
-# Complete objects list (core + architecture-specific)
-OBJECTS = $(CORE_OBJECTS) $(ARCH_OBJECTS)
+# Complete objects list (removing architecture-specific objects for cross-platform compatibility)
+OBJECTS = $(CORE_OBJECTS)
 
 all: $(SHLIB)
 
@@ -71,14 +55,6 @@ ggml/%.o: ggml/%.cpp
 llama/%.o: llama/%.cpp
 	$(CXX) $(ALL_CPPFLAGS) $(GGML_CXXFLAGS) -c $< -o $@
 
-# Architecture-specific rules (only for x86)
-ifneq ($(ARCH_OBJECTS),)
-ggml/ggml-cpu/arch/x86/%.o: ggml/ggml-cpu/arch/x86/%.cpp
-	$(CXX) $(ALL_CPPFLAGS) $(GGML_CXXFLAGS) -c $< -o $@
-
-ggml/ggml-cpu/arch/x86/%.o: ggml/ggml-cpu/arch/x86/%.c
-	$(CC) $(ALL_CPPFLAGS) $(GGML_CFLAGS) -c $< -o $@
-endif
 
 # Standard fallback rules
 %.o: %.c

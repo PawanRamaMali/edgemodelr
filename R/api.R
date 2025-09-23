@@ -192,7 +192,7 @@ is_valid_model <- function(ctx) {
 #' # Download TinyLlama model
 #' model_path <- edge_download_model(
 #'   model_id = "TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF",
-#'   filename = "tinyllama-1.1b-chat-v1.0.q4_k_m.gguf"
+#'   filename = "tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf"
 #' )
 #' 
 #' # Use the downloaded model
@@ -338,7 +338,7 @@ edge_list_models <- function() {
       "Llama-3.2-1B-Instruct-Q4_K_M.gguf",
       "Llama-3.2-3B-Instruct-Q4_K_M.gguf",
       "Phi-3-mini-4k-instruct-q4.gguf",
-      "qwen2.5-1.5b-instruct-q4_k_m.gguf", 
+      "qwen2.5-1.5b-instruct-q4_k_m.gguf",
       "gemma-2-2b-it-q4_k_m.gguf"
     ),
     use_case = c(
