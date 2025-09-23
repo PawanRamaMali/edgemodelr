@@ -768,3 +768,335 @@ edge_benchmark <- function(ctx, prompt = "The quick brown fox", n_predict = 50, 
     tokens_per_iteration = n_predict
   )
 }
+
+#' Find and prepare GGUF models for use with edgemodelr
+#'
+#' This function finds compatible GGUF model files from various sources including
+#' Ollama installations, custom directories, or any folder containing GGUF files.
+#' It tests each model for compatibility with edgemodelr and creates organized
+#' copies or links for easy access.
+#'
+#' @param source_dirs Vector of directories to search for GGUF files. If NULL,
+#'   automatically searches common locations including Ollama installation.
+#' @param target_dir Directory where to create links/copies of compatible models.
+#'   If NULL, creates a "local_models" directory in the current working directory.
+#' @param create_links Logical. If TRUE (default), creates symbolic links to save disk space.
+#'   If FALSE, copies the files (uses more disk space but more compatible).
+#' @param model_pattern Optional pattern to filter model files by name.
+#' @param test_compatibility Logical. If TRUE (default), tests each GGUF file for
+#'   compatibility with edgemodelr before including it.
+#' @param min_size_mb Minimum file size in MB to consider (default: 50MB).
+#'   Helps filter out config files and focus on actual models.
+#' @param verbose Logical. Whether to print detailed progress information.
+#' @return List containing information about compatible models, including paths and metadata
+#'
+#' @details
+#' This function performs the following steps:
+#' \enumerate{
+#'   \item Searches specified directories (or auto-detects common locations)
+#'   \item Identifies GGUF format files above the minimum size threshold
+#'   \item Optionally tests each file for compatibility with edgemodelr
+#'   \item Creates organized symbolic links or copies in the target directory
+#'   \item Returns detailed information about working models
+#' }
+#'
+#' The function automatically searches these locations if no source_dirs specified:
+#' \itemize{
+#'   \item Ollama models directory (~/.ollama/models or %USERPROFILE%/.ollama/models)
+#'   \item Current working directory
+#'   \item ~/models directory (if exists)
+#'   \item Common model storage locations
+#' }
+#'
+#' @examples
+#' \donttest{
+#' # Basic usage - auto-detect and test all GGUF models
+#' models_info <- edge_find_gguf_models()
+#' if (!is.null(models_info) && length(models_info$models) > 0) {
+#'   # Load the first compatible model
+#'   ctx <- edge_load_model(models_info$models[[1]]$path)
+#'   result <- edge_completion(ctx, "Hello", n_predict = 20)
+#'   edge_free_model(ctx)
+#' }
+#'
+#' # Search specific directories
+#' models_info <- edge_find_gguf_models(source_dirs = c("~/Downloads", "~/models"))
+#'
+#' # Skip compatibility testing (faster but less reliable)
+#' models_info <- edge_find_gguf_models(test_compatibility = FALSE)
+#'
+#' # Copy files instead of creating links
+#' models_info <- edge_find_gguf_models(create_links = FALSE)
+#'
+#' # Filter for specific models
+#' models_info <- edge_find_gguf_models(model_pattern = "llama")
+#' }
+#' @export
+edge_find_gguf_models <- function(source_dirs = NULL, target_dir = NULL, create_links = TRUE,
+                                  model_pattern = NULL, test_compatibility = TRUE,
+                                  min_size_mb = 50, verbose = TRUE) {
+
+  # Set default target directory
+  if (is.null(target_dir)) {
+    target_dir <- file.path(getwd(), "local_models")
+  }
+  target_dir <- path.expand(target_dir)
+
+  if (verbose) {
+    message("🔍 Searching for GGUF model files...")
+  }
+
+  # Determine source directories to search
+  if (is.null(source_dirs)) {
+    source_dirs <- c()
+
+    # Add Ollama directory if it exists
+    ollama_paths <- c(
+      path.expand("~/.ollama/models/blobs"),
+      file.path(Sys.getenv("USERPROFILE"), ".ollama", "models", "blobs"),
+      "/usr/share/ollama/models/blobs"
+    )
+    for (path in ollama_paths) {
+      if (dir.exists(path)) {
+        source_dirs <- c(source_dirs, path)
+        if (verbose) message("📁 Found Ollama models: ", path)
+        break
+      }
+    }
+
+    # Add common model directories
+    common_dirs <- c(
+      getwd(),
+      path.expand("~/models"),
+      path.expand("~/Downloads"),
+      file.path(getwd(), "models"),
+      file.path(getwd(), "local_models")
+    )
+
+    for (dir in common_dirs) {
+      if (dir.exists(dir)) {
+        source_dirs <- c(source_dirs, dir)
+      }
+    }
+
+    if (length(source_dirs) == 0) {
+      if (verbose) message("❌ No source directories found")
+      return(NULL)
+    }
+  } else {
+    # Expand user-provided directories
+    source_dirs <- path.expand(source_dirs)
+    source_dirs <- source_dirs[dir.exists(source_dirs)]
+
+    if (length(source_dirs) == 0) {
+      if (verbose) message("❌ None of the specified directories exist")
+      return(NULL)
+    }
+  }
+
+  if (verbose) {
+    message("🗂️ Searching ", length(source_dirs), " directories for GGUF files")
+  }
+
+  # Find all potential GGUF files
+  all_files <- c()
+  for (dir in source_dirs) {
+    # Look for .gguf files
+    gguf_files <- list.files(dir, pattern = "\\.gguf$", full.names = TRUE, recursive = TRUE)
+
+    # Also check files without extension (like Ollama blobs)
+    all_dir_files <- list.files(dir, full.names = TRUE, recursive = FALSE)
+
+    for (file in all_dir_files) {
+      if (file.exists(file) && !dir.exists(file) && file.size(file) > min_size_mb * 1024 * 1024) {
+        # Check if it's a GGUF file by reading header
+        tryCatch({
+          con <- file(file, "rb")
+          header <- readBin(con, "raw", 4)
+          close(con)
+
+          if (length(header) == 4 && identical(header, charToRaw("GGUF"))) {
+            gguf_files <- c(gguf_files, file)
+          }
+        }, error = function(e) {
+          # Skip files that can't be read
+        })
+      }
+    }
+
+    all_files <- c(all_files, gguf_files)
+  }
+
+  # Remove duplicates and filter by size
+  all_files <- unique(all_files)
+  all_files <- all_files[file.size(all_files) >= min_size_mb * 1024 * 1024]
+
+  if (length(all_files) == 0) {
+    if (verbose) {
+      message("❌ No GGUF files found above ", min_size_mb, "MB")
+      message("💡 Try: edge_quick_setup('TinyLlama-1.1B') to download a compatible model")
+    }
+    return(NULL)
+  }
+
+  # Apply pattern filter if specified
+  if (!is.null(model_pattern)) {
+    pattern_matches <- grepl(model_pattern, basename(all_files), ignore.case = TRUE)
+    all_files <- all_files[pattern_matches]
+
+    if (length(all_files) == 0) {
+      if (verbose) message("❌ No files match pattern: ", model_pattern)
+      return(NULL)
+    }
+  }
+
+  if (verbose) {
+    message("📋 Found ", length(all_files), " GGUF files to process")
+  }
+
+  # Create target directory
+  if (!dir.exists(target_dir)) {
+    dir.create(target_dir, recursive = TRUE)
+    if (verbose) message("📂 Created target directory: ", target_dir)
+  }
+
+  # Process each file
+  compatible_models <- list()
+
+  for (i in seq_along(all_files)) {
+    file_path <- all_files[i]
+    file_name <- basename(file_path)
+    size_mb <- round(file.size(file_path) / (1024^2), 1)
+
+    if (verbose) {
+      message("🔍 Processing ", i, "/", length(all_files), ": ", file_name, " (", size_mb, "MB)")
+    }
+
+    # Generate a clean model name
+    if (grepl("\\.gguf$", file_name)) {
+      model_name <- gsub("\\.gguf$", "", file_name)
+    } else {
+      # For Ollama blobs, create descriptive name
+      model_name <- paste0("model_", size_mb, "mb_", substr(file_name, 8, 15))
+    }
+
+    model_name <- gsub("[^a-zA-Z0-9._-]", "_", model_name)  # Clean name
+
+    # Test compatibility if requested
+    is_compatible <- TRUE
+    test_result <- ""
+
+    if (test_compatibility) {
+      if (verbose) message("  🧪 Testing compatibility...")
+
+      tryCatch({
+        # Try to load the model
+        temp_ctx <- edge_load_model(file_path, n_ctx = 256, n_gpu_layers = 0)
+
+        if (is_valid_model(temp_ctx)) {
+          # Quick test
+          test_result <- edge_completion(temp_ctx, "Hi", n_predict = 3, temperature = 0.1)
+          edge_free_model(temp_ctx)
+
+          if (verbose) message("  ✅ Compatible! Test: '", test_result, "'")
+        } else {
+          is_compatible <- FALSE
+          if (verbose) message("  ❌ Model validation failed")
+        }
+      }, error = function(e) {
+        is_compatible <- FALSE
+        if (verbose) message("  ❌ Compatibility test failed: ", e$message)
+      })
+    } else {
+      if (verbose) message("  ⏭️ Skipping compatibility test")
+    }
+
+    if (is_compatible) {
+      # Create target file
+      target_file <- file.path(target_dir, paste0(model_name, ".gguf"))
+
+      # Ensure unique filename
+      counter <- 1
+      original_target <- target_file
+      while (file.exists(target_file)) {
+        target_file <- file.path(target_dir, paste0(model_name, "_", counter, ".gguf"))
+        counter <- counter + 1
+      }
+
+      # Copy or link the file
+      success <- FALSE
+      if (create_links && .Platform$OS.type != "windows") {
+        tryCatch({
+          file.symlink(file_path, target_file)
+          success <- TRUE
+          if (verbose) message("  🔗 Created symbolic link")
+        }, error = function(e) {
+          if (verbose) message("  ⚠️ Symlink failed, copying...")
+        })
+      }
+
+      if (!success) {
+        success <- file.copy(file_path, target_file, overwrite = TRUE)
+        if (success && verbose) message("  📋 Copied file")
+      }
+
+      if (success) {
+        compatible_models[[model_name]] <- list(
+          name = model_name,
+          path = target_file,
+          source = file_path,
+          size_mb = size_mb,
+          compatible = is_compatible,
+          test_result = test_result,
+          linked = create_links && .Platform$OS.type != "windows"
+        )
+      }
+    }
+  }
+
+  if (length(compatible_models) == 0) {
+    if (verbose) {
+      message("❌ No compatible models found")
+      if (test_compatibility) {
+        message("💡 Try with test_compatibility = FALSE to include untested models")
+      }
+      message("💡 Or use: edge_quick_setup('TinyLlama-1.1B') for a guaranteed working model")
+    }
+    return(NULL)
+  }
+
+  if (verbose) {
+    message("🎉 Found ", length(compatible_models), " compatible models!")
+    message("💡 Usage example:")
+    message("   ctx <- edge_load_model('", compatible_models[[1]]$path, "')")
+    message("   result <- edge_completion(ctx, 'Your prompt here', n_predict = 50)")
+    message("   edge_free_model(ctx)")
+  }
+
+  return(list(
+    target_dir = target_dir,
+    models = compatible_models,
+    total_models = length(compatible_models),
+    method = ifelse(test_compatibility, "tested_compatibility", "format_only"),
+    search_dirs = source_dirs,
+    disk_space_saved = ifelse(create_links, sum(sapply(compatible_models, function(x) x$size_mb)), 0)
+  ))
+}
+
+#' @rdname edge_find_gguf_models
+#' @export
+edge_find_ollama_models <- function(target_dir = NULL, create_links = TRUE, model_pattern = NULL, verbose = TRUE) {
+  # Backward compatibility wrapper
+  if (verbose) {
+    message("ℹ️ edge_find_ollama_models() is deprecated. Use edge_find_gguf_models() instead.")
+  }
+  edge_find_gguf_models(
+    source_dirs = NULL,  # Auto-detect including Ollama
+    target_dir = target_dir,
+    create_links = create_links,
+    model_pattern = model_pattern,
+    test_compatibility = TRUE,
+    min_size_mb = 50,
+    verbose = verbose
+  )
+}

@@ -99,6 +99,72 @@ cat("R insight:", result2, "\n")
 edge_free_model(ctx)
 ```
 
+## 🔄 Universal GGUF Model Integration
+
+**Reuse ANY existing GGUF models without duplicate downloads!**
+
+edgemodelr can automatically find and test GGUF models from multiple sources including Ollama, local directories, downloads folder, and more. This saves gigabytes of disk space and eliminates duplicate model downloads.
+
+### Quick Integration
+
+```r
+library(edgemodelr)
+
+# Auto-detect and test all GGUF models on your system
+models_info <- edge_find_gguf_models()
+
+if (!is.null(models_info) && length(models_info$models) > 0) {
+  # Use any compatible model
+  first_model <- models_info$models[[1]]
+  ctx <- edge_load_model(first_model$path)
+
+  # Same API as always
+  result <- edge_completion(ctx, "What is machine learning?", n_predict = 100)
+  cat(result)
+
+  edge_free_model(ctx)
+}
+```
+
+### Automatic Detection Sources
+- ✅ **Ollama models** (`~/.ollama/models/blobs`)
+- ✅ **Downloads folder** (`~/Downloads/*.gguf`)
+- ✅ **Local models directory** (`~/models/*.gguf`)
+- ✅ **Current working directory** (`./*.gguf`)
+- ✅ **Any custom directories** you specify
+
+### Benefits
+- ✅ **Universal compatibility** - Works with models from any source
+- ✅ **Automatic testing** - Only includes models that actually work with edgemodelr
+- ✅ **Space efficient** - Creates symbolic links by default (saves disk space)
+- ✅ **Smart detection** - Finds GGUF files even without .gguf extension (like Ollama)
+- ✅ **No duplicate downloads** - Reuse your existing models
+
+### Advanced Options
+
+```r
+# Search specific directories
+models_info <- edge_find_gguf_models(source_dirs = c("~/Downloads", "~/my_models"))
+
+# Filter by name pattern
+llama_models <- edge_find_gguf_models(model_pattern = "llama")
+
+# Skip compatibility testing (faster but less reliable)
+models_info <- edge_find_gguf_models(test_compatibility = FALSE)
+
+# Copy files instead of creating links
+models_info <- edge_find_gguf_models(create_links = FALSE)
+
+# Set minimum file size (default: 50MB)
+models_info <- edge_find_gguf_models(min_size_mb = 100)
+```
+
+### Legacy Ollama Function
+```r
+# Still works, but redirects to the new function
+models_info <- edge_find_ollama_models()  # Deprecated but functional
+```
+
 ## Model Resources
 
 ### 🆕 Latest Models (2024)
