@@ -92,7 +92,7 @@ namespace fs {
     inline bool exists(const path&) { return false; }
     struct directory_entry {
         directory_entry() {}
-        path path() const { return ::ggml_fs::path(""); }
+        path path() const { return fs::path(""); }
         bool is_regular_file() const { return false; }
     };
     struct directory_iterator {
