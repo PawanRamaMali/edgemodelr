@@ -11,7 +11,9 @@
 #include "llama.h"
 #include "ggml-backend.h"
 #include "ggml-cpu.h"
-#include "r_output_redirect.h"
+
+// Simple output suppression for CRAN compliance (replaces r_output_redirect.h)
+bool g_suppress_console_output = true;
 
 // End of includes
 

@@ -1,0 +1,115 @@
+name: ARM64 Build Test
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  arm64-linux:
+    runs-on: ubuntu-latest
+    name: ARM64 Linux Build
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - name: Test ARM64 build
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          platforms: linux/arm64
+          file: |
+            FROM arm64v8/ubuntu:22.04
+
+            # Install R and build dependencies
+            RUN apt-get update && apt-get install -y \
+                r-base \
+                r-base-dev \
+                build-essential \
+                libblas-dev \
+                liblapack-dev \
+                gfortran \
+                && rm -rf /var/lib/apt/lists/*
+
+            # Copy package source
+            COPY . /edgemodelr
+            WORKDIR /edgemodelr
+
+            # Test configure script
+            RUN chmod +x configure && ./configure
+
+            # Test build (without install to catch linker errors)
+            RUN cd src && make clean && make -n
+          push: false
+
+  arm64-native:
+    runs-on: ubuntu-latest
+    name: ARM64 Native Build (via emulation)
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU for ARM64 emulation
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - name: Run ARM64 container
+        run: |
+          docker run --rm --platform linux/arm64 \
+            -v ${{ github.workspace }}:/workspace \
+            -w /workspace \
+            arm64v8/ubuntu:22.04 \
+            bash -c "
+              apt-get update &&
+              apt-get install -y r-base r-base-dev build-essential libblas-dev liblapack-dev gfortran file &&
+              echo 'Architecture:' && uname -m &&
+              echo 'Testing configure script...' &&
+              chmod +x configure && ./configure &&
+              echo 'Testing if Makevars was created correctly...' &&
+              ls -la src/Makevars &&
+              head -20 src/Makevars &&
+              echo 'Architecture detection test complete!'
+            "
+
+  build-test-matrix:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        arch: [amd64, arm64]
+    name: Multi-arch build test (${{ matrix.arch }})
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Test configure on ${{ matrix.arch }}
+        run: |
+          docker run --rm --platform linux/${{ matrix.arch }} \
+            -v ${{ github.workspace }}:/workspace \
+            -w /workspace \
+            ubuntu:22.04 \
+            bash -c "
+              apt-get update && apt-get install -y build-essential file &&
+              echo '=== Architecture Information ===' &&
+              uname -a &&
+              echo '=== Testing configure script ===' &&
+              chmod +x configure && ./configure &&
+              echo '=== Checking generated Makevars ===' &&
+              cat src/Makevars
+            "

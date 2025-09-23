@@ -1,29 +1,26 @@
+#!/bin/bash
+# Windows configure script for edgemodelr
+
+echo "Configuring edgemodelr for Windows..."
+
+# For Windows, we assume x86_64 architecture
+MAKEVARS="src/Makevars.win"
+
+cat > "$MAKEVARS" << 'EOF'
 PKG_CPPFLAGS = -I../inst/include -I./llama -I./ggml -I./ggml/ggml-cpu -DUSING_R=1
 PKG_CXXFLAGS = -O2 -DNDEBUG -DGGML_USE_CPU -fno-finite-math-only
 PKG_CFLAGS = -O2 -DNDEBUG -DGGML_USE_CPU -fno-finite-math-only
 
-# Platform-specific optimization flags
-# x86/x86_64 specific configuration
+# Windows x86_64 configuration
 ARCH_OBJECTS = ggml/ggml-cpu/arch/x86/cpu-feats.o ggml/ggml-cpu/arch/x86/quants.o ggml/ggml-cpu/arch/x86/repack.o
 PKG_CPPFLAGS += -DGGML_USE_X86
 
-# OpenMP configuration (disable on macOS, enable elsewhere)
-ifeq ($(shell uname),Darwin)
-    # macOS specific flags - disable OpenMP
-    PKG_CPPFLAGS += -DGGML_DISABLE_FS=1 -DR_NO_REMAP -DSTRICT_R_HEADERS=1
-    PKG_CXXFLAGS += -mmacosx-version-min=10.15 -Wno-ignored-attributes -Wno-enum-conversion -Wno-format
-    PKG_CFLAGS += -mmacosx-version-min=10.15 -Wno-ignored-attributes -Wno-format
-    GGML_CXXFLAGS = $(PKG_CXXFLAGS) -fPIC
-    GGML_CFLAGS = $(PKG_CFLAGS) -DUSING_R=1 -fPIC
-    PKG_LIBS = $(LAPACK_LIBS) $(BLAS_LIBS) $(FLIBS)
-else
-    # Enable OpenMP on other platforms
-    GGML_CXXFLAGS = $(PKG_CXXFLAGS) -fPIC -fopenmp-simd -DGGML_USE_OPENMP
-    GGML_CFLAGS = $(PKG_CFLAGS) -DUSING_R=1 -fPIC -fopenmp-simd -DGGML_USE_OPENMP
-    PKG_LIBS = $(LAPACK_LIBS) $(BLAS_LIBS) $(FLIBS) -lgomp
-endif
+# OpenMP configuration for Windows
+GGML_CXXFLAGS = $(PKG_CXXFLAGS) -fPIC -fopenmp-simd -DGGML_USE_OPENMP
+GGML_CFLAGS = $(PKG_CFLAGS) -DUSING_R=1 -fPIC -fopenmp-simd -DGGML_USE_OPENMP
+PKG_LIBS = $(LAPACK_LIBS) $(BLAS_LIBS) $(FLIBS) -lgomp
 
-# Core object files (common to all architectures)
+# Core object files
 CORE_OBJECTS = bindings.o RcppExports.o \
 	ggml/ggml.o ggml/ggml-alloc.o ggml/gguf.o \
 	ggml/ggml-backend.o ggml/ggml-backend-reg.o \
@@ -39,7 +36,7 @@ CORE_OBJECTS = bindings.o RcppExports.o \
 	ggml/ggml-cpu/binary-ops.o ggml/ggml-cpu/unary-ops.o ggml/ggml-cpu/vec.o \
 	ggml/ggml-cpu/traits.o ggml/ggml-cpu/repack.o ggml/ggml-cpu/quants.o
 
-# Complete objects list (core + architecture-specific)
+# Complete objects list
 OBJECTS = $(CORE_OBJECTS) $(ARCH_OBJECTS)
 
 all: $(SHLIB)
@@ -47,21 +44,19 @@ all: $(SHLIB)
 clean:
 	rm -f $(OBJECTS) $(SHLIB)
 
-# Special rules for conflicting ggml-cpu files
+# Compilation rules (same as Unix version)
 ggml/ggml-cpu/ggml-cpu-c.o: ggml/ggml-cpu/ggml-cpu.c
 	$(CC) $(ALL_CPPFLAGS) $(GGML_CFLAGS) -c $< -o $@
 
 ggml/ggml-cpu/ggml-cpu-cpp.o: ggml/ggml-cpu/ggml-cpu.cpp
 	$(CXX) $(ALL_CPPFLAGS) $(GGML_CXXFLAGS) -c $< -o $@
 
-# Standard compilation rules for main source files
 bindings.o: bindings.cpp
 	$(CXX) $(ALL_CPPFLAGS) $(ALL_CXXFLAGS) -fPIC -c $< -o $@
 
 RcppExports.o: RcppExports.cpp
 	$(CXX) $(ALL_CPPFLAGS) $(ALL_CXXFLAGS) -fPIC -c $< -o $@
 
-# Special rules for GGML/LLAMA files
 ggml/%.o: ggml/%.c
 	$(CC) $(ALL_CPPFLAGS) $(GGML_CFLAGS) -c $< -o $@
 
@@ -71,18 +66,21 @@ ggml/%.o: ggml/%.cpp
 llama/%.o: llama/%.cpp
 	$(CXX) $(ALL_CPPFLAGS) $(GGML_CXXFLAGS) -c $< -o $@
 
-# Architecture-specific rules (only for x86)
-ifneq ($(ARCH_OBJECTS),)
 ggml/ggml-cpu/arch/x86/%.o: ggml/ggml-cpu/arch/x86/%.cpp
 	$(CXX) $(ALL_CPPFLAGS) $(GGML_CXXFLAGS) -c $< -o $@
 
 ggml/ggml-cpu/arch/x86/%.o: ggml/ggml-cpu/arch/x86/%.c
 	$(CC) $(ALL_CPPFLAGS) $(GGML_CFLAGS) -c $< -o $@
-endif
 
-# Standard fallback rules
 %.o: %.c
 	$(CC) $(ALL_CPPFLAGS) $(ALL_CFLAGS) -fPIC -c $< -o $@
 
 %.o: %.cpp
 	$(CXX) $(ALL_CPPFLAGS) $(ALL_CXXFLAGS) -fPIC -c $< -o $@
+EOF
+
+echo "Windows configuration complete!"
+echo "Generated: $MAKEVARS"
+
+exit 0
+EOF

@@ -1,11 +1,66 @@
+#!/bin/bash
+# Configure script for edgemodelr
+# Detects architecture and sets up appropriate build configuration
+
+# Exit on any error
+set -e
+
+echo "Configuring edgemodelr build system..."
+
+# Detect architecture
+ARCH=$(uname -m)
+echo "Detected architecture: $ARCH"
+
+# Create src/Makevars based on architecture
+MAKEVARS="src/Makevars"
+
+# Base configuration (common to all architectures)
+cat > "$MAKEVARS" << 'EOF'
 PKG_CPPFLAGS = -I../inst/include -I./llama -I./ggml -I./ggml/ggml-cpu -DUSING_R=1
 PKG_CXXFLAGS = -O2 -DNDEBUG -DGGML_USE_CPU -fno-finite-math-only
 PKG_CFLAGS = -O2 -DNDEBUG -DGGML_USE_CPU -fno-finite-math-only
 
 # Platform-specific optimization flags
+EOF
+
+# Add platform-specific configurations
+case "$ARCH" in
+    "x86_64" | "i386" | "i686")
+        echo "Configuring for x86/x86_64 architecture..."
+        cat >> "$MAKEVARS" << 'EOF'
 # x86/x86_64 specific configuration
 ARCH_OBJECTS = ggml/ggml-cpu/arch/x86/cpu-feats.o ggml/ggml-cpu/arch/x86/quants.o ggml/ggml-cpu/arch/x86/repack.o
 PKG_CPPFLAGS += -DGGML_USE_X86
+EOF
+        ;;
+    "aarch64" | "arm64")
+        echo "Configuring for ARM64 architecture..."
+        cat >> "$MAKEVARS" << 'EOF'
+# ARM64 specific configuration - no x86 objects
+ARCH_OBJECTS =
+PKG_CPPFLAGS += -DGGML_USE_ARM64
+EOF
+        ;;
+    "armv7l" | "arm")
+        echo "Configuring for ARM32 architecture..."
+        cat >> "$MAKEVARS" << 'EOF'
+# ARM32 specific configuration - no x86 objects
+ARCH_OBJECTS =
+PKG_CPPFLAGS += -DGGML_USE_ARM32
+EOF
+        ;;
+    *)
+        echo "Configuring for generic architecture ($ARCH)..."
+        cat >> "$MAKEVARS" << 'EOF'
+# Generic configuration - no architecture-specific objects
+ARCH_OBJECTS =
+PKG_CPPFLAGS += -DGGML_USE_GENERIC
+EOF
+        ;;
+esac
+
+# Add common build rules
+cat >> "$MAKEVARS" << 'EOF'
 
 # OpenMP configuration (disable on macOS, enable elsewhere)
 ifeq ($(shell uname),Darwin)
@@ -86,3 +141,22 @@ endif
 
 %.o: %.cpp
 	$(CXX) $(ALL_CPPFLAGS) $(ALL_CXXFLAGS) -fPIC -c $< -o $@
+EOF
+
+echo "Configuration complete!"
+echo "Architecture: $ARCH"
+echo "Generated: $MAKEVARS"
+
+# Make the generated Makevars visible
+if [ -f "$MAKEVARS" ]; then
+    echo "Makevars content:"
+    echo "=================="
+    head -20 "$MAKEVARS"
+    echo "... (truncated)"
+else
+    echo "Error: Failed to create $MAKEVARS"
+    exit 1
+fi
+
+exit 0
+EOF
