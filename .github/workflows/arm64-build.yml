@@ -29,28 +29,7 @@ jobs:
         with:
           context: .
           platforms: linux/arm64
-          file: |
-            FROM arm64v8/ubuntu:22.04
-
-            # Install R and build dependencies
-            RUN apt-get update && apt-get install -y \
-                r-base \
-                r-base-dev \
-                build-essential \
-                libblas-dev \
-                liblapack-dev \
-                gfortran \
-                && rm -rf /var/lib/apt/lists/*
-
-            # Copy package source
-            COPY . /edgemodelr
-            WORKDIR /edgemodelr
-
-            # Test configure script
-            RUN chmod +x configure && ./configure
-
-            # Test build (without install to catch linker errors)
-            RUN cd src && make clean && make -n
+          file: .github/docker/Dockerfile.arm64
           push: false
 
   arm64-native:
