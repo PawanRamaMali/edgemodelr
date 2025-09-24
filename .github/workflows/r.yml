@@ -9,12 +9,12 @@
 name: R
 
 on:
-  push:
-    branches: [ "main" ]
-  pull_request:
-    branches: [ "main" ]
-  release:
-    types: [prereleased]
+  #push:
+  #  branches: [ "main" ]
+  #pull_request:
+  #  branches: [ "main" ]
+  #release:
+  #  types: [prereleased]
   workflow_dispatch:
     inputs:
       cran_submit:
