@@ -25,10 +25,10 @@ Download a GGUF model from Hugging Face
 \examples{
 \donttest{
 # Download TinyLlama model
-model_path <- edge_download_model(
-  model_id = "TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF",
-  filename = "tinyllama-1.1b-chat-v1.0.q4_k_m.gguf"
-)
+#model_path <- edge_download_model(
+#  model_id = "TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF",
+#  filename = "tinyllama-1.1b-chat-v1.0.q4_k_m.gguf"
+#)
 
 # Use the downloaded model (example only - requires actual model)
 if (FALSE && file.exists(model_path)) {
