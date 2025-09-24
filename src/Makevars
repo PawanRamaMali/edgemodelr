@@ -1,6 +1,6 @@
-PKG_CPPFLAGS = -I../inst/include -I./llama -I./ggml -I./ggml/ggml-cpu -DUSING_R=1 -include r_output_redirect.h
-PKG_CXXFLAGS = -O2 -DNDEBUG -DGGML_USE_CPU -fno-finite-math-only
-PKG_CFLAGS = -O2 -DNDEBUG -DGGML_USE_CPU -fno-finite-math-only
+PKG_CPPFLAGS = -I../inst/include -I./llama -I./ggml -I./ggml/ggml-cpu -DUSING_R=1
+PKG_CXXFLAGS = -DNDEBUG -DGGML_USE_CPU
+PKG_CFLAGS = -DNDEBUG -DGGML_USE_CPU
 
 # Platform-specific optimization flags
 ifeq ($(shell uname),Darwin)
