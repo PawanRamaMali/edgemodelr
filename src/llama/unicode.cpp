@@ -5,7 +5,7 @@
 #include "unicode.h"
 #include "unicode-data.h"
 #include "llama-impl.h"
-#include "../r_output_redirect.h"
+#include "r_output_redirect.h"
 
 #include <algorithm>
 #include <cassert>

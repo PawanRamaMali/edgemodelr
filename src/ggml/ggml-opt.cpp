@@ -4,7 +4,7 @@
 #include "ggml-alloc.h"
 #include "ggml-backend.h"
 #include "ggml-impl.h"
-#include "../r_output_redirect.h"
+#include "r_output_redirect.h"
 
 #include <algorithm>
 #include <cmath>
