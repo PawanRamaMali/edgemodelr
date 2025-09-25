@@ -21,8 +21,7 @@ CORE_OBJECTS = bindings.o RcppExports.o \
 	llama/unicode-data.o llama/unicode.o \
 	ggml/ggml-cpu/ggml-cpu-c.o ggml/ggml-cpu/ggml-cpu-cpp.o ggml/ggml-cpu/ops.o \
 	ggml/ggml-cpu/binary-ops.o ggml/ggml-cpu/unary-ops.o ggml/ggml-cpu/vec.o \
-	ggml/ggml-cpu/traits.o ggml/ggml-cpu/repack.o ggml/ggml-cpu/quants.o \
-	ggml/ggml-cpu/arch/x86/quants.o ggml/ggml-cpu/arch/x86/repack.o ggml/ggml-cpu/arch/x86/cpu-feats.o
+	ggml/ggml-cpu/traits.o ggml/ggml-cpu/repack.o ggml/ggml-cpu/quants.o
 
 # Complete objects list (removing architecture-specific objects for cross-platform compatibility)
 OBJECTS = $(CORE_OBJECTS)
@@ -56,12 +55,6 @@ ggml/%.o: ggml/%.cpp
 llama/%.o: llama/%.cpp
 	$(CXX) $(ALL_CPPFLAGS) $(GGML_CXXFLAGS) -c $< -o $@
 
-# Architecture-specific rules
-ggml/ggml-cpu/arch/x86/%.o: ggml/ggml-cpu/arch/x86/%.c
-	$(CC) $(ALL_CPPFLAGS) $(GGML_CFLAGS) -c $< -o $@
-
-ggml/ggml-cpu/arch/x86/%.o: ggml/ggml-cpu/arch/x86/%.cpp
-	$(CXX) $(ALL_CPPFLAGS) $(GGML_CXXFLAGS) -c $< -o $@
 
 # Standard fallback rules
 %.o: %.c

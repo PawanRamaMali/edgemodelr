@@ -1,5 +1,5 @@
 #include "unary-ops.h"
-#include "../../r_output_redirect.h"
+#include "r_output_redirect.h"
 
 static inline float op_abs(float x) {
     return fabsf(x);
