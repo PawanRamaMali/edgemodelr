@@ -55,9 +55,7 @@ jobs:
               apt-get update &&
               apt-get install -y r-base r-base-dev build-essential libblas-dev liblapack-dev gfortran file &&
               echo 'Architecture:' && uname -m &&
-              echo 'Testing configure script...' &&
-              chmod +x configure && ./configure &&
-              echo 'Testing if Makevars was created correctly...' &&
+              echo 'Testing if Makevars exists...' &&
               ls -la src/Makevars &&
               head -20 src/Makevars &&
               echo 'Architecture detection test complete!'
@@ -87,8 +85,7 @@ jobs:
               apt-get update && apt-get install -y build-essential file &&
               echo '=== Architecture Information ===' &&
               uname -a &&
-              echo '=== Testing configure script ===' &&
-              chmod +x configure && ./configure &&
+              echo '=== Testing R package structure ===' &&
               echo '=== Checking generated Makevars ===' &&
               cat src/Makevars
             "

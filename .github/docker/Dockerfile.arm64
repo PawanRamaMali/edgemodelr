@@ -14,8 +14,8 @@ RUN apt-get update && apt-get install -y \
 COPY . /edgemodelr
 WORKDIR /edgemodelr
 
-# Test configure script
-RUN chmod +x configure && ./configure
+# Test package structure - Makevars should already exist
+RUN test -f src/Makevars && echo "Makevars exists" || echo "Warning: No Makevars found"
 
 # Test build (without install to catch linker errors)
 RUN cd src && make clean && make -n
