@@ -23,20 +23,13 @@ CORE_OBJECTS = bindings.o RcppExports.o \
 	ggml/ggml-cpu/binary-ops.o ggml/ggml-cpu/unary-ops.o ggml/ggml-cpu/vec.o \
 	ggml/ggml-cpu/traits.o ggml/ggml-cpu/repack.o ggml/ggml-cpu/quants.o
 
-# Architecture-specific objects (conditional based on platform)
+# Architecture-specific objects for x86_64
 ARCH_OBJECTS_x86_64 = ggml/ggml-cpu/arch/x86/quants.o ggml/ggml-cpu/arch/x86/repack.o ggml/ggml-cpu/arch/x86/cpu-feats.o
 
-# Detect architecture and set appropriate objects
-ifeq ($(shell uname -m),x86_64)
-    ARCH_OBJECTS = $(ARCH_OBJECTS_x86_64)
-else ifeq ($(shell uname -m),amd64)
-    ARCH_OBJECTS = $(ARCH_OBJECTS_x86_64)
-else
-    # ARM64 and other architectures - no arch-specific objects for now
-    ARCH_OBJECTS =
-endif
+# Use x86_64 objects for Windows
+ARCH_OBJECTS = $(ARCH_OBJECTS_x86_64)
 
-# Complete objects list with conditional architecture support
+# Complete objects list with architecture support
 OBJECTS = $(CORE_OBJECTS) $(ARCH_OBJECTS)
 
 all: $(SHLIB)

@@ -13,17 +13,18 @@ library(edgemodelr)
 cat("Example 1: Basic Model Loading and Text Generation\n")
 cat("=================================================\n\n")
 
-# Check if we have models available first
-setup <- edge_setup()
-if (is.null(setup) || length(setup$available_models) == 0) {
-  cat("❌ No models found. Please download a GGUF model first.\n")
-  cat("   Try: https://huggingface.co/microsoft/Phi-3-mini-4k-instruct-gguf\n")
+# Try to find available models
+ollama_info <- edge_find_ollama_models()
+if (!is.null(ollama_info) && length(ollama_info$models) > 0) {
+  # Use first Ollama model
+  model_hash <- substr(ollama_info$models[[1]]$sha256, 1, 8)
+  cat("Loading Ollama model...\n")
+  ctx <- edge_load_ollama_model(model_hash, n_ctx = 1024, n_gpu_layers = 0)
+} else {
+  cat("❌ No models found. Please install Ollama and download a model:\n")
+  cat("   ollama pull llama3.2:latest\n")
   quit()
 }
-
-# Load the first available model
-cat("Loading model...\n")
-ctx <- edge_load_model(setup$available_models[1], n_ctx = 1024, n_gpu_layers = 0)
 
 # Generate a simple completion
 prompt <- "The capital of France is"
@@ -144,7 +145,7 @@ cat("✅ Example 4 completed successfully!\n\n")
 cat("🎉 Basic Usage Examples Complete!\n")
 cat("=================================\n\n")
 cat("Key takeaways:\n")
-cat("• Always use edge_setup() to check available models\n")
+cat("• Use edge_find_ollama_models() to discover available models\n")
 cat("• Use edge_load_model() to load GGUF files\n")
 cat("• Generate text with edge_completion()\n")
 cat("• Adjust temperature for different creativity levels\n")

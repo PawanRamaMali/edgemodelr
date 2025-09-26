@@ -13,20 +13,15 @@ library(edgemodelr)
 cat("Example 1: Basic Streaming Generation\n")
 cat("=====================================\n\n")
 
-# Setup model
-setup <- edge_setup()
-if (is.null(setup) || length(setup$available_models) == 0) {
-  # Try Ollama models if available
-  ollama_info <- edge_find_ollama_models()
-  if (!is.null(ollama_info) && length(ollama_info$models) > 0) {
-    ctx <- edge_load_ollama_model(substr(ollama_info$models[[1]]$sha256, 1, 8),
-                                  n_ctx = 1024, n_gpu_layers = 0)
-  } else {
-    cat("❌ No models found. Please install models first.\n")
-    quit()
-  }
+# Setup model - try Ollama first
+ollama_info <- edge_find_ollama_models()
+if (!is.null(ollama_info) && length(ollama_info$models) > 0) {
+  ctx <- edge_load_ollama_model(substr(ollama_info$models[[1]]$sha256, 1, 8),
+                                n_ctx = 1024, n_gpu_layers = 0)
 } else {
-  ctx <- edge_load_model(setup$available_models[1], n_ctx = 1024, n_gpu_layers = 0)
+  cat("❌ No models found. Please install Ollama and download a model:\n")
+  cat("   ollama pull llama3.2:latest\n")
+  quit()
 }
 
 # Define a simple callback that prints tokens as they arrive

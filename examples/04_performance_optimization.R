@@ -14,23 +14,19 @@ cat("Example 1: Benchmarking and Performance Testing\n")
 cat("===============================================\n\n")
 
 # Setup model for testing
-setup <- edge_setup()
-if (is.null(setup) || length(setup$available_models) == 0) {
-  ollama_info <- edge_find_ollama_models()
-  if (!is.null(ollama_info) && length(ollama_info$models) > 0) {
-    model_path <- ollama_info$models[[1]]$path
-  } else {
-    cat("❌ No models found for benchmarking.\n")
-    quit()
-  }
+ollama_info <- edge_find_ollama_models()
+if (!is.null(ollama_info) && length(ollama_info$models) > 0) {
+  model_hash <- substr(ollama_info$models[[1]]$sha256, 1, 8)
 } else {
-  model_path <- setup$available_models[1]
+  cat("❌ No models found for benchmarking.\n")
+  cat("   Please install Ollama and download a model: ollama pull llama3.2:latest\n")
+  quit()
 }
 
 cat("Running comprehensive benchmark:\n")
 
 # Use built-in benchmark function
-ctx <- edge_load_model(model_path, n_ctx = 1024, n_gpu_layers = 0)
+ctx <- edge_load_ollama_model(model_hash, n_ctx = 1024, n_gpu_layers = 0)
 benchmark_results <- edge_benchmark(
   ctx = ctx,
   prompt = "The quick brown fox jumps over the lazy dog",
@@ -71,7 +67,7 @@ for (i in seq_along(context_sizes)) {
 
   # Time model loading
   start_time <- Sys.time()
-  ctx <- edge_load_model(model_path, n_ctx = n_ctx, n_gpu_layers = 0)
+  ctx <- edge_load_ollama_model(model_hash, n_ctx = n_ctx, n_gpu_layers = 0)
   load_time <- as.numeric(Sys.time() - start_time)
 
   # Time generation
@@ -121,7 +117,7 @@ cat("Demonstrating memory management best practices:\n\n")
 
 # Load multiple models and show memory impact
 cat("1. Loading model...\n")
-ctx1 <- edge_load_model(model_path, n_ctx = 512, n_gpu_layers = 0)
+ctx1 <- edge_load_ollama_model(model_hash, n_ctx = 512, n_gpu_layers = 0)
 cat("   Model 1 loaded\n")
 
 # Generate some text
@@ -130,7 +126,7 @@ cat("   Generated text 1:", substr(result1, 1, 50), "...\n")
 
 # Load second instance
 cat("\n2. Loading second model instance...\n")
-ctx2 <- edge_load_model(model_path, n_ctx = 512, n_gpu_layers = 0)
+ctx2 <- edge_load_ollama_model(model_hash, n_ctx = 512, n_gpu_layers = 0)
 result2 <- edge_completion(ctx2, "Test prompt 2", n_predict = 20, temperature = 0.5)
 cat("   Generated text 2:", substr(result2, 1, 50), "...\n")
 
@@ -172,7 +168,7 @@ for (gpu_layers in gpu_layers_to_test) {
   tryCatch({
     # Load model with GPU layers
     start_time <- Sys.time()
-    ctx <- edge_load_model(model_path, n_ctx = 512, n_gpu_layers = gpu_layers)
+    ctx <- edge_load_ollama_model(model_hash, n_ctx = 512, n_gpu_layers = gpu_layers)
     load_time <- as.numeric(Sys.time() - start_time)
 
     # Test generation speed
@@ -253,7 +249,7 @@ start_time <- Sys.time()
 results_method1 <- list()
 
 for (i in seq_along(prompts)) {
-  ctx <- edge_load_model(model_path, n_ctx = 512, n_gpu_layers = 0)
+  ctx <- edge_load_ollama_model(model_hash, n_ctx = 512, n_gpu_layers = 0)
   results_method1[[i]] <- edge_completion(ctx, prompts[i], n_predict = 15, temperature = 0.3)
   edge_free_model(ctx)
 }
@@ -262,7 +258,7 @@ method1_time <- as.numeric(Sys.time() - start_time)
 # Method 2: Load once, process all (efficient)
 cat("Method 2: Load once, process batch\n")
 start_time <- Sys.time()
-ctx <- edge_load_model(model_path, n_ctx = 512, n_gpu_layers = 0)
+ctx <- edge_load_ollama_model(model_hash, n_ctx = 512, n_gpu_layers = 0)
 results_method2 <- list()
 
 for (i in seq_along(prompts)) {
@@ -335,7 +331,7 @@ monitor_performance <- function(ctx, prompt, n_predict = 30, iterations = 3) {
 
 # Run performance monitoring
 cat("Running detailed performance analysis:\n")
-ctx <- edge_load_model(model_path, n_ctx = 512, n_gpu_layers = 0)
+ctx <- edge_load_ollama_model(model_hash, n_ctx = 512, n_gpu_layers = 0)
 
 perf_data <- monitor_performance(
   ctx,
