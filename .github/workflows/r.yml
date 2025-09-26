@@ -16,6 +16,8 @@ on:
 
 permissions:
   contents: read
+  pages: write
+  id-token: write
 
 jobs:
   # Multi-platform build and test matrix
@@ -35,11 +37,10 @@ jobs:
           - {os: macos-latest, r: 'release', arch: 'x64'}
           - {os: macos-14, r: 'release', arch: 'arm64'}  # Apple Silicon
 
-          # Linux builds (x86_64 and ARM64)
+          # Linux builds (x86_64 only - GitHub Actions doesn't support ARM64 Linux runners)
           - {os: ubuntu-latest, r: 'release', arch: 'x64'}
           - {os: ubuntu-latest, r: 'devel', arch: 'x64'}
           - {os: ubuntu-latest, r: 'oldrel-1', arch: 'x64'}
-          - {os: ubuntu-latest, r: 'release', arch: 'arm64'}
 
     env:
       GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
@@ -88,6 +89,7 @@ jobs:
             any::rcmdcheck
             any::devtools
             any::pkgdown
+            any::sessioninfo
           needs: check
 
       - name: Session info
@@ -117,7 +119,9 @@ jobs:
       - name: Test Installation from Source
         run: |
           # Test clean installation from source
-          remove.packages("edgemodelr", lib = .libPaths()[1])
+          if ("edgemodelr" %in% installed.packages()[,"Package"]) {
+            remove.packages("edgemodelr", lib = .libPaths()[1])
+          }
           devtools::install(build_vignettes = FALSE, upgrade = "never")
 
           # Basic functionality test
@@ -133,7 +137,7 @@ jobs:
 
       - name: Upload check results
         if: failure()
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: ${{ runner.os }}-r${{ matrix.config.r }}-${{ matrix.config.arch }}-results
           path: check
@@ -167,7 +171,7 @@ jobs:
 
       - name: Deploy to GitHub pages 🚀
         if: github.event_name != 'pull_request'
-        uses: JamesIves/github-pages-deploy-action@v4.4.1
+        uses: JamesIves/github-pages-deploy-action@v4.6.8
         with:
           clean: false
           branch: gh-pages
