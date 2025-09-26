@@ -1083,20 +1083,3 @@ edge_find_gguf_models <- function(source_dirs = NULL, target_dir = NULL, create_
   ))
 }
 
-#' @rdname edge_find_gguf_models
-#' @export
-edge_find_ollama_models <- function(target_dir = NULL, create_links = TRUE, model_pattern = NULL, verbose = TRUE) {
-  # Backward compatibility wrapper
-  if (verbose) {
-    message("ℹ️ edge_find_ollama_models() is deprecated. Use edge_find_gguf_models() instead.")
-  }
-  edge_find_gguf_models(
-    source_dirs = NULL,  # Auto-detect including Ollama
-    target_dir = target_dir,
-    create_links = create_links,
-    model_pattern = model_pattern,
-    test_compatibility = TRUE,
-    min_size_mb = 50,
-    verbose = verbose
-  )
-}
