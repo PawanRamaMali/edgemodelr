@@ -1,3 +1,29 @@
+# edgemodelr 0.1.2
+
+## Major New Features
+
+### Ollama Integration
+* **Native Ollama Support**: Complete integration with Ollama models through automatic model discovery and SHA-256 hash-based loading
+* `edge_find_ollama_models()` - Discover all locally available Ollama models across platforms (Windows, macOS, Linux)
+* `edge_load_ollama_model()` - Load Ollama models using convenient SHA-256 hash prefixes instead of full file paths
+* `test_ollama_model_compatibility()` - Built-in compatibility testing for Ollama models
+* **Cross-platform Model Detection**: Robust model discovery supporting standard installations, snap packages (Linux), and various Windows configurations
+* **Windows OneDrive Compatibility**: Enhanced path detection that properly handles Windows OneDrive document folder redirections
+
+### Comprehensive Examples Suite
+* **Structured Learning Path**: Complete examples directory with progressive difficulty levels (Beginner → Intermediate → Advanced)
+* **01_basic_usage.R**: Fundamental operations including model loading, text generation, parameter tuning, and error handling
+* **02_ollama_integration.R**: Complete Ollama workflow with model discovery, hash-based loading, and compatibility testing
+* **03_streaming_generation.R**: Real-time streaming text generation with interactive chat interfaces and callback processing
+* **04_performance_optimization.R**: Advanced performance tuning including GPU acceleration, benchmarking, memory management, and batch processing
+* **examples/README.md**: Comprehensive documentation with learning paths, troubleshooting guide, and customization instructions
+
+### Package Structure Improvements
+* **Organized File Structure**: Consolidated all examples into structured examples/ directory with consistent formatting
+* **Enhanced Documentation**: Improved inline documentation and example comments throughout
+
+---
+
 # edgemodelr 0.1.1
 
 ## Bug Fixes and Improvements

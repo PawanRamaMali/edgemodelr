@@ -91,7 +91,26 @@ SEXP edge_load_model_internal(std::string model_path, int n_ctx = 2048, int n_gp
       if (!file.good()) {
         stop("Model file does not exist or is not readable: " + model_path);
       }
-      stop("Failed to load GGUF model from: " + model_path + ". The file exists but llama.cpp cannot parse it. Check if it's a valid GGUF file.");
+
+      // Enhanced diagnostics for GGUF files
+      std::string diagnostic_msg = "Failed to load GGUF model from: " + model_path +
+                                   ". The file exists but llama.cpp cannot parse it.\n";
+
+      // Check if it looks like a GGUF file
+      file.seekg(0);
+      char magic[4];
+      if (file.read(magic, 4) && std::string(magic, 4) == "GGUF") {
+        diagnostic_msg += "File has valid GGUF magic header. Possible issues:\n";
+        diagnostic_msg += "- Incompatible GGUF version (try a different llama.cpp version)\n";
+        diagnostic_msg += "- Model architecture not supported\n";
+        diagnostic_msg += "- File corruption during download\n";
+        diagnostic_msg += "- Insufficient memory (try smaller n_ctx or n_gpu_layers=0)\n";
+      } else {
+        diagnostic_msg += "File does not have GGUF magic header. This is not a valid GGUF file.\n";
+        diagnostic_msg += "For Ollama models, ensure you're using the correct blob file path.\n";
+      }
+
+      stop(diagnostic_msg);
     }
     
     llama_context_params ctx_params = llama_context_default_params();
