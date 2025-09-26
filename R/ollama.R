@@ -27,10 +27,13 @@ edge_find_ollama_models <- function(ollama_dir = NULL, test_compatibility = FALS
   # Possible Ollama model directories
   possible_paths <- c(
     "/var/snap/ollama/common/models/blobs",    # Linux snap
-    "~/.ollama/models/blobs",                   # Linux/Mac standard
-    file.path(Sys.getenv("HOME"), ".ollama", "models", "blobs"), # Linux/Mac explicit
-    file.path(Sys.getenv("APPDATA"), "Ollama", "models", "blobs"), # Windows
-    file.path(Sys.getenv("LOCALAPPDATA"), "Ollama", "models", "blobs") # Windows alternative
+    "~/.ollama/models/blobs",                   # Standard (may fail on Windows OneDrive)
+    file.path(Sys.getenv("HOME"), ".ollama", "models", "blobs"), # HOME variable
+    file.path(Sys.getenv("USERPROFILE"), ".ollama", "models", "blobs"), # Windows USERPROFILE (more reliable)
+    file.path(Sys.getenv("APPDATA"), "Ollama", "models", "blobs"), # Windows AppData capital
+    file.path(Sys.getenv("APPDATA"), ".ollama", "models", "blobs"), # Windows AppData dot
+    file.path(Sys.getenv("LOCALAPPDATA"), "Ollama", "models", "blobs"), # Windows LocalAppData capital
+    file.path(Sys.getenv("LOCALAPPDATA"), ".ollama", "models", "blobs") # Windows LocalAppData dot
   )
 
   if (!is.null(ollama_dir)) {

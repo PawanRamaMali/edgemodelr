@@ -1093,7 +1093,7 @@ void llama_model::load_hparams(llama_model_loader & ml) {
                 hparams.rope_freq_scale_train_swa = 1.0f;
 
                 ml.get_key(LLM_KV_ATTENTION_SLIDING_WINDOW,    hparams.n_swa);
-                ml.get_key(LLM_KV_ATTENTION_LAYERNORM_RMS_EPS, hparams.f_norm_rms_eps);
+                ml.get_key(LLM_KV_ATTENTION_LAYERNORM_RMS_EPS, hparams.f_norm_rms_eps, false);
 
                 switch (hparams.n_layer) {
                     case 18: type = LLM_TYPE_537M; break;
