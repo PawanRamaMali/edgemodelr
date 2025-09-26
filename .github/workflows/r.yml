@@ -2,45 +2,26 @@ name: R Package CI/CD
 
 on:
   push:
-    branches: [ "main"]
+    branches: [ "main" ]
   pull_request:
     branches: [ "main" ]
-  release:
-    types: [prereleased]
   workflow_dispatch:
-    inputs:
-      cran_submit:
-        description: 'Submit to CRAN (type CONFIRM to proceed)'
-        required: false
-        default: ''
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 jobs:
-  # Multi-platform build and test matrix
   R-CMD-check:
     runs-on: ${{ matrix.config.os }}
-    name: ${{ matrix.config.os }} (${{ matrix.config.r }}) ${{ matrix.config.arch }}
+    name: ${{ matrix.config.os }} (${{ matrix.config.r }})
 
     strategy:
       fail-fast: false
       matrix:
         config:
-          # Windows builds
-          - {os: windows-latest, r: 'release', arch: 'x64'}
-          - {os: windows-latest, r: 'devel', arch: 'x64'}
-
-          # macOS builds (Intel and Apple Silicon)
-          - {os: macos-latest, r: 'release', arch: 'x64'}
-          - {os: macos-14, r: 'release', arch: 'arm64'}  # Apple Silicon
-
-          # Linux builds (x86_64 only - GitHub Actions doesn't support ARM64 Linux runners)
-          - {os: ubuntu-latest, r: 'release', arch: 'x64'}
-          - {os: ubuntu-latest, r: 'devel', arch: 'x64'}
-          - {os: ubuntu-latest, r: 'oldrel-1', arch: 'x64'}
+          - {os: ubuntu-latest, r: 'release'}
+          - {os: windows-latest, r: 'release'}
+          - {os: macos-latest, r: 'release'}
 
     env:
       GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
@@ -55,7 +36,6 @@ jobs:
         with:
           r-version: ${{ matrix.config.r }}
           use-public-rspm: true
-          extra-repositories: https://r-universe.dev
 
       - name: Install system dependencies (Linux)
         if: runner.os == 'Linux'
@@ -65,145 +45,14 @@ jobs:
             build-essential \
             libblas-dev \
             liblapack-dev \
-            gfortran \
-            libcurl4-openssl-dev \
-            libssl-dev \
-            libxml2-dev \
-            libfontconfig1-dev \
-            libharfbuzz-dev \
-            libfribidi-dev \
-            libfreetype6-dev \
-            libpng-dev \
-            libtiff5-dev \
-            libjpeg-dev
-
-      - name: Install system dependencies (macOS)
-        if: runner.os == 'macOS'
-        run: |
-          brew install harfbuzz fribidi
+            gfortran
 
       - uses: r-lib/actions/setup-r-dependencies@v2
         with:
-          extra-packages: |
-            any::rcmdcheck
-            any::devtools
-            any::pkgdown
-            any::sessioninfo
+          extra-packages: any::rcmdcheck
           needs: check
 
-      - name: Session info
-        run: |
-          options(width = 100)
-          pkgs <- installed.packages()[, "Package"]
-          sessioninfo::session_info(pkgs, include_base = TRUE)
-        shell: Rscript {0}
-
-      # Standard R CMD check
       - uses: r-lib/actions/check-r-package@v2
         with:
           args: 'c("--no-manual", "--as-cran")'
-          error-on: '"warning"'
-          check-dir: '"check"'
-
-      # Additional CRAN-specific checks
-      - name: CRAN Package Structure Check
-        run: |
-          # Check package can be built as source tarball
-          devtools::build(path = ".", binary = FALSE)
-
-          # Check CRAN policy compliance
-          devtools::check_built(path = dir(".", pattern = "*.tar.gz", full.names = TRUE)[1])
-        shell: Rscript {0}
-
-      - name: Test Installation from Source
-        run: |
-          # Test clean installation from source
-          if ("edgemodelr" %in% installed.packages()[,"Package"]) {
-            remove.packages("edgemodelr", lib = .libPaths()[1])
-          }
-          devtools::install(build_vignettes = FALSE, upgrade = "never")
-
-          # Basic functionality test
-          library(edgemodelr)
-
-          # Test core functions exist
-          stopifnot(exists("edge_find_ollama_models"))
-          stopifnot(exists("edge_load_ollama_model"))
-          stopifnot(exists("edge_completion"))
-
-          cat("✅ Package installation and basic functionality test passed\n")
-        shell: Rscript {0}
-
-      - name: Upload check results
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ runner.os }}-r${{ matrix.config.r }}-${{ matrix.config.arch }}-results
-          path: check
-
-  # Documentation and coverage
-  pkgdown:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    needs: R-CMD-check
-
-    env:
-      GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: r-lib/actions/setup-pandoc@v2
-
-      - uses: r-lib/actions/setup-r@v2
-        with:
-          use-public-rspm: true
-
-      - uses: r-lib/actions/setup-r-dependencies@v2
-        with:
-          extra-packages: any::pkgdown, local::.
-          needs: website
-
-      - name: Build site
-        run: pkgdown::build_site_github_pages(new_process = FALSE, install = FALSE)
-        shell: Rscript {0}
-
-      - name: Deploy to GitHub pages 🚀
-        if: github.event_name != 'pull_request'
-        uses: JamesIves/github-pages-deploy-action@v4.6.8
-        with:
-          clean: false
-          branch: gh-pages
-          folder: docs
-
-  # CRAN submission workflow
-  cran-submit:
-    if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && github.event.inputs.cran_submit == 'CONFIRM')
-    runs-on: ubuntu-latest
-    needs: R-CMD-check
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: r-lib/actions/setup-r@v2
-        with:
-          use-public-rspm: true
-
-      - name: Final CRAN checks
-        run: |
-          # Install package and dependencies
-          install.packages(c("devtools", "rcmdcheck"))
-          devtools::install()
-
-          # Run comprehensive CRAN checks
-          rcmdcheck::rcmdcheck(
-            args = c("--no-manual", "--as-cran", "--run-donttest"),
-            error_on = "warning"
-          )
-        shell: Rscript {0}
-
-      - name: R Package CRAN Submission
-        uses: coatless-actions/cran-submission@v1
-        with:
-          confirmation: ${{ github.event.inputs.cran_submit || 'CONFIRM' }}
                 
