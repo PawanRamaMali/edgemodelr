@@ -12,9 +12,9 @@
 *.so
 *.dll
 *.dylib
-src/*.o
-src/*.so
-src/*.dll
+src/**/*.o
+src/**/*.so
+src/**/*.dll
 
 # Model files (large binaries)
 *.gguf
