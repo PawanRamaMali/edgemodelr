@@ -1,5 +1,5 @@
 PKG_CPPFLAGS = -I../inst/include -I./llama -I./ggml -I./ggml/ggml-cpu -DUSING_R=1
-PKG_CXXFLAGS = -DNDEBUG -DGGML_USE_CPU
+PKG_CXXFLAGS = -DNDEBUG -DGGML_USE_CPU $(SHLIB_OPENMP_CXXFLAGS)
 PKG_CFLAGS = -DNDEBUG -DGGML_USE_CPU
 
 # Cross-platform configuration with OpenMP support
