@@ -108,9 +108,9 @@ edge_find_ollama_models <- function(ollama_dir = NULL, test_compatibility = FALS
     if (test_compatibility) {
       model_info$compatible <- test_ollama_model_compatibility(file_path)
       if (model_info$compatible) {
-        message("✅ ", model_info$name, " (", size_mb, "MB) - Compatible")
+        message("[+] ", model_info$name, " (", size_mb, "MB) - Compatible")
       } else {
-        message("❌ ", model_info$name, " (", size_mb, "MB) - Not compatible")
+        message("[!] ", model_info$name, " (", size_mb, "MB) - Not compatible")
         next  # Skip incompatible models
       }
     } else {

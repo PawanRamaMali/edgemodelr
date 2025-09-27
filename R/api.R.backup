@@ -933,8 +933,8 @@ edge_find_gguf_models <- function(source_dirs = NULL, target_dir = NULL, create_
 
   if (length(all_files) == 0) {
     if (verbose) {
-      message("[!] No GGUF files found above ", min_size_mb, "MB")
-      message("[*] Try: edge_quick_setup('TinyLlama-1.1B') to download a compatible model")
+      message("❌ No GGUF files found above ", min_size_mb, "MB")
+      message("💡 Try: edge_quick_setup('TinyLlama-1.1B') to download a compatible model")
     }
     return(NULL)
   }
@@ -945,19 +945,19 @@ edge_find_gguf_models <- function(source_dirs = NULL, target_dir = NULL, create_
     all_files <- all_files[pattern_matches]
 
     if (length(all_files) == 0) {
-      if (verbose) message("[!] No files match pattern: ", model_pattern)
+      if (verbose) message("❌ No files match pattern: ", model_pattern)
       return(NULL)
     }
   }
 
   if (verbose) {
-    message("[*] Found ", length(all_files), " GGUF files to process")
+    message("📋 Found ", length(all_files), " GGUF files to process")
   }
 
   # Create target directory
   if (!dir.exists(target_dir)) {
     dir.create(target_dir, recursive = TRUE)
-    if (verbose) message("[*] Created target directory: ", target_dir)
+    if (verbose) message("📂 Created target directory: ", target_dir)
   }
 
   # Process each file
@@ -969,7 +969,7 @@ edge_find_gguf_models <- function(source_dirs = NULL, target_dir = NULL, create_
     size_mb <- round(file.size(file_path) / (1024^2), 1)
 
     if (verbose) {
-      message("[*] Processing ", i, "/", length(all_files), ": ", file_name, " (", size_mb, "MB)")
+      message("🔍 Processing ", i, "/", length(all_files), ": ", file_name, " (", size_mb, "MB)")
     }
 
     # Generate a clean model name
@@ -987,7 +987,7 @@ edge_find_gguf_models <- function(source_dirs = NULL, target_dir = NULL, create_
     test_result <- ""
 
     if (test_compatibility) {
-      if (verbose) message("  [*] Testing compatibility...")
+      if (verbose) message("  🧪 Testing compatibility...")
 
       tryCatch({
         # Try to load the model
@@ -998,17 +998,17 @@ edge_find_gguf_models <- function(source_dirs = NULL, target_dir = NULL, create_
           test_result <- edge_completion(temp_ctx, "Hi", n_predict = 3, temperature = 0.1)
           edge_free_model(temp_ctx)
 
-          if (verbose) message("  [+] Compatible! Test: '", test_result, "'")
+          if (verbose) message("  ✅ Compatible! Test: '", test_result, "'")
         } else {
           is_compatible <- FALSE
-          if (verbose) message("  [!] Model validation failed")
+          if (verbose) message("  ❌ Model validation failed")
         }
       }, error = function(e) {
         is_compatible <- FALSE
-        if (verbose) message("  [!] Compatibility test failed: ", e$message)
+        if (verbose) message("  ❌ Compatibility test failed: ", e$message)
       })
     } else {
-      if (verbose) message("  [*] Skipping compatibility test")
+      if (verbose) message("  ⏭️ Skipping compatibility test")
     }
 
     if (is_compatible) {
@@ -1029,15 +1029,15 @@ edge_find_gguf_models <- function(source_dirs = NULL, target_dir = NULL, create_
         tryCatch({
           file.symlink(file_path, target_file)
           success <- TRUE
-          if (verbose) message("  [*] Created symbolic link")
+          if (verbose) message("  🔗 Created symbolic link")
         }, error = function(e) {
-          if (verbose) message("  [!] Symlink failed, copying...")
+          if (verbose) message("  ⚠️ Symlink failed, copying...")
         })
       }
 
       if (!success) {
         success <- file.copy(file_path, target_file, overwrite = TRUE)
-        if (success && verbose) message("  [*] Copied file")
+        if (success && verbose) message("  📋 Copied file")
       }
 
       if (success) {
@@ -1056,18 +1056,18 @@ edge_find_gguf_models <- function(source_dirs = NULL, target_dir = NULL, create_
 
   if (length(compatible_models) == 0) {
     if (verbose) {
-      message("[!] No compatible models found")
+      message("❌ No compatible models found")
       if (test_compatibility) {
-        message("[*] Try with test_compatibility = FALSE to include untested models")
+        message("💡 Try with test_compatibility = FALSE to include untested models")
       }
-      message("[*] Or use: edge_quick_setup('TinyLlama-1.1B') for a guaranteed working model")
+      message("💡 Or use: edge_quick_setup('TinyLlama-1.1B') for a guaranteed working model")
     }
     return(NULL)
   }
 
   if (verbose) {
-    message("[+] Found ", length(compatible_models), " compatible models!")
-    message("[*] Usage example:")
+    message("🎉 Found ", length(compatible_models), " compatible models!")
+    message("💡 Usage example:")
     message("   ctx <- edge_load_model('", compatible_models[[1]]$path, "')")
     message("   result <- edge_completion(ctx, 'Your prompt here', n_predict = 50)")
     message("   edge_free_model(ctx)")
