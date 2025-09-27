@@ -51,6 +51,7 @@
        extern "C" {
            uint32_t _dyld_image_count(void);
            const char* _dyld_get_image_name(uint32_t image_index);
+           int _NSGetExecutablePath(char* buf, uint32_t* bufsize);
        }
 #    else
        // Standard non-R compilation
