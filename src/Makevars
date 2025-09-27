@@ -27,13 +27,18 @@ CORE_OBJECTS = bindings.o RcppExports.o \
 ARCH_OBJECTS_x86_64 = ggml/ggml-cpu/arch/x86/quants.o ggml/ggml-cpu/arch/x86/repack.o ggml/ggml-cpu/arch/x86/cpu-feats.o
 
 # Detect architecture and set appropriate objects
-ifeq ($(shell uname -m),x86_64)
+UNAME_M := $(shell uname -m)
+ifeq ($(UNAME_M),x86_64)
 ARCH_OBJECTS = $(ARCH_OBJECTS_x86_64)
-else ifeq ($(shell uname -m),amd64)
+else ifeq ($(UNAME_M),amd64)
+ARCH_OBJECTS = $(ARCH_OBJECTS_x86_64)
+else ifeq ($(UNAME_M),i386)
+ARCH_OBJECTS = $(ARCH_OBJECTS_x86_64)
+else ifeq ($(UNAME_M),i686)
 ARCH_OBJECTS = $(ARCH_OBJECTS_x86_64)
 else
+# Non-x86 architectures (ARM64, etc.) - use generic fallback implementations
 ARCH_OBJECTS =
-# Use generic fallback implementations for non-x86 architectures
 GGML_CXXFLAGS += -DGGML_CPU_GENERIC
 GGML_CFLAGS += -DGGML_CPU_GENERIC
 endif
