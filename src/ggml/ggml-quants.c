@@ -16,7 +16,6 @@
 // R package compatibility: redirect stdio functions to R alternatives
 #ifdef USING_R
 #include <R.h>
-#include <Rprintf.h>
 // Replace printf with Rprintf to avoid puts/putchar calls in R packages
 #define printf Rprintf
 #endif
