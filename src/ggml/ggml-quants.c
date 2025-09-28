@@ -13,6 +13,14 @@
 #include <stdlib.h> // for qsort
 #include <stdio.h>  // for GGML_ASSERT
 
+// R package compatibility: redirect stdio functions to R alternatives
+#ifdef USING_R
+#include <R.h>
+#include <Rprintf.h>
+// Replace printf with Rprintf to avoid puts/putchar calls in R packages
+#define printf Rprintf
+#endif
+
 #define GROUP_MAX_EPS 1e-15f
 #define GROUP_MAX_EPS_IQ3_XXS 1e-8f
 #define GROUP_MAX_EPS_IQ2_S 1e-8f
