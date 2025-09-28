@@ -1,6 +1,6 @@
 # edgemodelr
 
-> Inference for Local Language Models for R using llama.cpp and GGUF models
+> Inference for Large Language Models for R using llama.cpp and GGUF models
 
 [![R Package](https://img.shields.io/badge/R-package-blue.svg)](https://www.r-project.org/)
 [![MIT License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
