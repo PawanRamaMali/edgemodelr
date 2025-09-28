@@ -143,13 +143,24 @@ std::string edge_completion_internal(SEXP model_ptr, std::string prompt, int n_p
     if (TYPEOF(model_ptr) != EXTPTRSXP) {
       stop("Invalid model context");
     }
-    
+
     XPtr<EdgeModelContext> edge_ctx(model_ptr);
-    
-    if (!edge_ctx->is_valid()) {
-      stop("Invalid model context");
+
+    if (!edge_ctx->is_valid() || edge_ctx->ctx == nullptr || edge_ctx->model == nullptr) {
+      stop("Invalid model context or null pointers");
     }
-    
+
+    // Validate input parameters
+    if (n_predict <= 0) {
+      stop("n_predict must be positive");
+    }
+    if (temperature < 0.0 || temperature > 2.0) {
+      stop("Temperature must be between 0.0 and 2.0");
+    }
+    if (top_p <= 0.0 || top_p > 1.0) {
+      stop("top_p must be between 0.0 and 1.0");
+    }
+
     // Get vocabulary from model
     const struct llama_vocab* vocab = llama_model_get_vocab(edge_ctx->model);
     if (!vocab) {
@@ -203,12 +214,22 @@ std::string edge_completion_internal(SEXP model_ptr, std::string prompt, int n_p
         break;
       }
       
-      // Convert token to text
-      char piece[256];
-      int n_chars = llama_token_to_piece(vocab, new_token, piece, sizeof(piece), 0, true);
-      
+      // Convert token to text with dynamic buffer allocation
+      std::vector<char> piece(512);  // Start with larger buffer
+      int n_chars = llama_token_to_piece(vocab, new_token, piece.data(), piece.size(), 0, true);
+
+      // If buffer too small, resize and retry
+      if (n_chars < 0) {
+        piece.resize(std::abs(n_chars) + 1);  // +1 for null terminator
+        n_chars = llama_token_to_piece(vocab, new_token, piece.data(), piece.size(), 0, true);
+      }
+
       if (n_chars > 0) {
-        result.append(piece, n_chars);
+        result.append(piece.data(), n_chars);
+      } else if (n_chars < 0) {
+        // If still failing, log warning and skip this token
+        warning("Failed to convert token to text, skipping token");
+        continue;
       }
       
       // Accept the token for sampling history
@@ -270,17 +291,28 @@ List edge_completion_stream_internal(SEXP model_ptr, std::string prompt, Functio
     }
     
     XPtr<EdgeModelContext> edge_ctx(model_ptr);
-    
-    if (!edge_ctx->is_valid()) {
-      stop("Invalid model context");
+
+    if (!edge_ctx->is_valid() || edge_ctx->ctx == nullptr || edge_ctx->model == nullptr) {
+      stop("Invalid model context or null pointers");
     }
-    
+
+    // Validate input parameters
+    if (n_predict <= 0) {
+      stop("n_predict must be positive");
+    }
+    if (temperature < 0.0 || temperature > 2.0) {
+      stop("Temperature must be between 0.0 and 2.0");
+    }
+    if (top_p <= 0.0 || top_p > 1.0) {
+      stop("top_p must be between 0.0 and 1.0");
+    }
+
     // Get vocabulary from model
     const struct llama_vocab* vocab = llama_model_get_vocab(edge_ctx->model);
     if (!vocab) {
       stop("Failed to get vocabulary from model");
     }
-    
+
     // Tokenize the prompt - first get the number of tokens needed
     const int n_prompt_tokens = -llama_tokenize(vocab, prompt.c_str(), (int32_t)prompt.size(), NULL, 0, true, true);
     
@@ -331,13 +363,19 @@ List edge_completion_stream_internal(SEXP model_ptr, std::string prompt, Functio
         break;
       }
       
-      // Convert token to text
-      char piece[256];
-      int n_chars = llama_token_to_piece(vocab, new_token, piece, sizeof(piece), 0, true);
-      
+      // Convert token to text with dynamic buffer allocation
+      std::vector<char> piece(512);  // Start with larger buffer
+      int n_chars = llama_token_to_piece(vocab, new_token, piece.data(), piece.size(), 0, true);
+
+      // If buffer too small, resize and retry
+      if (n_chars < 0) {
+        piece.resize(std::abs(n_chars) + 1);  // +1 for null terminator
+        n_chars = llama_token_to_piece(vocab, new_token, piece.data(), piece.size(), 0, true);
+      }
+
       std::string token_text = "";
       if (n_chars > 0) {
-        token_text = std::string(piece, n_chars);
+        token_text = std::string(piece.data(), n_chars);
         full_response += token_text;
         tokens_generated.push_back(token_text);
         tokens_count++;
@@ -364,6 +402,10 @@ List edge_completion_stream_internal(SEXP model_ptr, std::string prompt, Functio
         } catch (const std::exception& e) {
           warning("Callback error: " + std::string(e.what()));
         }
+      } else if (n_chars < 0) {
+        // If still failing, log warning and skip this token
+        warning("Failed to convert token to text, skipping token");
+        continue;
       }
 
       // Accept the token for sampling history
@@ -423,6 +465,6 @@ void set_llama_logging(bool enabled) {
 // Package initialization function - called when the package is loaded
 // [[Rcpp::init]]
 void edgemodelr_init(DllInfo *dll) {
-  // Call the helper to ensure initialization
-  ensure_llama_initialized();
+  // Don't initialize llama.cpp during package loading to avoid segfaults
+  // Initialization will happen lazily when first needed
 }
