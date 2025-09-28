@@ -1,11 +1,7 @@
 .onAttach <- function(libname, pkgname) {
   # Removed startup messages to comply with CRAN policies
-  # Automatically set quiet logging when package loads
-  tryCatch({
-    edge_set_verbose(FALSE)
-  }, error = function(e) {
-    # Silently ignore if C++ functions not available yet
-  })
+  # Don't call C++ functions during package loading to avoid segfaults
+  # Logging will be set when first model is loaded
 }
 
 .onUnload <- function(libpath) {
