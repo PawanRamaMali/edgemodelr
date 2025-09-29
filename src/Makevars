@@ -27,15 +27,20 @@ CORE_OBJECTS = bindings.o RcppExports.o \
 ARCH_OBJECTS_x86_64 = ggml/ggml-cpu/arch/x86/quants.o ggml/ggml-cpu/arch/x86/repack.o ggml/ggml-cpu/arch/x86/cpu-feats.o
 
 # Detect architecture and set appropriate objects
-UNAME_M := $(shell uname -m)
-ifeq ($(UNAME_M),x86_64)
+# More robust architecture detection for cross-platform compatibility
+UNAME_M := $(shell uname -m 2>/dev/null || echo "unknown")
+
+# Check if we're on an x86-compatible architecture
+ifeq ($(filter $(UNAME_M),x86_64 amd64 i386 i686),$(UNAME_M))
+# x86-compatible architecture - include optimized objects if they exist
+ifneq ($(wildcard ggml/ggml-cpu/arch/x86/*.c ggml/ggml-cpu/arch/x86/*.cpp),)
 ARCH_OBJECTS = $(ARCH_OBJECTS_x86_64)
-else ifeq ($(UNAME_M),amd64)
-ARCH_OBJECTS = $(ARCH_OBJECTS_x86_64)
-else ifeq ($(UNAME_M),i386)
-ARCH_OBJECTS = $(ARCH_OBJECTS_x86_64)
-else ifeq ($(UNAME_M),i686)
-ARCH_OBJECTS = $(ARCH_OBJECTS_x86_64)
+else
+# x86 arch files not available, use generic fallback
+ARCH_OBJECTS =
+GGML_CXXFLAGS += -DGGML_CPU_GENERIC
+GGML_CFLAGS += -DGGML_CPU_GENERIC
+endif
 else
 # Non-x86 architectures (ARM64, etc.) - use generic fallback implementations
 ARCH_OBJECTS =

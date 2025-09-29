@@ -2,20 +2,22 @@
 
 #include "ggml.h"
 
+#ifdef __cplusplus
+#include <new>
+#endif
+
 //
 // cache line
 //
 
-#if defined(__cpp_lib_hardware_interference_size)
-#define CACHE_LINE_SIZE std::hardware_destructive_interference_size
-#else
+// Use a fixed cache line size to avoid compiler warnings in CRAN
+// This provides good performance across most architectures
 #if defined(__POWER9_VECTOR__)
 #define CACHE_LINE_SIZE 128
 #elif defined(__VXE__) || defined(__VXE2__)
 #define CACHE_LINE_SIZE 256
 #else
 #define CACHE_LINE_SIZE 64
-#endif
 #endif
 
 static const size_t CACHE_LINE_SIZE_F32 = CACHE_LINE_SIZE/sizeof(float);
