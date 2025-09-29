@@ -1,11 +1,28 @@
-PKG_CPPFLAGS = -I../inst/include -I./llama -I./ggml -I./ggml/ggml-cpu -DUSING_R=1
+PKG_CPPFLAGS = -I../inst/include -I./llama -I./ggml -I./ggml/ggml-cpu -DUSING_R=1 -DGGML_BUILD_FOR_R
 PKG_CXXFLAGS = -DNDEBUG -DGGML_USE_CPU
 PKG_CFLAGS = -DNDEBUG -DGGML_USE_CPU
+
+# General flags to improve compatibility with various compiler versions
+# Note: Avoid non-portable warning suppression flags for CRAN compliance
 
 # Cross-platform configuration without OpenMP for stability
 GGML_CXXFLAGS = $(PKG_CXXFLAGS) -fPIC
 GGML_CFLAGS = $(PKG_CFLAGS) -DUSING_R=1 -fPIC
 PKG_LIBS = $(LAPACK_LIBS) $(BLAS_LIBS) $(FLIBS)
+
+# Platform-specific compiler flags
+ifeq ($(UNAME_S),Darwin)
+# macOS specific flags to handle potential issues
+GGML_CXXFLAGS += -Wno-unused-command-line-argument -Wno-unknown-pragmas
+GGML_CFLAGS += -Wno-unused-command-line-argument -Wno-unknown-pragmas
+endif
+
+# Check for Fedora/RedHat (common issues with newer GCC versions)
+ifneq ($(wildcard /etc/fedora-release /etc/redhat-release),)
+# Fedora/RHEL specific flags for newer GCC versions
+GGML_CXXFLAGS += -Wno-stringop-overflow -Wno-array-bounds -Wno-maybe-uninitialized
+GGML_CFLAGS += -Wno-stringop-overflow -Wno-array-bounds -Wno-maybe-uninitialized
+endif
 
 # Core object files (common to all architectures)
 CORE_OBJECTS = bindings.o RcppExports.o \
@@ -29,6 +46,7 @@ ARCH_OBJECTS_x86_64 = ggml/ggml-cpu/arch/x86/quants.o ggml/ggml-cpu/arch/x86/rep
 # Detect architecture and set appropriate objects
 # More robust architecture detection for cross-platform compatibility
 UNAME_M := $(shell uname -m 2>/dev/null || echo "unknown")
+UNAME_S := $(shell uname -s 2>/dev/null || echo "unknown")
 
 # Check if we're on an x86-compatible architecture
 ifeq ($(filter $(UNAME_M),x86_64 amd64 i386 i686),$(UNAME_M))
@@ -42,10 +60,18 @@ GGML_CXXFLAGS += -DGGML_CPU_GENERIC
 GGML_CFLAGS += -DGGML_CPU_GENERIC
 endif
 else
-# Non-x86 architectures (ARM64, etc.) - use generic fallback implementations
+# Non-x86 architectures (ARM64, Apple Silicon, etc.)
 ARCH_OBJECTS =
 GGML_CXXFLAGS += -DGGML_CPU_GENERIC
 GGML_CFLAGS += -DGGML_CPU_GENERIC
+
+# Apple Silicon specific optimizations
+ifeq ($(UNAME_S),Darwin)
+ifeq ($(filter $(UNAME_M),arm64 aarch64),$(UNAME_M))
+GGML_CXXFLAGS += -mcpu=native
+GGML_CFLAGS += -mcpu=native
+endif
+endif
 endif
 
 # Complete objects list with architecture support

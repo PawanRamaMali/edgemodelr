@@ -196,8 +196,11 @@
 #    define GGML_DEPRECATED(func, hint) func
 #endif
 
-#if !defined(__GNUC__) || defined(USING_R)
-// Disable format checking when compiling for R to avoid CRAN warnings
+// Disable format attributes entirely when building R packages to avoid
+// CRAN compatibility issues with different compiler versions
+#ifdef GGML_BUILD_FOR_R
+#    define GGML_ATTRIBUTE_FORMAT(...)
+#elif !defined(__GNUC__)
 #    define GGML_ATTRIBUTE_FORMAT(...)
 #elif defined(__MINGW32__) && !defined(__clang__)
 #    define GGML_ATTRIBUTE_FORMAT(...) __attribute__((format(gnu_printf, __VA_ARGS__)))
