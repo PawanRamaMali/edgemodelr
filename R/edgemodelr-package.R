@@ -1,5 +1,5 @@
 #' @details
-#' The edgemodelr package provides R bindings for Inference for Local Language Models 
+#' The edgemodelr package provides R bindings for Local Large Language Model Inference Engine 
 #' using llama.cpp and GGUF model files. This enables completely private, 
 #' on-device text generation without requiring cloud APIs or internet connectivity.
 #' 
