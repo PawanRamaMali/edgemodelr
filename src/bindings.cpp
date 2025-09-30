@@ -62,16 +62,41 @@ static void ensure_llama_initialized() {
 struct EdgeModelContext {
   struct llama_model* model = NULL;
   struct llama_context* ctx = NULL;
-  
+
   EdgeModelContext() = default;
-  
+
+  // Copy constructor and assignment deleted to prevent double-free
+  EdgeModelContext(const EdgeModelContext&) = delete;
+  EdgeModelContext& operator=(const EdgeModelContext&) = delete;
+
   ~EdgeModelContext() {
-    if (ctx) llama_free(ctx);
-    if (model) llama_model_free(model);
+    cleanup();
   }
-  
+
+  void cleanup() {
+    if (ctx) {
+      llama_free(ctx);
+      ctx = NULL;
+    }
+    if (model) {
+      llama_model_free(model);
+      model = NULL;
+    }
+  }
+
   bool is_valid() const {
     return model != NULL && ctx != NULL;
+  }
+
+  // Additional safety check for pointers
+  bool is_safe() const {
+    try {
+      return is_valid() &&
+             llama_n_ctx(ctx) > 0 &&
+             llama_model_n_ctx_train(model) > 0;
+    } catch (...) {
+      return false;
+    }
   }
 };
 
@@ -257,17 +282,16 @@ std::string edge_completion_internal(SEXP model_ptr, std::string prompt, int n_p
 // [[Rcpp::export]]
 void edge_free_model_internal(SEXP model_ptr) {
   try {
+    if (TYPEOF(model_ptr) != EXTPTRSXP) {
+      warning("Invalid model pointer type");
+      return;
+    }
+
     XPtr<EdgeModelContext> edge_ctx(model_ptr);
-    
-    if (edge_ctx->ctx) {
-      llama_free(edge_ctx->ctx);
-      edge_ctx->ctx = NULL;
+    if (edge_ctx.get() != nullptr) {
+      edge_ctx->cleanup();
     }
-    if (edge_ctx->model) {
-      llama_model_free(edge_ctx->model);
-      edge_ctx->model = NULL;
-    }
-    
+
   } catch (const std::exception& e) {
     warning("Error freeing model: " + std::string(e.what()));
   }

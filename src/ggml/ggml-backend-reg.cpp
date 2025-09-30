@@ -1,4 +1,14 @@
-// R boolean compatibility is handled in r_output_redirect.h
+// R boolean compatibility - must be handled before all other includes
+#ifdef USING_R
+  // Prevent R boolean conflicts on all platforms
+  #ifdef TRUE
+    #undef TRUE
+  #endif
+  #ifdef FALSE
+    #undef FALSE
+  #endif
+  #define R_NO_REMAP 1  // Prevent R from remapping common functions
+#endif
 
 #include "ggml-backend-impl.h"
 #include "ggml-backend.h"
@@ -60,12 +70,12 @@
            const char* _dyld_get_image_name(uint32_t image_index);
            int _NSGetExecutablePath(char* buf, uint32_t* bufsize);
        }
-       // Restore R boolean definitions
+       // Restore safe boolean definitions for R compatibility
 #      ifndef TRUE
-#         define TRUE 1
+#         define TRUE ((int)1)
 #      endif
 #      ifndef FALSE
-#         define FALSE 0
+#         define FALSE ((int)0)
 #      endif
 #    else
        // Standard non-R compilation
