@@ -18,10 +18,14 @@ GGML_CFLAGS += -Wno-unused-command-line-argument -Wno-unknown-pragmas
 endif
 
 # Check for Fedora/RedHat (common issues with newer GCC versions)
+# Only add GCC-specific warnings when using GCC (not clang)
 ifneq ($(wildcard /etc/fedora-release /etc/redhat-release),)
-# Fedora/RHEL specific flags for newer GCC versions
+CXX_IS_CLANG := $(shell $(CXX) --version 2>/dev/null | grep -i clang)
+ifeq ($(CXX_IS_CLANG),)
+# GCC-specific flags for newer GCC versions
 GGML_CXXFLAGS += -Wno-stringop-overflow -Wno-array-bounds -Wno-maybe-uninitialized
 GGML_CFLAGS += -Wno-stringop-overflow -Wno-array-bounds -Wno-maybe-uninitialized
+endif
 endif
 
 # Core object files (common to all architectures)
@@ -66,10 +70,11 @@ GGML_CXXFLAGS += -DGGML_CPU_GENERIC
 GGML_CFLAGS += -DGGML_CPU_GENERIC
 
 # Apple Silicon specific optimizations
+# Use -mtune instead of -mcpu for CRAN compliance
 ifeq ($(UNAME_S),Darwin)
 ifeq ($(filter $(UNAME_M),arm64 aarch64),$(UNAME_M))
-GGML_CXXFLAGS += -mcpu=native
-GGML_CFLAGS += -mcpu=native
+GGML_CXXFLAGS += -mtune=native
+GGML_CFLAGS += -mtune=native
 endif
 endif
 endif
