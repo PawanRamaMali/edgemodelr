@@ -54,14 +54,11 @@
 #elif defined(__APPLE__)
 // Handle boolean conflicts on macOS when using R
 #    ifdef USING_R
-       // Under R, prevent system headers from defining conflicting enums
-       // Protect against boolean conflicts when using R
-#      ifdef TRUE
-#         undef TRUE
-#      endif
-#      ifdef FALSE
-#         undef FALSE
-#      endif
+       // Prevent system headers from redefining TRUE/FALSE as enumerators
+       // This must be done before including any system headers
+       #define TRUE 1
+       #define FALSE 0
+
        // Completely avoid the problematic dyld.h header by using dlfcn directly
 #      include <dlfcn.h>
        // Define what we need from dyld.h without the enum conflicts
@@ -70,13 +67,6 @@
            const char* _dyld_get_image_name(uint32_t image_index);
            int _NSGetExecutablePath(char* buf, uint32_t* bufsize);
        }
-       // Restore safe boolean definitions for R compatibility
-#      ifndef TRUE
-#         define TRUE ((int)1)
-#      endif
-#      ifndef FALSE
-#         define FALSE ((int)0)
-#      endif
 #    else
        // Standard non-R compilation
 #      include <mach-o/dyld.h>
