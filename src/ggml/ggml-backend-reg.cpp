@@ -1,11 +1,20 @@
 // R boolean compatibility - must be handled before all other includes
+// This block MUST come first to prevent R's Rboolean enum from conflicting
 #ifdef USING_R
-  // Prevent R boolean conflicts on all platforms
+  // R headers may already be included via forced -include directive
+  // We must undefine the Rboolean enum values and replace with macros
   #ifdef TRUE
     #undef TRUE
   #endif
   #ifdef FALSE
     #undef FALSE
+  #endif
+  // Define as macros to prevent any enum redefinition
+  #ifndef TRUE
+    #define TRUE 1
+  #endif
+  #ifndef FALSE
+    #define FALSE 0
   #endif
   #define R_NO_REMAP 1  // Prevent R from remapping common functions
 #endif
@@ -52,16 +61,11 @@
 #    endif
 #    include <windows.h>
 #elif defined(__APPLE__)
-// Handle boolean conflicts on macOS when using R
 #    ifdef USING_R
-       // Prevent system headers from redefining TRUE/FALSE as enumerators
-       // This must be done before including any system headers
-       #define TRUE 1
-       #define FALSE 0
-
-       // Completely avoid the problematic dyld.h header by using dlfcn directly
+       // Avoid the problematic dyld.h header which contains DYLD_BOOL enum
+       // that conflicts with R's TRUE/FALSE (already handled at top of file)
 #      include <dlfcn.h>
-       // Define what we need from dyld.h without the enum conflicts
+       // Define what we need from dyld.h without including the header
        extern "C" {
            uint32_t _dyld_image_count(void);
            const char* _dyld_get_image_name(uint32_t image_index);

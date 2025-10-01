@@ -5,7 +5,10 @@
 #include <string>
 #include <vector>
 
-#ifdef __GNUC__
+// Disable format attributes when building for R to avoid CRAN warnings
+#if defined(GGML_BUILD_FOR_R) || defined(USING_R)
+#    define LLAMA_ATTRIBUTE_FORMAT(...)
+#elif defined(__GNUC__)
 #    if defined(__MINGW32__) && !defined(__clang__)
 #        define LLAMA_ATTRIBUTE_FORMAT(...) __attribute__((format(gnu_printf, __VA_ARGS__)))
 #    else
