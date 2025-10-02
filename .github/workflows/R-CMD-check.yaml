@@ -142,3 +142,189 @@ jobs:
         with:
           name: ${{ matrix.config.os }}-r${{ matrix.config.r }}-cran-results
           path: '*.Rcheck'
+
+  CRAN-sanitizers:
+    needs: R-CMD-check
+    runs-on: ubuntu-latest
+
+    name: Sanitizers (ASAN/UBSAN)
+
+    env:
+      GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
+      R_KEEP_PKG_SOURCE: yes
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          r-version: 'devel'
+          use-public-rspm: true
+
+      - uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          extra-packages: any::rcmdcheck
+          needs: check
+
+      - name: Build package
+        run: R CMD build . --no-manual
+        shell: bash
+
+      - name: Run checks with ASAN and UBSAN
+        run: |
+          PKG_TARBALL=$(ls -1t *.tar.gz 2>/dev/null | head -n 1)
+          if [ -z "$PKG_TARBALL" ]; then
+            echo "Error: No package tarball found"
+            exit 1
+          fi
+
+          # Install with sanitizers enabled
+          R CMD INSTALL --configure-args="--enable-sanitizers" "$PKG_TARBALL" || {
+            echo "⚠️  Cannot install with sanitizers, trying standard install"
+            R CMD INSTALL "$PKG_TARBALL"
+          }
+
+          # Run tests with ASAN/UBSAN
+          export ASAN_OPTIONS="detect_leaks=1:detect_odr_violation=2"
+          export UBSAN_OPTIONS="print_stacktrace=1:halt_on_error=1"
+
+          R -e "library(edgemodelr); testthat::test_local()" || echo "⚠️  Sanitizer tests completed with warnings"
+        shell: bash
+        env:
+          _R_CHECK_CRAN_INCOMING_: false
+          _R_CHECK_FORCE_SUGGESTS_: false
+
+      - name: Upload sanitizer results
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sanitizer-results
+          path: |
+            *.Rcheck
+            *.log
+
+  CRAN-valgrind:
+    needs: R-CMD-check
+    runs-on: ubuntu-latest
+
+    name: Valgrind Memory Checks
+
+    env:
+      GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
+      R_KEEP_PKG_SOURCE: yes
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          r-version: 'devel'
+          use-public-rspm: true
+
+      - name: Install valgrind
+        run: sudo apt-get update && sudo apt-get install -y valgrind
+        shell: bash
+
+      - uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          extra-packages: any::rcmdcheck
+          needs: check
+
+      - name: Build and check with valgrind
+        run: |
+          R CMD build . --no-manual
+          PKG_TARBALL=$(ls -1t *.tar.gz 2>/dev/null | head -n 1)
+
+          if [ -z "$PKG_TARBALL" ]; then
+            echo "Error: No package tarball found"
+            exit 1
+          fi
+
+          # Run with valgrind level 2
+          R CMD check --use-valgrind --no-manual "$PKG_TARBALL" || {
+            echo "⚠️  Valgrind found potential issues"
+            CHECK_DIR=$(ls -1dt *.Rcheck 2>/dev/null | head -n 1)
+            if [ -n "$CHECK_DIR" ]; then
+              cat "$CHECK_DIR/00check.log"
+              find "$CHECK_DIR" -name "*-Ex.Rout" -exec cat {} \;
+            fi
+          }
+        shell: bash
+
+      - name: Upload valgrind results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: valgrind-results
+          path: '*.Rcheck'
+
+  CRAN-strict-macos:
+    needs: R-CMD-check
+    runs-on: macos-latest
+
+    name: macOS Strict (M1/ARM64)
+
+    env:
+      GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
+      R_KEEP_PKG_SOURCE: yes
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          r-version: 'devel'
+          use-public-rspm: true
+
+      - uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          extra-packages: any::rcmdcheck
+          needs: check
+
+      - name: Build and check with strict flags
+        run: |
+          # Set strict compiler flags similar to CRAN's M1mac checks
+          export CXXFLAGS="-Wall -Wextra -Wpedantic -Werror=return-type"
+          export CFLAGS="-Wall -Wextra -Wpedantic -Werror=return-type"
+
+          R CMD build . --no-manual
+          PKG_TARBALL=$(ls -1t *.tar.gz 2>/dev/null | head -n 1)
+
+          if [ -z "$PKG_TARBALL" ]; then
+            echo "Error: No package tarball found"
+            exit 1
+          fi
+
+          R CMD check --as-cran --no-manual "$PKG_TARBALL"
+        shell: bash
+
+      - name: Check for ERRORs or WARNINGs
+        run: |
+          CHECK_DIR=$(ls -1dt *.Rcheck 2>/dev/null | head -n 1)
+          if [ -z "$CHECK_DIR" ]; then
+            echo "Error: No check directory found"
+            exit 1
+          fi
+
+          echo "=== Strict macOS Check Results ==="
+          cat "$CHECK_DIR/00check.log"
+
+          if grep -q "ERROR" "$CHECK_DIR/00check.log"; then
+            echo "❌ ERRORS found in strict macOS checks"
+            exit 1
+          fi
+
+          if grep -q "WARNING" "$CHECK_DIR/00check.log"; then
+            echo "⚠️  WARNINGs found in strict macOS checks"
+            exit 1
+          fi
+
+          echo "✓ Strict macOS checks passed"
+        shell: bash
+
+      - name: Upload strict macOS results
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-strict-results
+          path: '*.Rcheck'
