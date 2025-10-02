@@ -48,3 +48,6 @@ inst/doc
 # Package documentation
 docs/
 _pkgdown.yml
+.Rcheck/
+*.log
+*.tar.gz
