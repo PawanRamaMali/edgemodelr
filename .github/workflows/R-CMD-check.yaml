@@ -47,3 +47,83 @@ jobs:
         with:
           upload-snapshots: true
           build_args: 'c("--no-manual","--compact-vignettes=gs+qpdf")'
+
+  CRAN-checks:
+    needs: R-CMD-check
+    runs-on: ${{ matrix.config.os }}
+
+    name: CRAN-${{ matrix.config.os }} (${{ matrix.config.r }})
+
+    strategy:
+      fail-fast: false
+      matrix:
+        config:
+          - {os: macos-latest,   r: 'release'}
+          - {os: windows-latest, r: 'release'}
+          - {os: ubuntu-latest,   r: 'release'}
+
+    env:
+      GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
+      R_KEEP_PKG_SOURCE: yes
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: r-lib/actions/setup-pandoc@v2
+
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          r-version: ${{ matrix.config.r }}
+          use-public-rspm: true
+
+      - uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          extra-packages: any::rcmdcheck
+          needs: check
+
+      - name: Build package
+        run: |
+          R CMD build .
+        shell: bash
+
+      - name: Run CRAN checks
+        run: |
+          PKG_TARBALL=$(ls -1t *.tar.gz 2>/dev/null | head -n 1)
+          if [ -z "$PKG_TARBALL" ]; then
+            echo "Error: No package tarball found"
+            exit 1
+          fi
+          echo "Running CRAN checks on $PKG_TARBALL"
+          R CMD check --as-cran "$PKG_TARBALL"
+        shell: bash
+
+      - name: Check for ERRORs or WARNINGs
+        run: |
+          CHECK_DIR=$(ls -1dt *.Rcheck 2>/dev/null | head -n 1)
+          if [ -z "$CHECK_DIR" ]; then
+            echo "Error: No check directory found"
+            exit 1
+          fi
+
+          echo "=== CRAN Check Results ==="
+          cat "$CHECK_DIR/00check.log"
+
+          if grep -q "ERROR" "$CHECK_DIR/00check.log"; then
+            echo "❌ ERRORS found in CRAN checks"
+            exit 1
+          fi
+
+          if grep -q "WARNING" "$CHECK_DIR/00check.log"; then
+            echo "⚠️  WARNINGs found in CRAN checks"
+            exit 1
+          fi
+
+          echo "✓ CRAN checks passed (only NOTEs or OK)"
+        shell: bash
+
+      - name: Upload check results
+        if: failure()
+        uses: actions/upload-artifact@v3
+        with:
+          name: ${{ matrix.config.os }}-r${{ matrix.config.r }}-cran-results
+          path: '*.Rcheck'
