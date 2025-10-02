@@ -123,7 +123,7 @@ jobs:
 
       - name: Upload check results
         if: failure()
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.config.os }}-r${{ matrix.config.r }}-cran-results
           path: '*.Rcheck'
