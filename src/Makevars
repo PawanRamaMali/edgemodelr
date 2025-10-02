@@ -2,31 +2,10 @@ PKG_CPPFLAGS = -I../inst/include -I./llama -I./ggml -I./ggml/ggml-cpu -DUSING_R=
 PKG_CXXFLAGS = -DNDEBUG -DGGML_USE_CPU
 PKG_CFLAGS = -DNDEBUG -DGGML_USE_CPU
 
-# General flags to improve compatibility with various compiler versions
-# Note: Avoid non-portable warning suppression flags for CRAN compliance
-
 # Cross-platform configuration without OpenMP for stability
 GGML_CXXFLAGS = $(PKG_CXXFLAGS) -fPIC
 GGML_CFLAGS = $(PKG_CFLAGS) -DUSING_R=1 -fPIC
 PKG_LIBS = $(LAPACK_LIBS) $(BLAS_LIBS) $(FLIBS)
-
-# Platform-specific compiler flags
-ifeq ($(UNAME_S),Darwin)
-# macOS specific flags to handle potential issues
-GGML_CXXFLAGS += -Wno-unused-command-line-argument -Wno-unknown-pragmas
-GGML_CFLAGS += -Wno-unused-command-line-argument -Wno-unknown-pragmas
-endif
-
-# Check for Fedora/RedHat (common issues with newer GCC versions)
-# Only add GCC-specific warnings when using GCC (not clang)
-ifneq ($(wildcard /etc/fedora-release /etc/redhat-release),)
-CXX_IS_CLANG := $(shell $(CXX) --version 2>/dev/null | grep -i clang)
-ifeq ($(CXX_IS_CLANG),)
-# GCC-specific flags for newer GCC versions
-GGML_CXXFLAGS += -Wno-stringop-overflow -Wno-array-bounds -Wno-maybe-uninitialized
-GGML_CFLAGS += -Wno-stringop-overflow -Wno-array-bounds -Wno-maybe-uninitialized
-endif
-endif
 
 # Core object files (common to all architectures)
 CORE_OBJECTS = bindings.o RcppExports.o \
@@ -44,39 +23,21 @@ CORE_OBJECTS = bindings.o RcppExports.o \
 	ggml/ggml-cpu/binary-ops.o ggml/ggml-cpu/unary-ops.o ggml/ggml-cpu/vec.o \
 	ggml/ggml-cpu/traits.o ggml/ggml-cpu/repack.o ggml/ggml-cpu/quants.o
 
-# Architecture-specific objects - only include x86 objects on x86 platforms
+# Architecture-specific objects
 ARCH_OBJECTS_x86_64 = ggml/ggml-cpu/arch/x86/quants.o ggml/ggml-cpu/arch/x86/repack.o ggml/ggml-cpu/arch/x86/cpu-feats.o
 
-# Detect architecture and set appropriate objects
-# More robust architecture detection for cross-platform compatibility
-UNAME_M := $(shell uname -m 2>/dev/null || echo "unknown")
-UNAME_S := $(shell uname -s 2>/dev/null || echo "unknown")
+# Architecture detection using R_ARCH if available, otherwise use uname
+R_ARCH_BIN = $(R_ARCH)
+UNAME_M = $(shell uname -m)
 
-# Check if we're on an x86-compatible architecture
-ifeq ($(filter $(UNAME_M),x86_64 amd64 i386 i686),$(UNAME_M))
-# x86-compatible architecture - include optimized objects if they exist
-ifneq ($(wildcard ggml/ggml-cpu/arch/x86/*.c ggml/ggml-cpu/arch/x86/*.cpp),)
+# Simplified architecture detection for x86_64 only
+# Use generic CPU implementation for all other architectures
+ARCH_OBJECTS =
+ifeq ($(UNAME_M),x86_64)
 ARCH_OBJECTS = $(ARCH_OBJECTS_x86_64)
 else
-# x86 arch files not available, use generic fallback
-ARCH_OBJECTS =
 GGML_CXXFLAGS += -DGGML_CPU_GENERIC
 GGML_CFLAGS += -DGGML_CPU_GENERIC
-endif
-else
-# Non-x86 architectures (ARM64, Apple Silicon, etc.)
-ARCH_OBJECTS =
-GGML_CXXFLAGS += -DGGML_CPU_GENERIC
-GGML_CFLAGS += -DGGML_CPU_GENERIC
-
-# Apple Silicon specific optimizations
-# Use -mtune instead of -mcpu for CRAN compliance
-ifeq ($(UNAME_S),Darwin)
-ifeq ($(filter $(UNAME_M),arm64 aarch64),$(UNAME_M))
-GGML_CXXFLAGS += -mtune=native
-GGML_CFLAGS += -mtune=native
-endif
-endif
 endif
 
 # Complete objects list with architecture support
