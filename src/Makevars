@@ -23,22 +23,13 @@ CORE_OBJECTS = bindings.o RcppExports.o \
 	ggml/ggml-cpu/binary-ops.o ggml/ggml-cpu/unary-ops.o ggml/ggml-cpu/vec.o \
 	ggml/ggml-cpu/traits.o ggml/ggml-cpu/repack.o ggml/ggml-cpu/quants.o
 
-# Architecture-specific objects
-ARCH_OBJECTS_x86_64 = ggml/ggml-cpu/arch/x86/quants.o ggml/ggml-cpu/arch/x86/repack.o ggml/ggml-cpu/arch/x86/cpu-feats.o
-
-# Architecture detection using R_ARCH if available, otherwise use uname
-R_ARCH_BIN = $(R_ARCH)
-UNAME_M = $(shell uname -m)
-
-# Simplified architecture detection for x86_64 only
-# Use generic CPU implementation for all other architectures
-ARCH_OBJECTS =
-ifeq ($(UNAME_M),x86_64)
-ARCH_OBJECTS = $(ARCH_OBJECTS_x86_64)
-else
+# Platform-independent configuration
+# Use generic CPU implementation for all architectures to ensure portability
 GGML_CXXFLAGS += -DGGML_CPU_GENERIC
 GGML_CFLAGS += -DGGML_CPU_GENERIC
-endif
+
+# No architecture-specific objects
+ARCH_OBJECTS =
 
 # Complete objects list with architecture support
 OBJECTS = $(CORE_OBJECTS) $(ARCH_OBJECTS)
@@ -72,14 +63,7 @@ ggml/%.o: ggml/%.cpp
 llama/%.o: llama/%.cpp
 	$(CXX) $(ALL_CPPFLAGS) $(GGML_CXXFLAGS) -c $< -o $@
 
-# Architecture-specific rules (only for x86 platforms)
-ifneq ($(ARCH_OBJECTS),)
-ggml/ggml-cpu/arch/x86/%.o: ggml/ggml-cpu/arch/x86/%.c
-	$(CC) $(ALL_CPPFLAGS) $(GGML_CFLAGS) -c $< -o $@
-
-ggml/ggml-cpu/arch/x86/%.o: ggml/ggml-cpu/arch/x86/%.cpp
-	$(CXX) $(ALL_CPPFLAGS) $(GGML_CXXFLAGS) -c $< -o $@
-endif
+# No architecture-specific rules needed - using generic CPU implementation
 
 # Standard fallback rules
 %.o: %.c
