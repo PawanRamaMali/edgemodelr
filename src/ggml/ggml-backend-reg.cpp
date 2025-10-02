@@ -61,20 +61,20 @@
 #    endif
 #    include <windows.h>
 #elif defined(__APPLE__)
-#    ifdef USING_R
-       // Avoid the problematic dyld.h header which contains DYLD_BOOL enum
-       // that conflicts with R's TRUE/FALSE (already handled at top of file)
-#      include <dlfcn.h>
-       // Define what we need from dyld.h without including the header
+#    include <dlfcn.h>
+#    if defined(USING_R) || defined(GGML_BUILD_FOR_R)
+       // CRITICAL: Avoid <mach-o/dyld.h> when building for R
+       // That header contains: enum DYLD_BOOL { FALSE, TRUE };
+       // which conflicts with R's: enum Rboolean { FALSE = 0, TRUE };
+       // Enums cannot be undefined, so we must use forward declarations instead
        extern "C" {
            uint32_t _dyld_image_count(void);
            const char* _dyld_get_image_name(uint32_t image_index);
            int _NSGetExecutablePath(char* buf, uint32_t* bufsize);
        }
 #    else
-       // Standard non-R compilation
+       // Standard non-R compilation can safely include the system header
 #      include <mach-o/dyld.h>
-#      include <dlfcn.h>
 #    endif
 #else
 #    include <dlfcn.h>
