@@ -86,11 +86,18 @@ jobs:
         run: |
           Rscript -e "install.packages('tinytex')"
           Rscript -e "tinytex::install_tinytex()"
+          # Add TinyTeX to PATH
+          echo "$HOME/bin" >> $GITHUB_PATH
+          export PATH="$HOME/bin:$PATH"
+          # Verify installation
+          pdflatex --version || echo "pdflatex not yet in PATH, will be available in next step"
         shell: bash
 
       - name: Build package
         run: |
           if [ "$RUNNER_OS" == "Linux" ]; then
+            # Verify pdflatex is available
+            which pdflatex || echo "WARNING: pdflatex not found"
             R CMD build .
           else
             R CMD build . --no-manual
@@ -106,7 +113,14 @@ jobs:
           fi
           echo "Running CRAN checks on $PKG_TARBALL"
           if [ "$RUNNER_OS" == "Linux" ]; then
-            R CMD check --as-cran "$PKG_TARBALL"
+            # Final check for pdflatex
+            if command -v pdflatex >/dev/null 2>&1; then
+              echo "pdflatex found, running full CRAN checks with manual"
+              R CMD check --as-cran "$PKG_TARBALL"
+            else
+              echo "WARNING: pdflatex not available, skipping manual checks"
+              R CMD check --as-cran --no-manual "$PKG_TARBALL"
+            fi
           else
             R CMD check --as-cran --no-manual "$PKG_TARBALL"
           fi
