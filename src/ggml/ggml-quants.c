@@ -15,9 +15,26 @@
 
 // R package compatibility: redirect stdio functions to R alternatives
 #ifdef USING_R
-#include <R.h>
-// Replace printf with Rprintf to avoid puts/putchar calls in R packages
-#define printf Rprintf
+  // Prevent R's Rboolean enum conflicts by defining macros first
+  #ifndef TRUE
+    #define TRUE 1
+  #endif
+  #ifndef FALSE
+    #define FALSE 0
+  #endif
+  #define R_NO_REMAP 1
+  #include <R.h>
+  // Replace printf with Rprintf to avoid puts/putchar calls in R packages
+  #define printf Rprintf
+  // Undefine any enum-based TRUE/FALSE from R headers and redefine as macros
+  #ifdef TRUE
+    #undef TRUE
+    #define TRUE 1
+  #endif
+  #ifdef FALSE
+    #undef FALSE
+    #define FALSE 0
+  #endif
 #endif
 
 #define GROUP_MAX_EPS 1e-15f

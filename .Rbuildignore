@@ -20,3 +20,5 @@
 ^\.Ruserdata$
 ^docs$
 ^NEWS\.md$
+^codecov\.yml$
+^examples$

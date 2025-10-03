@@ -1,4 +1,23 @@
-// R boolean compatibility is handled in r_output_redirect.h
+// R boolean compatibility - must be handled before all other includes
+// This block MUST come first to prevent R's Rboolean enum from conflicting
+#ifdef USING_R
+  // R headers may already be included via forced -include directive
+  // We must undefine the Rboolean enum values and replace with macros
+  #ifdef TRUE
+    #undef TRUE
+  #endif
+  #ifdef FALSE
+    #undef FALSE
+  #endif
+  // Define as macros to prevent any enum redefinition
+  #ifndef TRUE
+    #define TRUE 1
+  #endif
+  #ifndef FALSE
+    #define FALSE 0
+  #endif
+  #define R_NO_REMAP 1  // Prevent R from remapping common functions
+#endif
 
 #include "ggml-backend-impl.h"
 #include "ggml-backend.h"
@@ -42,21 +61,20 @@
 #    endif
 #    include <windows.h>
 #elif defined(__APPLE__)
-// Handle boolean conflicts on macOS when using R
-#    ifdef USING_R
-       // Under R, prevent system headers from defining conflicting enums
-       // Completely avoid the problematic dyld.h header by using dlfcn directly
-#      include <dlfcn.h>
-       // Define what we need from dyld.h without the enum conflicts
+#    include <dlfcn.h>
+#    if defined(USING_R) || defined(GGML_BUILD_FOR_R)
+       // CRITICAL: Avoid <mach-o/dyld.h> when building for R
+       // That header contains: enum DYLD_BOOL { FALSE, TRUE };
+       // which conflicts with R's: enum Rboolean { FALSE = 0, TRUE };
+       // Enums cannot be undefined, so we must use forward declarations instead
        extern "C" {
            uint32_t _dyld_image_count(void);
            const char* _dyld_get_image_name(uint32_t image_index);
            int _NSGetExecutablePath(char* buf, uint32_t* bufsize);
        }
 #    else
-       // Standard non-R compilation
+       // Standard non-R compilation can safely include the system header
 #      include <mach-o/dyld.h>
-#      include <dlfcn.h>
 #    endif
 #else
 #    include <dlfcn.h>
