@@ -1,0 +1,231 @@
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  schedule:
+    # Run integration tests daily at 2 AM UTC
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+
+name: Integration Tests
+
+permissions: read-all
+
+jobs:
+  integration-tests:
+    runs-on: ${{ matrix.config.os }}
+
+    name: E2E-${{ matrix.config.os }}-${{ matrix.config.test-suite }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        config:
+          # Parallel test suites across different OS
+          - {os: ubuntu-latest,   r: 'release', test-suite: 'model-download'}
+          - {os: ubuntu-latest,   r: 'release', test-suite: 'inference'}
+          - {os: ubuntu-latest,   r: 'release', test-suite: 'streaming'}
+          - {os: macos-latest,    r: 'release', test-suite: 'model-download'}
+          - {os: macos-latest,    r: 'release', test-suite: 'inference'}
+          - {os: windows-latest,  r: 'release', test-suite: 'model-download'}
+          - {os: windows-latest,  r: 'release', test-suite: 'inference'}
+
+    env:
+      GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
+      R_KEEP_PKG_SOURCE: yes
+      NOT_CRAN: true
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          r-version: ${{ matrix.config.r }}
+          use-public-rspm: true
+
+      - uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          extra-packages: any::testthat, any::rcmdcheck
+          needs: check
+
+      - name: Install package
+        run: R CMD INSTALL .
+        shell: bash
+
+      - name: Create test directory
+        run: |
+          mkdir -p ${{ runner.temp }}/edgemodelr_models
+        shell: bash
+
+      - name: Cache downloaded models
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/edgemodelr_models
+          key: ${{ runner.os }}-models-${{ hashFiles('**/test-e2e-integration.R') }}
+          restore-keys: |
+            ${{ runner.os }}-models-
+
+      - name: Run integration tests - Model Download
+        if: matrix.config.test-suite == 'model-download'
+        run: |
+          Rscript -e "
+          library(testthat)
+          library(edgemodelr)
+          test_file(
+            'tests/testthat/test-e2e-integration.R',
+            filter = 'Download|quick_setup|reload',
+            reporter = 'progress'
+          )
+          "
+        shell: bash
+        timeout-minutes: 30
+
+      - name: Run integration tests - Inference
+        if: matrix.config.test-suite == 'inference'
+        run: |
+          Rscript -e "
+          library(testthat)
+          library(edgemodelr)
+          test_file(
+            'tests/testthat/test-e2e-integration.R',
+            filter = 'completion|temperature|sequential',
+            reporter = 'progress'
+          )
+          "
+        shell: bash
+        timeout-minutes: 30
+
+      - name: Run integration tests - Streaming
+        if: matrix.config.test-suite == 'streaming'
+        run: |
+          Rscript -e "
+          library(testthat)
+          library(edgemodelr)
+          test_file(
+            'tests/testthat/test-e2e-integration.R',
+            filter = 'Streaming',
+            reporter = 'progress'
+          )
+          "
+        shell: bash
+        timeout-minutes: 30
+
+      - name: Upload test results on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-${{ matrix.config.os }}-${{ matrix.config.test-suite }}
+          path: |
+            tests/testthat/*.Rout
+            tests/testthat/*.rds
+
+  integration-performance:
+    runs-on: ubuntu-latest
+
+    name: Performance Benchmarks
+
+    env:
+      GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
+      R_KEEP_PKG_SOURCE: yes
+      NOT_CRAN: true
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          r-version: 'release'
+          use-public-rspm: true
+
+      - uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          extra-packages: any::testthat, any::bench
+          needs: check
+
+      - name: Install package
+        run: R CMD INSTALL .
+        shell: bash
+
+      - name: Cache models for benchmarking
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/edgemodelr_models
+          key: ${{ runner.os }}-bench-models-${{ hashFiles('**/test-e2e-integration.R') }}
+          restore-keys: |
+            ${{ runner.os }}-bench-models-
+
+      - name: Run performance benchmarks
+        run: |
+          Rscript -e '
+          library(edgemodelr)
+
+          # Setup
+          test_dir <- file.path(Sys.getenv("RUNNER_TEMP"), "edgemodelr_models")
+          dir.create(test_dir, showWarnings = FALSE, recursive = TRUE)
+
+          setup <- edge_quick_setup("TinyLlama-1.1B", dest_dir = test_dir)
+
+          if (!is.null(setup$context)) {
+            cat("\n=== Performance Metrics ===\n")
+
+            # Test inference speed
+            start_time <- Sys.time()
+            result <- edge_completion(
+              setup$context,
+              prompt = "Write a short poem about R programming:",
+              n_predict = 100
+            )
+            end_time <- Sys.time()
+
+            duration <- as.numeric(difftime(end_time, start_time, units = "secs"))
+            tokens_per_sec <- 100 / duration
+
+            cat(sprintf("Inference time: %.2f seconds\n", duration))
+            cat(sprintf("Tokens per second: %.2f\n", tokens_per_sec))
+            cat(sprintf("Model size: %s\n", file.size(setup$model_path) / 1024^2), "MB")
+            cat(sprintf("Result length: %d characters\n", nchar(result)))
+
+            edge_free_model(setup$context)
+
+            # Fail if performance is severely degraded
+            if (tokens_per_sec < 1) {
+              stop("Performance severely degraded: ", tokens_per_sec, " tokens/sec")
+            }
+          } else {
+            warning("Could not set up model for performance testing")
+          }
+          '
+        shell: bash
+        timeout-minutes: 20
+
+      - name: Upload performance results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: performance-results
+          path: |
+            *.log
+            *.txt
+
+  integration-summary:
+    runs-on: ubuntu-latest
+    needs: [integration-tests, integration-performance]
+    if: always()
+
+    name: Integration Test Summary
+
+    steps:
+      - name: Check integration test results
+        run: |
+          echo "Integration tests completed"
+          echo "Status: ${{ needs.integration-tests.result }}"
+          echo "Performance: ${{ needs.integration-performance.result }}"
+
+          if [ "${{ needs.integration-tests.result }}" == "failure" ]; then
+            echo "❌ Integration tests failed"
+            exit 1
+          fi
+
+          if [ "${{ needs.integration-tests.result }}" == "success" ]; then
+            echo "✅ All integration tests passed"
+          fi
