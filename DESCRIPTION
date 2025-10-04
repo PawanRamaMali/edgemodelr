@@ -20,10 +20,11 @@ Imports:
     Rcpp (>= 1.0.0),
     utils,
     tools
-Suggests: 
+Suggests:
     testthat (>= 3.0.0),
     knitr,
-    rmarkdown
+    rmarkdown,
+    curl
 SystemRequirements: C++17, GNU make or equivalent for building
 Note: Package includes self-contained 'llama.cpp' implementation (~56MB)
   for complete functionality without external dependencies.
