@@ -45,7 +45,7 @@ jobs:
 
       - uses: r-lib/actions/setup-r-dependencies@v2
         with:
-          extra-packages: any::testthat, any::rcmdcheck, any::devtools
+          extra-packages: any::testthat, any::rcmdcheck, any::devtools, any::curl
           needs: check
 
       - name: Create test directory
@@ -66,8 +66,9 @@ jobs:
         run: |
           Rscript -e "
           library(testthat)
+          pkg_path <- getwd()
           devtools::load_all('.')
-          test_dir(file.path(getwd(), 'tests/testthat'), filter = 'Download|quick_setup|reload', reporter = 'progress')
+          test_dir(file.path(pkg_path, 'tests/testthat'), filter = 'Download|quick_setup|reload', reporter = 'progress')
           "
         shell: bash
         timeout-minutes: 30
@@ -77,8 +78,9 @@ jobs:
         run: |
           Rscript -e "
           library(testthat)
+          pkg_path <- getwd()
           devtools::load_all('.')
-          test_dir(file.path(getwd(), 'tests/testthat'), filter = 'completion|temperature|sequential', reporter = 'progress')
+          test_dir(file.path(pkg_path, 'tests/testthat'), filter = 'completion|temperature|sequential', reporter = 'progress')
           "
         shell: bash
         timeout-minutes: 30
@@ -88,8 +90,9 @@ jobs:
         run: |
           Rscript -e "
           library(testthat)
+          pkg_path <- getwd()
           devtools::load_all('.')
-          test_dir(file.path(getwd(), 'tests/testthat'), filter = 'Streaming', reporter = 'progress')
+          test_dir(file.path(pkg_path, 'tests/testthat'), filter = 'Streaming', reporter = 'progress')
           "
         shell: bash
         timeout-minutes: 30
@@ -123,7 +126,7 @@ jobs:
 
       - uses: r-lib/actions/setup-r-dependencies@v2
         with:
-          extra-packages: any::testthat, any::bench, any::devtools
+          extra-packages: any::testthat, any::bench, any::devtools, any::curl
           needs: check
 
       - name: Cache models for benchmarking
