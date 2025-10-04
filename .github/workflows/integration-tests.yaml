@@ -66,8 +66,8 @@ jobs:
         run: |
           Rscript -e "
           library(testthat)
-          devtools::load_all()
-          test_dir('tests/testthat', filter = 'Download|quick_setup|reload', reporter = 'progress')
+          devtools::load_all('.')
+          test_dir(file.path(getwd(), 'tests/testthat'), filter = 'Download|quick_setup|reload', reporter = 'progress')
           "
         shell: bash
         timeout-minutes: 30
@@ -77,8 +77,8 @@ jobs:
         run: |
           Rscript -e "
           library(testthat)
-          devtools::load_all()
-          test_dir('tests/testthat', filter = 'completion|temperature|sequential', reporter = 'progress')
+          devtools::load_all('.')
+          test_dir(file.path(getwd(), 'tests/testthat'), filter = 'completion|temperature|sequential', reporter = 'progress')
           "
         shell: bash
         timeout-minutes: 30
@@ -88,8 +88,8 @@ jobs:
         run: |
           Rscript -e "
           library(testthat)
-          devtools::load_all()
-          test_dir('tests/testthat', filter = 'Streaming', reporter = 'progress')
+          devtools::load_all('.')
+          test_dir(file.path(getwd(), 'tests/testthat'), filter = 'Streaming', reporter = 'progress')
           "
         shell: bash
         timeout-minutes: 30
