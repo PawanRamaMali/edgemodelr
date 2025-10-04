@@ -45,12 +45,8 @@ jobs:
 
       - uses: r-lib/actions/setup-r-dependencies@v2
         with:
-          extra-packages: any::testthat, any::rcmdcheck
+          extra-packages: any::testthat, any::rcmdcheck, any::devtools
           needs: check
-
-      - name: Install package
-        run: R CMD INSTALL .
-        shell: bash
 
       - name: Create test directory
         run: |
@@ -70,12 +66,8 @@ jobs:
         run: |
           Rscript -e "
           library(testthat)
-          library(edgemodelr)
-          test_file(
-            'tests/testthat/test-e2e-integration.R',
-            filter = 'Download|quick_setup|reload',
-            reporter = 'progress'
-          )
+          devtools::load_all()
+          test_dir('tests/testthat', filter = 'Download|quick_setup|reload', reporter = 'progress')
           "
         shell: bash
         timeout-minutes: 30
@@ -85,12 +77,8 @@ jobs:
         run: |
           Rscript -e "
           library(testthat)
-          library(edgemodelr)
-          test_file(
-            'tests/testthat/test-e2e-integration.R',
-            filter = 'completion|temperature|sequential',
-            reporter = 'progress'
-          )
+          devtools::load_all()
+          test_dir('tests/testthat', filter = 'completion|temperature|sequential', reporter = 'progress')
           "
         shell: bash
         timeout-minutes: 30
@@ -100,12 +88,8 @@ jobs:
         run: |
           Rscript -e "
           library(testthat)
-          library(edgemodelr)
-          test_file(
-            'tests/testthat/test-e2e-integration.R',
-            filter = 'Streaming',
-            reporter = 'progress'
-          )
+          devtools::load_all()
+          test_dir('tests/testthat', filter = 'Streaming', reporter = 'progress')
           "
         shell: bash
         timeout-minutes: 30
@@ -139,12 +123,8 @@ jobs:
 
       - uses: r-lib/actions/setup-r-dependencies@v2
         with:
-          extra-packages: any::testthat, any::bench
+          extra-packages: any::testthat, any::bench, any::devtools
           needs: check
-
-      - name: Install package
-        run: R CMD INSTALL .
-        shell: bash
 
       - name: Cache models for benchmarking
         uses: actions/cache@v4
@@ -157,6 +137,7 @@ jobs:
       - name: Run performance benchmarks
         run: |
           Rscript -e '
+          devtools::load_all()
           library(edgemodelr)
 
           # Setup
