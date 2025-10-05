@@ -22,7 +22,7 @@ test_that("E2E: Download and load TinyLlama model", {
     result <- edge_download_model(
       tiny_model$model_id[1],
       tiny_model$filename[1],
-      dest_dir = test_dir
+      cache_dir = test_dir
     )
     expect_true(file.exists(model_path), "Model should be downloaded")
   }
@@ -51,7 +51,7 @@ test_that("E2E: Basic text completion inference", {
     edge_download_model(
       tiny_model$model_id[1],
       tiny_model$filename[1],
-      dest_dir = test_dir
+      cache_dir = test_dir
     )
   }
 
@@ -88,7 +88,7 @@ test_that("E2E: Multiple sequential completions", {
     edge_download_model(
       tiny_model$model_id[1],
       tiny_model$filename[1],
-      dest_dir = test_dir
+      cache_dir = test_dir
     )
   }
 
@@ -126,7 +126,7 @@ test_that("E2E: Streaming completion", {
     edge_download_model(
       tiny_model$model_id[1],
       tiny_model$filename[1],
-      dest_dir = test_dir
+      cache_dir = test_dir
     )
   }
 
@@ -158,7 +158,7 @@ test_that("E2E: edge_quick_setup integration", {
 
   # Use quick setup
   test_dir <- file.path(tempdir(), "edgemodelr_integration_tests")
-  setup <- edge_quick_setup("TinyLlama-1.1B", dest_dir = test_dir)
+  setup <- edge_quick_setup("TinyLlama-1.1B", cache_dir = test_dir)
 
   expect_true(!is.null(setup), "Setup should return results")
   expect_true(!is.null(setup$context), "Context should be created")
@@ -194,7 +194,7 @@ test_that("E2E: Different temperature settings", {
     edge_download_model(
       tiny_model$model_id[1],
       tiny_model$filename[1],
-      dest_dir = test_dir
+      cache_dir = test_dir
     )
   }
 
@@ -234,7 +234,7 @@ test_that("E2E: Model reload and reuse", {
     edge_download_model(
       tiny_model$model_id[1],
       tiny_model$filename[1],
-      dest_dir = test_dir
+      cache_dir = test_dir
     )
   }
 
