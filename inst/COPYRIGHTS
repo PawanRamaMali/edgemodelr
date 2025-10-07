@@ -1,0 +1,53 @@
+The edgemodelr package includes code from several sources:
+
+================================================================================
+llama.cpp and GGML Library
+================================================================================
+Files: src/llama/*, src/ggml/*
+Copyright: (c) 2023-2024 The ggml authors
+License: MIT
+URL: https://github.com/ggml-org/llama.cpp
+     https://github.com/ggerganov/ggml
+Primary Author: Georgi Gerganov
+
+The llama.cpp inference engine and GGML tensor library provide the core
+functionality for local large language model inference. These are distributed
+under the MIT License.
+
+================================================================================
+YaRN RoPE Implementation
+================================================================================
+Files: src/ggml/ggml-cpu/ops.cpp (rope_yarn function and related code)
+Copyright: (c) 2023 Jeffrey Quesnelle and Bowen Peng
+License: MIT
+URL: https://github.com/jquesnelle/yarn
+
+The YaRN (Yet another RoPE extensioN method) scaled rotary position embedding
+implementation is used for efficient attention mechanisms.
+
+================================================================================
+DRY Sampler
+================================================================================
+Files: src/llama/llama-sampling.cpp (DRY sampler related functions)
+Author: pi6am
+License: MIT (via Koboldcpp)
+URL: https://github.com/LostRuins/koboldcpp/pull/982
+
+The DRY (Don't Repeat Yourself) sampler implementation ported from Koboldcpp
+provides advanced text generation capabilities.
+
+================================================================================
+Z-Algorithm Implementation
+================================================================================
+Files: src/llama/llama-sampling.cpp (Z-algorithm for suffix matching)
+Author: Ivan Yurchenko
+License: Public Domain
+URL: https://github.com/ivanyu/string-algorithms
+
+The Z-algorithm implementation is used for efficient string matching in the
+DRY sampler.
+
+================================================================================
+
+All components are compatible with the MIT License under which edgemodelr
+is distributed.
