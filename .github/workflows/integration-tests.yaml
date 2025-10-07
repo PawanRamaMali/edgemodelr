@@ -140,7 +140,7 @@ jobs:
           test_dir <- file.path(Sys.getenv("RUNNER_TEMP"), "edgemodelr_models")
           dir.create(test_dir, showWarnings = FALSE, recursive = TRUE)
 
-          setup <- edge_quick_setup("TinyLlama-1.1B", dest_dir = test_dir)
+          setup <- edge_quick_setup("TinyLlama-1.1B", cache_dir = test_dir)
 
           if (!is.null(setup$context)) {
             cat("\n=== Performance Metrics ===\n")
