@@ -727,6 +727,7 @@ build_chat_prompt <- function(history) {
 #' @param max_age_days Maximum age of files to keep in days (default: 30)
 #' @param max_size_mb Maximum total cache size in MB (default: 500)
 #' @param interactive Whether to ask for user confirmation before deletion
+#' @param verbose Whether to print status messages (default: TRUE)
 #' @return Invisible list of deleted files
 #' @examples
 #' \donttest{

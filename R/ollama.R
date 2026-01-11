@@ -132,6 +132,7 @@ edge_find_ollama_models <- function(ollama_dir = NULL, test_compatibility = FALS
 #'
 #' @param model_path Path to the Ollama blob file
 #' @return TRUE if model loads successfully, FALSE otherwise
+#' @keywords internal
 test_ollama_model_compatibility <- function(model_path) {
   tryCatch({
     # Try to load with minimal resources

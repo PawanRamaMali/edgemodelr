@@ -1,27 +1,2 @@
 YEAR: 2025
 COPYRIGHT HOLDER: Pawan Rama Mali
-
-================================================================================
-This package includes code from the following third-party sources:
-================================================================================
-
-llama.cpp and GGML Library
-Copyright (c) 2023-2024 The ggml authors
-MIT License
-https://github.com/ggml-org/llama.cpp
-https://github.com/ggerganov/ggml
-
-YaRN RoPE Implementation
-Copyright (c) 2023 Jeffrey Quesnelle and Bowen Peng
-MIT License
-https://github.com/jquesnelle/yarn
-
-DRY Sampler (from Koboldcpp)
-Author: pi6am
-MIT License
-https://github.com/LostRuins/koboldcpp
-
-Z-Algorithm Implementation
-Author: Ivan Yurchenko
-Public Domain
-https://github.com/ivanyu/string-algorithms
