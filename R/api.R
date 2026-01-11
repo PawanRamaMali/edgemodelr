@@ -55,10 +55,22 @@ edge_load_model <- function(model_path, n_ctx = 2048L, n_gpu_layers = 0L) {
     stop("n_gpu_layers must be a non-negative integer")
   }
 
-  # Optimize context size for better performance
-  n_ctx <- max(512, min(n_ctx, 32768))  # Clamp to reasonable range
+  # Adaptive context size optimization based on model size
+  model_size_mb <- file.info(model_path)$size / (1024^2)
 
-  # Inform user about optimizations
+  # Auto-optimize context for small models (< 2GB)
+  if (model_size_mb < 2000 && n_ctx == 2048) {
+    # Small models work best with smaller contexts for faster inference
+    optimal_ctx <- if (model_size_mb < 1000) 1024 else 1536
+    n_ctx <- optimal_ctx
+    message("Optimized context size to ", n_ctx, " for small model (", round(model_size_mb, 1), "MB). ",
+            "Use n_ctx parameter to override.")
+  }
+
+  # Clamp to reasonable range
+  n_ctx <- max(512, min(n_ctx, 32768))
+
+  # Warn about large contexts
   if (n_ctx > 8192) {
     message("Large context size (", n_ctx, ") may impact performance. Consider using smaller values for faster inference.")
   }
@@ -417,6 +429,118 @@ edge_quick_setup <- function(model_name, cache_dir = NULL, verbose = TRUE) {
     context = ctx,
     info = model_info
   ))
+}
+
+#' Get optimized configuration for small language models
+#'
+#' Returns recommended parameters for loading and using small models (1B-3B parameters)
+#' to maximize inference speed on resource-constrained devices.
+#'
+#' @param model_size_mb Model file size in MB (if known). If NULL, uses conservative defaults.
+#' @param available_ram_gb Available system RAM in GB. If NULL, uses conservative defaults.
+#' @param target Device target: "mobile", "laptop", "desktop", or "server" (default: "laptop")
+#' @return List with optimized parameters for edge_load_model() and edge_completion()
+#'
+#' @examples
+#' # Get optimized config for a 700MB model on a laptop
+#' config <- edge_small_model_config(model_size_mb = 700, available_ram_gb = 8)
+#'
+#' # Use the config to load a model
+#' \donttest{
+#' model_path <- "path/to/tinyllama.gguf"
+#' if (file.exists(model_path)) {
+#'   ctx <- edge_load_model(
+#'     model_path,
+#'     n_ctx = config$n_ctx,
+#'     n_gpu_layers = config$n_gpu_layers
+#'   )
+#'
+#'   result <- edge_completion(
+#'     ctx,
+#'     prompt = "Hello",
+#'     n_predict = config$recommended_n_predict,
+#'     temperature = config$recommended_temperature
+#'   )
+#'
+#'   edge_free_model(ctx)
+#' }
+#' }
+#' @export
+edge_small_model_config <- function(model_size_mb = NULL, available_ram_gb = NULL, target = "laptop") {
+  # Default configurations based on target device
+  configs <- list(
+    mobile = list(
+      n_ctx = 512,
+      n_gpu_layers = 0,
+      recommended_n_predict = 50,
+      recommended_temperature = 0.7,
+      description = "Optimized for mobile devices with limited RAM"
+    ),
+    laptop = list(
+      n_ctx = 1024,
+      n_gpu_layers = 0,
+      recommended_n_predict = 100,
+      recommended_temperature = 0.8,
+      description = "Balanced performance for laptops"
+    ),
+    desktop = list(
+      n_ctx = 2048,
+      n_gpu_layers = 0,
+      recommended_n_predict = 150,
+      recommended_temperature = 0.8,
+      description = "Higher quality for desktop systems"
+    ),
+    server = list(
+      n_ctx = 4096,
+      n_gpu_layers = 0,
+      recommended_n_predict = 200,
+      recommended_temperature = 0.8,
+      description = "Maximum quality for server deployments"
+    )
+  )
+
+  # Get base config
+  if (!target %in% names(configs)) {
+    warning("Unknown target '", target, "'. Using 'laptop' defaults.")
+    target <- "laptop"
+  }
+
+  config <- configs[[target]]
+
+  # Adjust based on model size if provided
+  if (!is.null(model_size_mb)) {
+    if (model_size_mb < 1000) {
+      # Very small models (< 1GB): can use larger context
+      config$n_ctx <- min(config$n_ctx * 1.5, 2048)
+      config$recommended_n_predict <- min(config$recommended_n_predict * 1.2, 200)
+    } else if (model_size_mb > 2000) {
+      # Larger models (> 2GB): reduce context to save memory
+      config$n_ctx <- max(config$n_ctx * 0.75, 512)
+      config$recommended_n_predict <- max(config$recommended_n_predict * 0.8, 50)
+    }
+  }
+
+  # Adjust based on available RAM if provided
+  if (!is.null(available_ram_gb)) {
+    if (available_ram_gb < 4) {
+      config$n_ctx <- min(config$n_ctx, 512)
+      config$recommended_n_predict <- min(config$recommended_n_predict, 50)
+    } else if (available_ram_gb > 16) {
+      config$n_ctx <- min(config$n_ctx * 1.5, 4096)
+      config$recommended_n_predict <- min(config$recommended_n_predict * 1.5, 300)
+    }
+  }
+
+  # Add performance tips
+  config$tips <- c(
+    paste0("Recommended context size: ", config$n_ctx, " tokens"),
+    paste0("Recommended generation length: ", config$recommended_n_predict, " tokens"),
+    "For faster inference, use temperature=0.0 (greedy decoding)",
+    "For better quality, increase temperature to 0.8-1.0",
+    "Small models work best with concise, clear prompts"
+  )
+
+  return(config)
 }
 
 #' Stream text completion with real-time token generation

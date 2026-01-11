@@ -140,8 +140,26 @@ SEXP edge_load_model_internal(std::string model_path, int n_ctx = 2048, int n_gp
     
     llama_context_params ctx_params = llama_context_default_params();
     ctx_params.n_ctx = n_ctx;
-    ctx_params.n_batch = std::min(2048, n_ctx / 4);  // Larger batch for better throughput
-    ctx_params.n_threads = std::max(1, (int)std::thread::hardware_concurrency());  // Use all available cores
+
+    // Adaptive batch size optimization for small models
+    // Small models benefit from larger batches relative to context size
+    int optimal_batch;
+    if (n_ctx <= 512) {
+      optimal_batch = std::min(512, n_ctx);  // Very small context: use up to full context
+    } else if (n_ctx <= 2048) {
+      optimal_batch = std::min(512, n_ctx / 2);  // Small models: use 1/2 context
+    } else if (n_ctx <= 4096) {
+      optimal_batch = std::min(1024, n_ctx / 4);  // Medium models: use 1/4 context
+    } else {
+      optimal_batch = std::min(2048, n_ctx / 4);  // Large context: cap at 2048
+    }
+    ctx_params.n_batch = optimal_batch;
+
+    // Adaptive thread count for small models (they don't benefit from many threads)
+    int hardware_threads = std::max(1, (int)std::thread::hardware_concurrency());
+    // For small contexts (typical of small models), limit threads to avoid overhead
+    int optimal_threads = (n_ctx <= 2048) ? std::min(4, hardware_threads) : hardware_threads;
+    ctx_params.n_threads = optimal_threads;
     
     struct llama_context* ctx = llama_init_from_model(model, ctx_params);
     if (!ctx) {
