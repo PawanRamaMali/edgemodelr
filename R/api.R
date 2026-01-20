@@ -198,7 +198,7 @@ is_valid_model <- function(ctx) {
 #' @param cache_dir Directory to store downloaded models (default: user cache directory via tools::R_user_dir())
 #' @param force_download Force re-download even if file exists
 #' @return Path to the downloaded model file
-#' 
+#'
 #' @examples
 #' \donttest{
 #' # Download TinyLlama model
@@ -206,7 +206,7 @@ is_valid_model <- function(ctx) {
 #'   model_id = "TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF",
 #'   filename = "tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf"
 #' )
-#' 
+#'
 #' # Use the downloaded model
 #' if (file.exists(model_path)) {
 #'   ctx <- edge_load_model(model_path)
@@ -229,12 +229,12 @@ edge_download_model <- function(model_id, filename, cache_dir = NULL, force_down
   if (nchar(filename) == 0) {
     stop("filename cannot be empty")
   }
-  
+
   # Set default cache directory using R_user_dir (CRAN compliant)
   if (is.null(cache_dir)) {
     cache_dir <- tools::R_user_dir("edgemodelr", "cache")
   }
-  
+
   # Create cache directory if it doesn't exist (with user consent)
   if (!dir.exists(cache_dir)) {
     # Ask for user consent in interactive sessions
@@ -246,144 +246,385 @@ edge_download_model <- function(model_id, filename, cache_dir = NULL, force_down
               "Create cache directory?"),
         default = TRUE
       )
-      
+
       if (is.na(consent) || !consent) {
         stop("User declined to create cache directory. ",
              "Download cancelled. You can specify a custom cache_dir parameter.")
       }
     }
-    
+
     dir.create(cache_dir, recursive = TRUE)
     if (verbose) message("Created cache directory: ", cache_dir)
   }
-  
+
   # Construct local file path
   local_path <- file.path(cache_dir, basename(filename))
-  
-  # Check if file already exists
+
+  # Check if file already exists and is valid
   if (file.exists(local_path) && !force_download) {
-    if (verbose) message("Model already exists: ", local_path)
-    return(local_path)
+    # Verify it's a valid GGUF file (starts with "GGUF" magic bytes)
+    if (.is_valid_gguf_file(local_path)) {
+      if (verbose) message("Model already exists: ", local_path)
+      return(local_path)
+    } else {
+      if (verbose) message("Existing file is incomplete or invalid, re-downloading...")
+      file.remove(local_path)
+    }
   }
-  
+
   # Construct Hugging Face URL
   base_url <- "https://huggingface.co"
   download_url <- file.path(base_url, model_id, "resolve", "main", filename)
-  
+
   if (verbose) {
     message("Downloading model...")
     message("From: ", download_url)
     message("To: ", local_path)
   }
-  
-  # Download the file
-  tryCatch({
-    # Try different download methods
-    download_success <- FALSE
-    methods_to_try <- c("auto", "curl", "wget", "wininet")
-    
-    for (method in methods_to_try) {
-      tryCatch({
-        utils::download.file(download_url, local_path, mode = "wb", method = method, quiet = FALSE)
-        if (file.exists(local_path) && file.info(local_path)$size > 1000) {  # At least 1KB
-          download_success <- TRUE
-          break
-        }
-      }, error = function(e) {
-        # Silently try next method
-      })
-    }
-    
-    if (download_success) {
+
+  # Download using robust method with retry support
+  download_success <- .robust_download(download_url, local_path, verbose = verbose)
+
+  if (download_success && file.exists(local_path)) {
+    # Verify the downloaded file is valid
+    if (.is_valid_gguf_file(local_path)) {
       if (verbose) {
+        file_size_mb <- round(file.info(local_path)$size / (1024^2), 1)
         message("Download completed successfully!")
-        message("Model size: ", round(file.info(local_path)$size / (1024^2), 1), "MB")
+        message("Model size: ", file_size_mb, "MB")
       }
       return(local_path)
     } else {
-      stop("All download methods failed")
+      # Downloaded file is not valid GGUF
+      file.remove(local_path)
+      stop("Downloaded file is not a valid GGUF model. ",
+           "This may indicate the model requires authentication.\n",
+           "For gated models (like Gemma), you need to:\n",
+           "1. Create a Hugging Face account at https://huggingface.co\n",
+           "2. Accept the model's license agreement\n",
+           "3. Create an access token at https://huggingface.co/settings/tokens\n",
+           "4. Set HF_TOKEN environment variable: Sys.setenv(HF_TOKEN='your_token')")
     }
-    
-  }, error = function(e) {
+  } else {
     # Clean up partial download
     if (file.exists(local_path)) {
       file.remove(local_path)
     }
-    
-    stop("Failed to download model: ", e$message, "\n",
+
+    stop("Failed to download model: All download methods failed\n",
          "Possible solutions:\n",
          "1. Check your internet connection\n",
-         "2. Try downloading manually:\n",
-         "   curl -L -o '", local_path, "' '", download_url, "'\n",
-         "3. Or use a different model from edge_list_models()")
+         "2. Try downloading manually with curl:\n",
+         "   curl -L -C - -o '", local_path, "' '", download_url, "'\n",
+         "3. For gated models, set HF_TOKEN environment variable\n",
+         "4. Or use Ollama: ollama pull <model_name>")
+  }
+}
+
+#' Check if a file is a valid GGUF file
+#' @param path Path to the file
+#' @return TRUE if valid GGUF, FALSE otherwise
+#' @keywords internal
+.is_valid_gguf_file <- function(path) {
+  if (!file.exists(path)) return(FALSE)
+
+  file_size <- file.info(path)$size
+  # GGUF files should be at least 1MB for any real model
+  if (file_size < 1024 * 1024) return(FALSE)
+
+  # Check GGUF magic bytes: "GGUF" at start of file
+  tryCatch({
+    con <- file(path, "rb")
+    on.exit(close(con))
+    magic <- readBin(con, "raw", n = 4)
+    # GGUF magic: 0x47 0x47 0x55 0x46 ("GGUF")
+    return(identical(magic, as.raw(c(0x47, 0x47, 0x55, 0x46))))
+  }, error = function(e) {
+    return(FALSE)
   })
 }
 
+#' Robust file download with retry and resume support
+#' @param url URL to download
+#' @param destfile Destination file path
+#' @param verbose Print progress messages
+#' @param max_retries Maximum number of retry attempts
+#' @return TRUE if successful, FALSE otherwise
+#' @keywords internal
+.robust_download <- function(url, destfile, verbose = TRUE, max_retries = 3) {
+  # Get HF token if available
+  hf_token <- Sys.getenv("HF_TOKEN", unset = "")
+  if (nchar(hf_token) == 0) {
+    hf_token <- Sys.getenv("HUGGING_FACE_HUB_TOKEN", unset = "")
+  }
+
+  # Try curl first (most reliable for large files with redirects)
+  curl_path <- Sys.which("curl")
+  if (nchar(curl_path) > 0) {
+    if (verbose) message("Using curl for download...")
+    success <- .download_with_curl(url, destfile, hf_token, verbose, max_retries)
+    if (success) return(TRUE)
+  }
+
+  # Try wget as fallback
+
+  wget_path <- Sys.which("wget")
+  if (nchar(wget_path) > 0) {
+    if (verbose) message("Trying wget as fallback...")
+    success <- .download_with_wget(url, destfile, hf_token, verbose, max_retries)
+    if (success) return(TRUE)
+  }
+
+  # Try R's download.file with libcurl method as last resort
+  if (verbose) message("Trying R download.file with libcurl...")
+  success <- .download_with_r(url, destfile, hf_token, verbose, max_retries)
+  if (success) return(TRUE)
+
+  return(FALSE)
+}
+
+#' Download using curl command
+#' @keywords internal
+.download_with_curl <- function(url, destfile, hf_token = "", verbose = TRUE, max_retries = 3) {
+  for (attempt in 1:max_retries) {
+    if (attempt > 1 && verbose) {
+      message("Retry attempt ", attempt, " of ", max_retries, "...")
+    }
+
+    # Build curl command with proper options for large files
+    curl_args <- c(
+      "-L",                          # Follow redirects
+      "-C", "-",                     # Resume if partial file exists
+      "--connect-timeout", "30",     # Connection timeout
+      "--max-time", "7200",          # Max 2 hours for large files
+      "--retry", "3",                # Curl's own retry
+      "--retry-delay", "5",          # Delay between retries
+      "-#"                           # Progress bar
+    )
+
+    # Add authentication header if token available
+    if (nchar(hf_token) > 0) {
+      curl_args <- c(curl_args, "-H", paste0("Authorization: Bearer ", hf_token))
+    }
+
+    curl_args <- c(curl_args, "-o", destfile, url)
+
+    # Run curl
+    result <- tryCatch({
+      system2("curl", args = curl_args, stdout = if (verbose) "" else FALSE,
+              stderr = if (verbose) "" else FALSE)
+    }, error = function(e) {
+      return(1)
+    })
+
+    # Check if download succeeded and file is valid
+    if (result == 0 && file.exists(destfile) && .is_valid_gguf_file(destfile)) {
+      return(TRUE)
+    }
+
+    # Wait before retry
+    if (attempt < max_retries) {
+      Sys.sleep(2)
+    }
+  }
+
+  return(FALSE)
+}
+
+#' Download using wget command
+#' @keywords internal
+.download_with_wget <- function(url, destfile, hf_token = "", verbose = TRUE, max_retries = 3) {
+  for (attempt in 1:max_retries) {
+    if (attempt > 1 && verbose) {
+      message("Retry attempt ", attempt, " of ", max_retries, "...")
+    }
+
+    # Build wget command
+    wget_args <- c(
+      "-c",                          # Continue partial downloads
+      "--timeout=30",                # Timeout
+      "--tries=3",                   # Wget's own retry
+      "-O", destfile
+    )
+
+    # Add authentication if token available
+    if (nchar(hf_token) > 0) {
+      wget_args <- c(wget_args, paste0("--header=Authorization: Bearer ", hf_token))
+    }
+
+    wget_args <- c(wget_args, url)
+
+    # Run wget
+    result <- tryCatch({
+      system2("wget", args = wget_args, stdout = if (verbose) "" else FALSE,
+              stderr = if (verbose) "" else FALSE)
+    }, error = function(e) {
+      return(1)
+    })
+
+    if (result == 0 && file.exists(destfile) && .is_valid_gguf_file(destfile)) {
+      return(TRUE)
+    }
+
+    if (attempt < max_retries) {
+      Sys.sleep(2)
+    }
+  }
+
+  return(FALSE)
+}
+
+#' Download using R's download.file with libcurl
+#' @keywords internal
+.download_with_r <- function(url, destfile, hf_token = "", verbose = TRUE, max_retries = 3) {
+  for (attempt in 1:max_retries) {
+    if (attempt > 1 && verbose) {
+      message("Retry attempt ", attempt, " of ", max_retries, "...")
+    }
+
+    # Set headers if token available
+    if (nchar(hf_token) > 0) {
+      old_headers <- getOption("HTTPUserAgent")
+      options(HTTPUserAgent = paste0("Bearer ", hf_token))
+      on.exit(options(HTTPUserAgent = old_headers), add = TRUE)
+    }
+
+    # Try libcurl method which handles redirects better
+    result <- tryCatch({
+      # Increase timeout for large files
+      old_timeout <- getOption("timeout")
+      options(timeout = 7200)  # 2 hours
+      on.exit(options(timeout = old_timeout), add = TRUE)
+
+      utils::download.file(
+        url,
+        destfile,
+        mode = "wb",
+        method = "libcurl",
+        quiet = !verbose,
+        cacheOK = FALSE,
+        extra = if (nchar(hf_token) > 0) {
+          c("-H", paste0("Authorization: Bearer ", hf_token))
+        } else {
+          character(0)
+        }
+      )
+      0  # Success
+    }, error = function(e) {
+      if (verbose) message("Download error: ", e$message)
+      1  # Failure
+    }, warning = function(w) {
+      if (verbose) message("Download warning: ", w$message)
+      # Check if file was downloaded despite warning
+      if (file.exists(destfile) && file.info(destfile)$size > 1024 * 1024) {
+        return(0)
+      }
+      return(1)
+    })
+
+    if (result == 0 && file.exists(destfile) && .is_valid_gguf_file(destfile)) {
+      return(TRUE)
+    }
+
+    if (attempt < max_retries) {
+      Sys.sleep(2)
+    }
+  }
+
+  return(FALSE)
+}
+
 #' List popular pre-configured models
+#'
+#' Models are sourced from GPT4All CDN (direct download, no auth required) and Hugging Face.
+#' GPT4All models are recommended for offline use as they don't require any accounts.
 #'
 #' @return Data frame with model information
 #' @export
 edge_list_models <- function() {
   models <- data.frame(
     name = c(
-      "TinyLlama-1.1B", "TinyLlama-OpenOrca", 
-      "llama3.2-1b", "llama3.2-3b",
-      "phi3-mini", "qwen2.5-1.5b", "gemma2-2b"
+      # Small models (testing/mobile)
+      "TinyLlama-1.1B", "TinyLlama-OpenOrca",
+      # Medium models (2-5GB)
+      "llama3-8b", "mistral-7b", "llama3.2-3b", "phi3-mini",
+      # Large models (7-10GB) - Direct download from GPT4All CDN
+      "orca2-13b", "wizardlm-13b", "hermes-13b", "starcoder"
     ),
     size = c(
       "~700MB", "~700MB",
-      "~800MB", "~2GB", 
-      "~2.4GB", "~1GB", "~1.6GB"
+      "~4.7GB", "~4.1GB", "~2GB", "~2.4GB",
+      "~7.4GB", "~7.4GB", "~7.4GB", "~9GB"
     ),
-    model_id = c(
-      "TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF",
-      "TheBloke/TinyLlama-1.1B-1T-OpenOrca-GGUF",
-      "bartowski/Llama-3.2-1B-Instruct-GGUF",
-      "bartowski/Llama-3.2-3B-Instruct-GGUF", 
-      "microsoft/Phi-3-mini-4k-instruct-gguf",
-      "Qwen/Qwen2.5-1.5B-Instruct-GGUF",
-      "google/gemma-2-2b-it-gguf"
+    download_url = c(
+      # HuggingFace models
+      "https://huggingface.co/TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF/resolve/main/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf",
+      "https://huggingface.co/TheBloke/TinyLlama-1.1B-1T-OpenOrca-GGUF/resolve/main/tinyllama-1.1b-1t-openorca.Q4_K_M.gguf",
+      # GPT4All CDN - direct download, no auth required
+      "https://gpt4all.io/models/gguf/Meta-Llama-3-8B-Instruct.Q4_0.gguf",
+      "https://gpt4all.io/models/gguf/mistral-7b-instruct-v0.1.Q4_0.gguf",
+      "https://huggingface.co/bartowski/Llama-3.2-3B-Instruct-GGUF/resolve/main/Llama-3.2-3B-Instruct-Q4_K_M.gguf",
+      "https://huggingface.co/microsoft/Phi-3-mini-4k-instruct-gguf/resolve/main/Phi-3-mini-4k-instruct-q4.gguf",
+      # Large models - GPT4All CDN (no auth, direct download)
+      "https://gpt4all.io/models/gguf/orca-2-13b.Q4_0.gguf",
+      "https://gpt4all.io/models/gguf/wizardlm-13b-v1.2.Q4_0.gguf",
+      "https://gpt4all.io/models/gguf/nous-hermes-llama2-13b.Q4_0.gguf",
+      "https://gpt4all.io/models/gguf/starcoder-newbpe-q4_0.gguf"
     ),
     filename = c(
       "tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf",
       "tinyllama-1.1b-1t-openorca.Q4_K_M.gguf",
-      "Llama-3.2-1B-Instruct-Q4_K_M.gguf",
+      "Meta-Llama-3-8B-Instruct.Q4_0.gguf",
+      "mistral-7b-instruct-v0.1.Q4_0.gguf",
       "Llama-3.2-3B-Instruct-Q4_K_M.gguf",
       "Phi-3-mini-4k-instruct-q4.gguf",
-      "qwen2.5-1.5b-instruct-q4_k_m.gguf",
-      "gemma-2-2b-it-q4_k_m.gguf"
+      "orca-2-13b.Q4_0.gguf",
+      "wizardlm-13b-v1.2.Q4_0.gguf",
+      "nous-hermes-llama2-13b.Q4_0.gguf",
+      "starcoder-newbpe-q4_0.gguf"
     ),
     use_case = c(
-      "Testing", "Better Chat", 
-      "2024 Mobile", "2024 General", 
-      "2024 Reasoning", "2024 Multilingual", "2024 Gemma"
+      "Testing", "Better Chat",
+      "General (8B)", "General (7B)", "Mobile (3B)", "Reasoning",
+      "13B Chat", "13B Instruct", "13B Chat", "Code (15B)"
+    ),
+    source = c(
+      "huggingface", "huggingface",
+      "gpt4all", "gpt4all", "huggingface", "huggingface",
+      "gpt4all", "gpt4all", "gpt4all", "gpt4all"
     ),
     stringsAsFactors = FALSE
   )
-  
+
   return(models)
 }
 
 #' Quick setup for a popular model
 #'
+#' Downloads a model from the built-in model list and loads it for inference.
+#' GPT4All models are downloaded directly without authentication.
+#'
 #' @param model_name Name of the model from edge_list_models()
 #' @param cache_dir Directory to store downloaded models (default: user cache directory via tools::R_user_dir())
 #' @param verbose Whether to print status messages (default: TRUE)
 #' @return List with model path and context (if llama.cpp is available)
-#' 
+#'
 #' @examples
 #' \donttest{
-#' # Quick setup with 2024 models
-#' setup <- edge_quick_setup("llama3.2-1b")  # Modern small model
+#' # Quick setup with a 7B model (no auth required)
+#' setup <- edge_quick_setup("mistral-7b")
 #' ctx <- setup$context
-#' 
+#'
+#' # Or use a larger 13B model
+#' setup <- edge_quick_setup("orca2-13b")  # 7.4GB, direct download
+#'
 #' if (!is.null(ctx)) {
 #'   response <- edge_completion(ctx, "Hello!")
 #'   cat("Response:", response, "\n")
 #'   edge_free_model(ctx)
 #' }
 #' }
-#' @export  
+#' @export
 edge_quick_setup <- function(model_name, cache_dir = NULL, verbose = TRUE) {
   # Parameter validation
   if (is.null(model_name)) {
@@ -395,25 +636,30 @@ edge_quick_setup <- function(model_name, cache_dir = NULL, verbose = TRUE) {
   if (nchar(model_name) == 0) {
     stop("model_name cannot be empty")
   }
-  
+
   models <- edge_list_models()
   model_info <- models[models$name == model_name, ]
-  
+
   if (nrow(model_info) == 0) {
-    stop("Model '", model_name, "' not found. Available models:\n", 
+    stop("Model '", model_name, "' not found. Available models:\n",
          paste(models$name, collapse = ", "))
   }
-  
-  if (verbose) message("Setting up ", model_name, "...")
-  
-  # Download model
-  model_path <- edge_download_model(
-    model_id = model_info$model_id,
+
+  if (verbose) {
+    message("Setting up ", model_name, " (", model_info$size, ")...")
+    if (model_info$source == "gpt4all") {
+      message("Source: GPT4All CDN (direct download, no auth required)")
+    }
+  }
+
+  # Download model using direct URL
+  model_path <- edge_download_url(
+    url = model_info$download_url,
     filename = model_info$filename,
     cache_dir = cache_dir,
     verbose = verbose
   )
-  
+
   # Try to load model (will show helpful error if llama.cpp not available)
   ctx <- tryCatch({
     edge_load_model(model_path)
@@ -423,12 +669,96 @@ edge_quick_setup <- function(model_name, cache_dir = NULL, verbose = TRUE) {
             "Install llama.cpp system-wide to use for inference.")
     NULL
   })
-  
+
   return(list(
     model_path = model_path,
     context = ctx,
     info = model_info
   ))
+}
+
+#' Download a model from a direct URL
+#'
+#' Downloads a GGUF model file from any URL. Supports resume and validates GGUF format.
+#'
+#' @param url Direct download URL for the model
+#' @param filename Local filename to save as
+#' @param cache_dir Directory to store downloaded models (default: user cache directory)
+#' @param force_download Force re-download even if file exists
+#' @param verbose Whether to print progress messages
+#' @return Path to the downloaded model file
+#'
+#' @examples
+#' \donttest{
+#' # Download from GPT4All CDN
+#' model_path <- edge_download_url(
+#'   url = "https://gpt4all.io/models/gguf/mistral-7b-instruct-v0.1.Q4_0.gguf",
+#'   filename = "mistral-7b.gguf"
+#' )
+#' }
+#' @export
+edge_download_url <- function(url, filename, cache_dir = NULL, force_download = FALSE, verbose = TRUE) {
+  # Validate inputs
+
+if (is.null(url) || !is.character(url) || nchar(url) == 0) {
+    stop("url must be a non-empty string")
+  }
+  if (is.null(filename) || !is.character(filename) || nchar(filename) == 0) {
+    stop("filename must be a non-empty string")
+  }
+
+  # Set default cache directory
+  if (is.null(cache_dir)) {
+    cache_dir <- tools::R_user_dir("edgemodelr", "cache")
+  }
+
+  # Create cache directory if needed
+  if (!dir.exists(cache_dir)) {
+    if (interactive()) {
+      consent <- utils::askYesNo(
+        paste("Create cache directory for models?\n", "Location:", cache_dir),
+        default = TRUE
+      )
+      if (is.na(consent) || !consent) {
+        stop("Cache directory required. Specify cache_dir parameter.")
+      }
+    }
+    dir.create(cache_dir, recursive = TRUE)
+    if (verbose) message("Created cache directory: ", cache_dir)
+  }
+
+  local_path <- file.path(cache_dir, basename(filename))
+
+  # Check if valid file exists
+  if (file.exists(local_path) && !force_download) {
+    if (.is_valid_gguf_file(local_path)) {
+      if (verbose) message("Model already exists: ", local_path)
+      return(local_path)
+    } else {
+      if (verbose) message("Existing file invalid, re-downloading...")
+      file.remove(local_path)
+    }
+  }
+
+  if (verbose) {
+    message("Downloading model...")
+    message("From: ", url)
+    message("To: ", local_path)
+  }
+
+  # Download using robust method
+  success <- .robust_download(url, local_path, verbose = verbose)
+
+  if (success && file.exists(local_path) && .is_valid_gguf_file(local_path)) {
+    if (verbose) {
+      file_size_gb <- round(file.info(local_path)$size / (1024^3), 2)
+      message("Download completed! Size: ", file_size_gb, " GB")
+    }
+    return(local_path)
+  } else {
+    if (file.exists(local_path)) file.remove(local_path)
+    stop("Download failed. Check your internet connection and try again.")
+  }
 }
 
 #' Get optimized configuration for small language models
