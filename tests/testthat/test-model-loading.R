@@ -3,27 +3,31 @@ test_that("edge_list_models returns valid data", {
   models <- edge_list_models()
   expect_true(is.data.frame(models))
   expect_true(nrow(models) > 0)
-  
+
   # Check all required columns exist
-  required_cols <- c("name", "size", "model_id", "filename", "use_case")
+  required_cols <- c("name", "size", "download_url", "filename", "use_case", "source")
   expect_true(all(required_cols %in% colnames(models)))
-  
+
   # Check data types
   expect_true(is.character(models$name))
   expect_true(is.character(models$size))
-  expect_true(is.character(models$model_id))
+  expect_true(is.character(models$download_url))
   expect_true(is.character(models$filename))
   expect_true(is.character(models$use_case))
-  
+  expect_true(is.character(models$source))
+
   # Check for no empty values in critical columns
-  expect_true(all(nchar(models$model_id) > 0))
+  expect_true(all(nchar(models$download_url) > 0))
   expect_true(all(nchar(models$filename) > 0))
-  
+
   # Check filename format (should end with .gguf)
   expect_true(all(grepl("\\.gguf$", models$filename, ignore.case = TRUE)))
-  
-  # Check model_id format (should contain /)
-  expect_true(all(grepl("/", models$model_id)))
+
+  # Check download_url format (should be valid URL)
+  expect_true(all(grepl("^https://", models$download_url)))
+
+  # Check source column values
+  expect_true(all(models$source %in% c("huggingface", "gpt4all")))
 })
 
 # Test 2: edge_load_model with invalid inputs
