@@ -22,3 +22,6 @@
 ^NEWS\.md$
 ^codecov\.yml$
 ^examples$
+^issues\.md$
+^MODEL_TESTING\.md$
+^test_.*\.R$
