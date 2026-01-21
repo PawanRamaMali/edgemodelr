@@ -87,7 +87,7 @@ edge_find_ollama_models <- function(ollama_dir = NULL, test_compatibility = FALS
         # Read GGUF version (uint32 little-endian)
         version_bytes <- readBin(con, "raw", n = 4)
         if (length(version_bytes) == 4) {
-          gguf_version <- sum(as.integer(version_bytes) * c(1, 256, 65536, 16777216))
+          gguf_version <- sum(as.numeric(version_bytes) * c(1, 256, 65536, 16777216))
           gguf_info <- list(valid = TRUE, version = gguf_version)
         }
       }
@@ -100,6 +100,7 @@ edge_find_ollama_models <- function(ollama_dir = NULL, test_compatibility = FALS
     # Check GGUF version compatibility (we support v1-v3)
     if (gguf_info$version > 3) {
       message("Warning: ", basename(file_path), " uses GGUF v", gguf_info$version, " (we support v1-v3)")
+      next  # Skip unsupported GGUF versions
     }
 
     size_mb <- round(file_info$size / 1024^2, 1)
@@ -141,11 +142,41 @@ edge_find_ollama_models <- function(ollama_dir = NULL, test_compatibility = FALS
   ))
 }
 
-#' Test if an Ollama model is compatible with edgemodelr
+#' Test if an Ollama model blob can be used with edgemodelr
 #'
-#' @param model_path Path to the Ollama blob file
-#' @param verbose If TRUE, print error details for incompatible models
-#' @return TRUE if model loads successfully, FALSE otherwise
+#' This function tries to load an Ollama GGUF blob with edgemodelr using a
+#' minimal configuration and then runs a very short completion. It is intended
+#' to quickly detect common incompatibilities (unsupported architectures,
+#' invalid or unsupported GGUF files, or models that cannot run inference)
+#' before you attempt to use the model in a longer session.
+#'
+#' A model is considered compatible if:
+#' \itemize{
+#'   \item \code{edge_load_model()} succeeds with a small context size
+#'     (\code{n_ctx = 256}) and CPU-only execution (\code{n_gpu_layers = 0}),
+#'   \item the resulting model context passes \code{is_valid_model()},
+#'   \item and a minimal call to \code{edge_completion()} (1 token) returns
+#'     without error.
+#' }
+#'
+#' When \code{verbose = TRUE}, this function classifies common failure modes:
+#' unsupported model architecture, invalid GGUF file, unsupported GGUF version,
+#' or a generic error (first 80 characters reported with truncation indicator).
+#'
+#' @param model_path Path to the Ollama blob file (a GGUF file, typically
+#'   named by its SHA-256 hash inside the Ollama models/blobs directory).
+#' @param verbose If TRUE, print human-readable diagnostics for models
+#'   that fail the compatibility checks.
+#' @return Logical: TRUE if the model loads and can run a short
+#'   completion successfully, FALSE otherwise.
+#' @examples
+#' \donttest{
+#' # Test an individual Ollama blob
+#' # is_ok <- test_ollama_model_compatibility("/path/to/blob", verbose = TRUE)
+#' #
+#' # This function is also used internally by edge_find_ollama_models()
+#' # when test_compatibility = TRUE.
+#' }
 #' @export
 test_ollama_model_compatibility <- function(model_path, verbose = FALSE) {
   tryCatch({
@@ -158,6 +189,7 @@ test_ollama_model_compatibility <- function(model_path, verbose = FALSE) {
       return(TRUE)
     }
     if (verbose) message("  Model loaded but context invalid")
+    edge_free_model(ctx)
     return(FALSE)
   }, error = function(e) {
     if (verbose) {
@@ -169,7 +201,8 @@ test_ollama_model_compatibility <- function(model_path, verbose = FALSE) {
       } else if (grepl("version", err_msg, ignore.case = TRUE)) {
         message("  Unsupported GGUF version")
       } else {
-        message("  Error: ", substr(err_msg, 1, 80))
+        display_msg <- if (nchar(err_msg) > 80) paste0(substr(err_msg, 1, 77), "...") else err_msg
+        message("  Error: ", display_msg)
       }
     }
     return(FALSE)
