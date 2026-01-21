@@ -25,3 +25,4 @@
 ^issues\.md$
 ^MODEL_TESTING\.md$
 ^test_.*\.R$
+^cran-comments\.md$

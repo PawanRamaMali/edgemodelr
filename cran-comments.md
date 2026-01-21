@@ -1,8 +1,31 @@
-## Submission - edgemodelr 0.1.4
+## Resubmission - edgemodelr 0.1.4
 
-This is an update to the edgemodelr package with performance optimizations and improved Ollama integration.
+This is a resubmission of edgemodelr which was previously archived on CRAN (2025-10-02).
 
-### Changes in this version
+### Addressing Previous Archive Issues
+
+#### 1. Misrepresentation of authorship - FIXED
+All third-party code contributors are now properly credited in:
+- **DESCRIPTION**: Authors@R field includes all contributors with appropriate roles (aut, cph, ctb)
+- **inst/COPYRIGHTS**: Detailed attribution for llama.cpp, GGML, YaRN RoPE, DRY sampler, and Z-algorithm
+
+Contributors now credited:
+- Georgi Gerganov (aut, cph) - Author of llama.cpp and GGML library
+- The ggml authors (cph) - llama.cpp and GGML contributors
+- Jeffrey Quesnelle & Bowen Peng (ctb, cph) - YaRN RoPE implementation
+- pi6am (ctb) - DRY sampler from Koboldcpp
+- Ivan Yurchenko (ctb) - Z-algorithm implementation
+
+#### 2. Platform-dependent code - FIXED
+- Removed all non-portable compiler flags (-march=native, -mtune=native)
+- Unix/macOS (Makevars): Uses generic CPU implementation (-DGGML_CPU_GENERIC)
+- Windows (Makevars.win): Uses x86 SIMD optimizations (clearly documented in file)
+- SystemRequirements properly documents: "C++17, GNU make or equivalent for building"
+
+#### 3. Repeated submissions - Acknowledged
+We will wait for this submission to be fully processed before any further submissions.
+
+### Changes in version 0.1.4
 
 #### New Features:
 1. **Small Model Configuration Helper**: New `edge_small_model_config()` function for optimized settings on resource-constrained devices
@@ -17,7 +40,7 @@ This is an update to the edgemodelr package with performance optimizations and i
 3. Fixed GGUF version detection using numeric conversion to avoid integer overflow
 
 ### Test environments
-* local Windows 11 install, R 4.5.0
+* local Windows 11 install, R 4.5.2
 * GitHub Actions:
   - ubuntu-latest: R (release, devel, oldrel-1)
   - macOS-latest: R (release)
@@ -26,18 +49,9 @@ This is an update to the edgemodelr package with performance optimizations and i
 ### R CMD check results
 There were no ERRORs or WARNINGs.
 
-There was 1 NOTE:
-* checking CRAN incoming feasibility ... NOTE
-
-  Possibly misspelled words in DESCRIPTION:
-    GGUF (9:73)
-    cpp (10:19)
-    llama (10:15, 13:22)
-
-These are not misspelled words but technical terms:
-- GGUF: A specific model file format used by llama.cpp
-- cpp: Abbreviation for C++ as in "llama.cpp"
-- llama: Part of the project name "llama.cpp"
+There were 2 NOTEs:
+1. CRAN incoming feasibility - Package was previously archived (addressed above)
+2. Unable to verify current time - Network/time sync issue, not a package problem
 
 ### What this package does
 This package enables R users to run large language models locally using the llama.cpp inference engine and GGUF model files. It provides complete privacy by keeping all computation local without requiring cloud APIs or internet connectivity.
@@ -67,6 +81,7 @@ The package includes a self-contained llama.cpp implementation (~56MB when insta
 #### macOS:
 - Fixed enum conflicts between system headers and R
 - Uses forward declarations for dyld functions
+- Generic CPU implementation ensures portability
 - Tested on both ARM64 and x86_64 architectures
 
 #### Linux:
@@ -75,6 +90,7 @@ The package includes a self-contained llama.cpp implementation (~56MB when insta
 - Tested on Ubuntu with both GCC and Clang
 
 #### Windows:
+- Uses x86 SIMD optimizations (SSE2) for better performance
 - Compiles cleanly with Rtools
 - E2E tests skipped on Windows CI due to memory constraints (tests work locally)
 
