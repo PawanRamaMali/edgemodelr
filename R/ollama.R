@@ -77,20 +77,31 @@ edge_find_ollama_models <- function(ollama_dir = NULL, test_compatibility = FALS
     # Skip very small files (likely not models) or very large ones
     if (file_info$size < 1024^2 || file_info$size > max_size_bytes) next
 
-    # Check if it looks like a GGUF file
-    is_gguf <- FALSE
+    # Check if it looks like a GGUF file and get version
+    gguf_info <- NULL
     tryCatch({
       con <- file(file_path, "rb")
-      on.exit(close(con))
+      on.exit(close(con), add = TRUE)
       header <- readBin(con, "raw", n = 4)
       if (length(header) == 4 && rawToChar(header) == "GGUF") {
-        is_gguf <- TRUE
+        # Read GGUF version (uint32 little-endian)
+        version_bytes <- readBin(con, "raw", n = 4)
+        if (length(version_bytes) == 4) {
+          gguf_version <- sum(as.numeric(version_bytes) * c(1, 256, 65536, 16777216))
+          gguf_info <- list(valid = TRUE, version = gguf_version)
+        }
       }
     }, error = function(e) {
       # Skip files we can't read
     })
 
-    if (!is_gguf) next
+    if (is.null(gguf_info) || !gguf_info$valid) next
+
+    # Check GGUF version compatibility (we support v1-v3)
+    if (gguf_info$version > 3) {
+      message("Warning: ", basename(file_path), " uses GGUF v", gguf_info$version, " (we support v1-v3)")
+      next  # Skip unsupported GGUF versions
+    }
 
     size_mb <- round(file_info$size / 1024^2, 1)
     sha256_hash <- gsub("^sha256-", "", basename(file_path))
@@ -102,20 +113,22 @@ edge_find_ollama_models <- function(ollama_dir = NULL, test_compatibility = FALS
       size_gb = round(size_mb / 1024, 2),
       sha256 = sha256_hash,
       source = "ollama",
+      gguf_version = gguf_info$version,
       compatible = NULL  # Will be tested if requested
     )
 
     # Test compatibility if requested
     if (test_compatibility) {
-      model_info$compatible <- test_ollama_model_compatibility(file_path)
+      message("Testing: ", model_info$name, " (", size_mb, "MB, GGUF v", gguf_info$version, ")")
+      model_info$compatible <- test_ollama_model_compatibility(file_path, verbose = TRUE)
       if (model_info$compatible) {
-        message("[+] ", model_info$name, " (", size_mb, "MB) - Compatible")
+        message("  [+] Compatible")
       } else {
-        message("[!] ", model_info$name, " (", size_mb, "MB) - Not compatible")
+        message("  [!] Not compatible")
         next  # Skip incompatible models
       }
     } else {
-      message("Found: ", model_info$name, " (", size_mb, "MB)")
+      message("Found: ", model_info$name, " (", size_mb, "MB, GGUF v", gguf_info$version, ")")
     }
 
     models[[length(models) + 1]] <- model_info
@@ -129,25 +142,69 @@ edge_find_ollama_models <- function(ollama_dir = NULL, test_compatibility = FALS
   ))
 }
 
-#' Test if an Ollama model is compatible with edgemodelr
+#' Test if an Ollama model blob can be used with edgemodelr
 #'
-#' @param model_path Path to the Ollama blob file
-#' @return TRUE if model loads successfully, FALSE otherwise
-#' @keywords internal
-test_ollama_model_compatibility <- function(model_path) {
+#' This function tries to load an Ollama GGUF blob with edgemodelr using a
+#' minimal configuration and then runs a very short completion. It is intended
+#' to quickly detect common incompatibilities (unsupported architectures,
+#' invalid or unsupported GGUF files, or models that cannot run inference)
+#' before you attempt to use the model in a longer session.
+#'
+#' A model is considered compatible if:
+#' \itemize{
+#'   \item \code{edge_load_model()} succeeds with a small context size
+#'     (\code{n_ctx = 256}) and CPU-only execution (\code{n_gpu_layers = 0}),
+#'   \item the resulting model context passes \code{is_valid_model()},
+#'   \item and a minimal call to \code{edge_completion()} (1 token) returns
+#'     without error.
+#' }
+#'
+#' When \code{verbose = TRUE}, this function classifies common failure modes:
+#' unsupported model architecture, invalid GGUF file, unsupported GGUF version,
+#' or a generic error (first 80 characters reported with truncation indicator).
+#'
+#' @param model_path Path to the Ollama blob file (a GGUF file, typically
+#'   named by its SHA-256 hash inside the Ollama models/blobs directory).
+#' @param verbose If TRUE, print human-readable diagnostics for models
+#'   that fail the compatibility checks.
+#' @return Logical: TRUE if the model loads and can run a short
+#'   completion successfully, FALSE otherwise.
+#' @examples
+#' \donttest{
+#' # Test an individual Ollama blob
+#' # is_ok <- test_ollama_model_compatibility("/path/to/blob", verbose = TRUE)
+#' #
+#' # This function is also used internally by edge_find_ollama_models()
+#' # when test_compatibility = TRUE.
+#' }
+#' @export
+test_ollama_model_compatibility <- function(model_path, verbose = FALSE) {
   tryCatch({
     # Try to load with minimal resources
-    suppressWarnings({
-      ctx <- edge_load_model(model_path, n_ctx = 256, n_gpu_layers = 0)
-      if (is_valid_model(ctx)) {
-        # Quick test to make sure inference works
-        edge_completion(ctx, "Hi", n_predict = 1, temperature = 0.1)
-        edge_free_model(ctx)
-        return(TRUE)
-      }
-    })
+    ctx <- edge_load_model(model_path, n_ctx = 256, n_gpu_layers = 0)
+    if (is_valid_model(ctx)) {
+      # Quick test to make sure inference works
+      result <- edge_completion(ctx, "Hi", n_predict = 1, temperature = 0.1)
+      edge_free_model(ctx)
+      return(TRUE)
+    }
+    if (verbose) message("  Model loaded but context invalid")
+    edge_free_model(ctx)
     return(FALSE)
   }, error = function(e) {
+    if (verbose) {
+      err_msg <- conditionMessage(e)
+      if (grepl("unknown.*architecture", err_msg, ignore.case = TRUE)) {
+        message("  Unsupported model architecture")
+      } else if (grepl("invalid magic", err_msg, ignore.case = TRUE)) {
+        message("  Not a valid GGUF file")
+      } else if (grepl("version", err_msg, ignore.case = TRUE)) {
+        message("  Unsupported GGUF version")
+      } else {
+        display_msg <- if (nchar(err_msg) > 80) paste0(substr(err_msg, 1, 77), "...") else err_msg
+        message("  Error: ", display_msg)
+      }
+    }
     return(FALSE)
   })
 }
