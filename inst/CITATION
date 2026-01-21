@@ -1,0 +1,14 @@
+citHeader("To cite edgemodelr in publications use:")
+
+bibentry(
+  bibtype  = "Manual",
+  title    = "edgemodelr: Local Large Language Model Inference Engine",
+  author   = c(
+    person("Pawan Rama", "Mali")
+  ),
+  year     = "2025",
+  note     = "R package version 0.1.4",
+  url      = "https://github.com/PawanRamaMali/edgemodelr"
+)
+
+citFooter("edgemodelr is based on llama.cpp by Georgi Gerganov. If you use this package for research, please also consider citing llama.cpp.")
