@@ -77,20 +77,30 @@ edge_find_ollama_models <- function(ollama_dir = NULL, test_compatibility = FALS
     # Skip very small files (likely not models) or very large ones
     if (file_info$size < 1024^2 || file_info$size > max_size_bytes) next
 
-    # Check if it looks like a GGUF file
-    is_gguf <- FALSE
+    # Check if it looks like a GGUF file and get version
+    gguf_info <- NULL
     tryCatch({
       con <- file(file_path, "rb")
-      on.exit(close(con))
+      on.exit(close(con), add = TRUE)
       header <- readBin(con, "raw", n = 4)
       if (length(header) == 4 && rawToChar(header) == "GGUF") {
-        is_gguf <- TRUE
+        # Read GGUF version (uint32 little-endian)
+        version_bytes <- readBin(con, "raw", n = 4)
+        if (length(version_bytes) == 4) {
+          gguf_version <- sum(as.integer(version_bytes) * c(1, 256, 65536, 16777216))
+          gguf_info <- list(valid = TRUE, version = gguf_version)
+        }
       }
     }, error = function(e) {
       # Skip files we can't read
     })
 
-    if (!is_gguf) next
+    if (is.null(gguf_info) || !gguf_info$valid) next
+
+    # Check GGUF version compatibility (we support v1-v3)
+    if (gguf_info$version > 3) {
+      message("Warning: ", basename(file_path), " uses GGUF v", gguf_info$version, " (we support v1-v3)")
+    }
 
     size_mb <- round(file_info$size / 1024^2, 1)
     sha256_hash <- gsub("^sha256-", "", basename(file_path))
@@ -102,20 +112,22 @@ edge_find_ollama_models <- function(ollama_dir = NULL, test_compatibility = FALS
       size_gb = round(size_mb / 1024, 2),
       sha256 = sha256_hash,
       source = "ollama",
+      gguf_version = gguf_info$version,
       compatible = NULL  # Will be tested if requested
     )
 
     # Test compatibility if requested
     if (test_compatibility) {
-      model_info$compatible <- test_ollama_model_compatibility(file_path)
+      message("Testing: ", model_info$name, " (", size_mb, "MB, GGUF v", gguf_info$version, ")")
+      model_info$compatible <- test_ollama_model_compatibility(file_path, verbose = TRUE)
       if (model_info$compatible) {
-        message("[+] ", model_info$name, " (", size_mb, "MB) - Compatible")
+        message("  [+] Compatible")
       } else {
-        message("[!] ", model_info$name, " (", size_mb, "MB) - Not compatible")
+        message("  [!] Not compatible")
         next  # Skip incompatible models
       }
     } else {
-      message("Found: ", model_info$name, " (", size_mb, "MB)")
+      message("Found: ", model_info$name, " (", size_mb, "MB, GGUF v", gguf_info$version, ")")
     }
 
     models[[length(models) + 1]] <- model_info
@@ -132,22 +144,34 @@ edge_find_ollama_models <- function(ollama_dir = NULL, test_compatibility = FALS
 #' Test if an Ollama model is compatible with edgemodelr
 #'
 #' @param model_path Path to the Ollama blob file
+#' @param verbose If TRUE, print error details for incompatible models
 #' @return TRUE if model loads successfully, FALSE otherwise
-#' @keywords internal
-test_ollama_model_compatibility <- function(model_path) {
+#' @export
+test_ollama_model_compatibility <- function(model_path, verbose = FALSE) {
   tryCatch({
     # Try to load with minimal resources
-    suppressWarnings({
-      ctx <- edge_load_model(model_path, n_ctx = 256, n_gpu_layers = 0)
-      if (is_valid_model(ctx)) {
-        # Quick test to make sure inference works
-        edge_completion(ctx, "Hi", n_predict = 1, temperature = 0.1)
-        edge_free_model(ctx)
-        return(TRUE)
-      }
-    })
+    ctx <- edge_load_model(model_path, n_ctx = 256, n_gpu_layers = 0)
+    if (is_valid_model(ctx)) {
+      # Quick test to make sure inference works
+      result <- edge_completion(ctx, "Hi", n_predict = 1, temperature = 0.1)
+      edge_free_model(ctx)
+      return(TRUE)
+    }
+    if (verbose) message("  Model loaded but context invalid")
     return(FALSE)
   }, error = function(e) {
+    if (verbose) {
+      err_msg <- conditionMessage(e)
+      if (grepl("unknown.*architecture", err_msg, ignore.case = TRUE)) {
+        message("  Unsupported model architecture")
+      } else if (grepl("invalid magic", err_msg, ignore.case = TRUE)) {
+        message("  Not a valid GGUF file")
+      } else if (grepl("version", err_msg, ignore.case = TRUE)) {
+        message("  Unsupported GGUF version")
+      } else {
+        message("  Error: ", substr(err_msg, 1, 80))
+      }
+    }
     return(FALSE)
   })
 }
