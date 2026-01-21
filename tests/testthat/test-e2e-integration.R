@@ -16,12 +16,12 @@ test_that("E2E: Download and load TinyLlama model", {
   test_dir <- file.path(tempdir(), "edgemodelr_integration_tests")
   dir.create(test_dir, showWarnings = FALSE, recursive = TRUE)
 
-  # Download model
+  # Download model using direct URL
   model_path <- file.path(test_dir, tiny_model$filename[1])
 
   if (!file.exists(model_path)) {
-    result <- edge_download_model(
-      tiny_model$model_id[1],
+    result <- edge_download_url(
+      tiny_model$download_url[1],
       tiny_model$filename[1],
       cache_dir = test_dir
     )
@@ -50,8 +50,8 @@ test_that("E2E: Basic text completion inference", {
 
   # Ensure model is downloaded
   if (!file.exists(model_path)) {
-    edge_download_model(
-      tiny_model$model_id[1],
+    edge_download_url(
+      tiny_model$download_url[1],
       tiny_model$filename[1],
       cache_dir = test_dir
     )
@@ -88,8 +88,8 @@ test_that("E2E: Multiple sequential completions", {
   model_path <- file.path(test_dir, tiny_model$filename[1])
 
   if (!file.exists(model_path)) {
-    edge_download_model(
-      tiny_model$model_id[1],
+    edge_download_url(
+      tiny_model$download_url[1],
       tiny_model$filename[1],
       cache_dir = test_dir
     )
@@ -127,8 +127,8 @@ test_that("E2E: Streaming completion", {
   model_path <- file.path(test_dir, tiny_model$filename[1])
 
   if (!file.exists(model_path)) {
-    edge_download_model(
-      tiny_model$model_id[1],
+    edge_download_url(
+      tiny_model$download_url[1],
       tiny_model$filename[1],
       cache_dir = test_dir
     )
@@ -197,8 +197,8 @@ test_that("E2E: Different temperature settings", {
   model_path <- file.path(test_dir, tiny_model$filename[1])
 
   if (!file.exists(model_path)) {
-    edge_download_model(
-      tiny_model$model_id[1],
+    edge_download_url(
+      tiny_model$download_url[1],
       tiny_model$filename[1],
       cache_dir = test_dir
     )
@@ -238,8 +238,8 @@ test_that("E2E: Model reload and reuse", {
   model_path <- file.path(test_dir, tiny_model$filename[1])
 
   if (!file.exists(model_path)) {
-    edge_download_model(
-      tiny_model$model_id[1],
+    edge_download_url(
+      tiny_model$download_url[1],
       tiny_model$filename[1],
       cache_dir = test_dir
     )

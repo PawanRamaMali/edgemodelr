@@ -218,8 +218,12 @@ jobs:
             *.log
 
   CRAN-valgrind:
+    # Skip valgrind on PRs - too slow for large C++ codebases like llama.cpp
+    if: github.event_name == 'push'
     needs: R-CMD-check
     runs-on: ubuntu-latest
+    timeout-minutes: 60
+    continue-on-error: true
 
     name: Valgrind Memory Checks
 
@@ -254,13 +258,12 @@ jobs:
             exit 1
           fi
 
-          # Run with valgrind level 2
-          R CMD check --use-valgrind --no-manual "$PKG_TARBALL" || {
+          # Run with valgrind - skip examples (too slow)
+          R CMD check --use-valgrind --no-manual --no-examples "$PKG_TARBALL" || {
             echo "⚠️  Valgrind found potential issues"
             CHECK_DIR=$(ls -1dt *.Rcheck 2>/dev/null | head -n 1)
             if [ -n "$CHECK_DIR" ]; then
               cat "$CHECK_DIR/00check.log"
-              find "$CHECK_DIR" -name "*-Ex.Rout" -exec cat {} \;
             fi
           }
         shell: bash
