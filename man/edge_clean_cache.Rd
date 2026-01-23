@@ -31,7 +31,7 @@ Remove outdated model files from the cache directory to comply with CRAN
 policies about actively managing cached content and keeping sizes small.
 }
 \examples{
-\donttest{
+\dontrun{
 # Clean cache files older than 30 days
 edge_clean_cache()
 

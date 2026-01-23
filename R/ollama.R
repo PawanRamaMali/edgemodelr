@@ -10,7 +10,7 @@
 #' @return List with ollama_path and discovered models information
 #'
 #' @examples
-#' \donttest{
+#' \dontrun{
 #' # Find Ollama models
 #' ollama_info <- edge_find_ollama_models()
 #'
@@ -172,7 +172,7 @@ edge_find_ollama_models <- function(ollama_dir = NULL, test_compatibility = FALS
 #' @return Logical: TRUE if the model loads and can run a short
 #'   completion successfully, FALSE otherwise.
 #' @examples
-#' \donttest{
+#' \dontrun{
 #' # Test an individual Ollama blob
 #' # is_ok <- test_ollama_model_compatibility("/path/to/blob", verbose = TRUE)
 #' #
@@ -222,7 +222,7 @@ test_ollama_model_compatibility <- function(model_path, verbose = FALSE) {
 #' @return Model context if successful, throws error if not found or incompatible
 #'
 #' @examples
-#' \donttest{
+#' \dontrun{
 #' # Load model using first 8 characters of SHA hash
 #' # ctx <- edge_load_ollama_model("b112e727")
 #' # result <- edge_completion(ctx, "Hello", n_predict = 10)

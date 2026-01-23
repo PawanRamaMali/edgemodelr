@@ -6,20 +6,20 @@
 #' @return External pointer to the loaded model context
 #' 
 #' @examples
-#' \donttest{
-#' # Quick setup with automatic model download
+#' \dontrun{
+#' # Quick setup with automatic model download (downloads ~700MB)
 #' setup <- edge_quick_setup("TinyLlama-1.1B")
 #' if (!is.null(setup$context)) {
 #'   ctx <- setup$context
-#'   
+#'
 #'   # Generate completion
 #'   result <- edge_completion(ctx, "Explain R data.frame:", n_predict = 100)
 #'   cat(result)
-#'   
+#'
 #'   # Free model when done
 #'   edge_free_model(ctx)
 #' }
-#' 
+#'
 #' # Manual model loading from downloaded file
 #' model_path <- "path/to/your/model.gguf"
 #' if (file.exists(model_path)) {
@@ -102,7 +102,7 @@ edge_load_model <- function(model_path, n_ctx = 2048L, n_gpu_layers = 0L) {
 #' @return Generated text as character string
 #' 
 #' @examples
-#' \donttest{
+#' \dontrun{
 #' # Basic completion example
 #' setup <- edge_quick_setup("TinyLlama-1.1B")
 #' if (!is.null(setup$context)) {
@@ -149,7 +149,7 @@ edge_completion <- function(ctx, prompt, n_predict = 128L, temperature = 0.8, to
 #' @return NULL (invisibly)
 #' 
 #' @examples
-#' \donttest{
+#' \dontrun{
 #' # Proper cleanup after model usage
 #' setup <- edge_quick_setup("TinyLlama-1.1B")
 #' if (!is.null(setup$context)) {
@@ -200,7 +200,7 @@ is_valid_model <- function(ctx) {
 #' @return Path to the downloaded model file
 #'
 #' @examples
-#' \donttest{
+#' \dontrun{
 #' # Download TinyLlama model
 #' model_path <- edge_download_model(
 #'   model_id = "TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF",
@@ -610,8 +610,8 @@ edge_list_models <- function() {
 #' @return List with model path and context (if llama.cpp is available)
 #'
 #' @examples
-#' \donttest{
-#' # Quick setup with a 7B model (no auth required)
+#' \dontrun{
+#' # Quick setup with a 7B model (downloads ~4GB, not run in checks)
 #' setup <- edge_quick_setup("mistral-7b")
 #' ctx <- setup$context
 #'
@@ -689,8 +689,8 @@ edge_quick_setup <- function(model_name, cache_dir = NULL, verbose = TRUE) {
 #' @return Path to the downloaded model file
 #'
 #' @examples
-#' \donttest{
-#' # Download from GPT4All CDN
+#' \dontrun{
+#' # Download from GPT4All CDN (large file, not run in checks)
 #' model_path <- edge_download_url(
 #'   url = "https://gpt4all.io/models/gguf/mistral-7b-instruct-v0.1.Q4_0.gguf",
 #'   filename = "mistral-7b.gguf"
@@ -776,7 +776,7 @@ if (is.null(url) || !is.character(url) || nchar(url) == 0) {
 #' config <- edge_small_model_config(model_size_mb = 700, available_ram_gb = 8)
 #'
 #' # Use the config to load a model
-#' \donttest{
+#' \dontrun{
 #' model_path <- "path/to/tinyllama.gguf"
 #' if (file.exists(model_path)) {
 #'   ctx <- edge_load_model(
@@ -884,7 +884,7 @@ edge_small_model_config <- function(model_size_mb = NULL, available_ram_gb = NUL
 #' @return List with full response and generation statistics
 #' 
 #' @examples
-#' \donttest{
+#' \dontrun{
 #' model_path <- file.path(tempdir(), "model.gguf")
 #' if (file.exists(model_path)) {
 #'   ctx <- edge_load_model(model_path)
@@ -931,7 +931,7 @@ edge_stream_completion <- function(ctx, prompt, callback, n_predict = 128L, temp
 #' @return NULL (runs interactively)
 #' 
 #' @examples
-#' \donttest{
+#' \dontrun{
 #' setup <- edge_quick_setup("TinyLlama-1.1B")
 #' ctx <- setup$context
 #' 
@@ -1060,7 +1060,7 @@ build_chat_prompt <- function(history) {
 #' @param verbose Whether to print status messages (default: TRUE)
 #' @return Invisible list of deleted files
 #' @examples
-#' \donttest{
+#' \dontrun{
 #' # Clean cache files older than 30 days
 #' edge_clean_cache()
 #' 
@@ -1181,7 +1181,7 @@ edge_set_verbose <- function(enabled = FALSE) {
 #' @return List with performance metrics
 #'
 #' @examples
-#' \donttest{
+#' \dontrun{
 #' setup <- edge_quick_setup("TinyLlama-1.1B")
 #' if (!is.null(setup$context)) {
 #'   ctx <- setup$context
@@ -1264,7 +1264,7 @@ edge_benchmark <- function(ctx, prompt = "The quick brown fox", n_predict = 50, 
 #' }
 #'
 #' @examples
-#' \donttest{
+#' \dontrun{
 #' # Basic usage - auto-detect and test all GGUF models
 #' models_info <- edge_find_gguf_models()
 #' if (!is.null(models_info) && length(models_info$models) > 0) {

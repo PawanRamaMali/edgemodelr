@@ -240,10 +240,10 @@ std::string edge_completion_internal(SEXP model_ptr, std::string prompt, int n_p
 
     // Add samplers in the right order for quality generation
     if (top_p < 1.0f) {
-      llama_sampler_chain_add(sampler, llama_sampler_init_top_p(top_p, 1));
+      llama_sampler_chain_add(sampler, llama_sampler_init_top_p(static_cast<float>(top_p), 1));
     }
     if (temperature > 0.0f) {
-      llama_sampler_chain_add(sampler, llama_sampler_init_temp(temperature));
+      llama_sampler_chain_add(sampler, llama_sampler_init_temp(static_cast<float>(temperature)));
     }
     llama_sampler_chain_add(sampler, llama_sampler_init_dist(12345)); // Random seed
 
@@ -259,12 +259,12 @@ std::string edge_completion_internal(SEXP model_ptr, std::string prompt, int n_p
       
       // Convert token to text with dynamic buffer allocation
       std::vector<char> piece(512);  // Start with larger buffer
-      int n_chars = llama_token_to_piece(vocab, new_token, piece.data(), piece.size(), 0, true);
+      int n_chars = llama_token_to_piece(vocab, new_token, piece.data(), static_cast<int32_t>(piece.size()), 0, true);
 
       // If buffer too small, resize and retry
       if (n_chars < 0) {
-        piece.resize(std::abs(n_chars) + 1);  // +1 for null terminator
-        n_chars = llama_token_to_piece(vocab, new_token, piece.data(), piece.size(), 0, true);
+        piece.resize(static_cast<size_t>(std::abs(n_chars)) + 1);  // +1 for null terminator
+        n_chars = llama_token_to_piece(vocab, new_token, piece.data(), static_cast<int32_t>(piece.size()), 0, true);
       }
 
       if (n_chars > 0) {
@@ -387,10 +387,10 @@ List edge_completion_stream_internal(SEXP model_ptr, std::string prompt, Functio
 
     // Add samplers for quality generation
     if (top_p < 1.0f) {
-      llama_sampler_chain_add(sampler, llama_sampler_init_top_p(top_p, 1));
+      llama_sampler_chain_add(sampler, llama_sampler_init_top_p(static_cast<float>(top_p), 1));
     }
     if (temperature > 0.0f) {
-      llama_sampler_chain_add(sampler, llama_sampler_init_temp(temperature));
+      llama_sampler_chain_add(sampler, llama_sampler_init_temp(static_cast<float>(temperature)));
     }
     llama_sampler_chain_add(sampler, llama_sampler_init_dist(12345)); // Random seed
 
@@ -407,12 +407,12 @@ List edge_completion_stream_internal(SEXP model_ptr, std::string prompt, Functio
       
       // Convert token to text with dynamic buffer allocation
       std::vector<char> piece(512);  // Start with larger buffer
-      int n_chars = llama_token_to_piece(vocab, new_token, piece.data(), piece.size(), 0, true);
+      int n_chars = llama_token_to_piece(vocab, new_token, piece.data(), static_cast<int32_t>(piece.size()), 0, true);
 
       // If buffer too small, resize and retry
       if (n_chars < 0) {
-        piece.resize(std::abs(n_chars) + 1);  // +1 for null terminator
-        n_chars = llama_token_to_piece(vocab, new_token, piece.data(), piece.size(), 0, true);
+        piece.resize(static_cast<size_t>(std::abs(n_chars)) + 1);  // +1 for null terminator
+        n_chars = llama_token_to_piece(vocab, new_token, piece.data(), static_cast<int32_t>(piece.size()), 0, true);
       }
 
       std::string token_text = "";

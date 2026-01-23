@@ -1,4 +1,18 @@
-# edgemodelr 0.1.4 (Development)
+# edgemodelr 0.1.5
+
+## CRAN Policy Fixes
+
+### Bug Fixes
+
+* **Fixed donttest examples**: Changed resource-intensive examples from `\donttest{}` to `\dontrun{}` to prevent downloading multi-GB models during CRAN checks
+
+* **Fixed M1 Mac compiler warnings**: Added explicit `static_cast<>` for:
+  - `double` to `float` conversions for temperature/top_p parameters
+  - `size_type` to `int32_t` conversions for buffer size parameters
+
+* **Fixed connection handling**: Replaced `on.exit()` with `tryCatch/finally` for proper connection cleanup in loops (thanks @eddelbuettel)
+
+# edgemodelr 0.1.4
 
 ## Performance Optimizations for Small Language Models
 
