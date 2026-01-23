@@ -40,7 +40,7 @@ Suggests:
     knitr,
     rmarkdown,
     curl
-SystemRequirements: C++17, GNU make or equivalent for building
+SystemRequirements: GNU make or equivalent for building
 Note: Package includes self-contained 'llama.cpp' implementation (~56MB)
   for complete functionality without external dependencies.
 Config/testthat/edition: 3
