@@ -62,7 +62,7 @@ The function automatically searches these locations if no source_dirs specified:
 }
 }
 \examples{
-\donttest{
+\dontrun{
 # Basic usage - auto-detect and test all GGUF models
 models_info <- edge_find_gguf_models()
 if (!is.null(models_info) && length(models_info$models) > 0) {

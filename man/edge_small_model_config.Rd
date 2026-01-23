@@ -29,7 +29,7 @@ to maximize inference speed on resource-constrained devices.
 config <- edge_small_model_config(model_size_mb = 700, available_ram_gb = 8)
 
 # Use the config to load a model
-\donttest{
+\dontrun{
 model_path <- "path/to/tinyllama.gguf"
 if (file.exists(model_path)) {
   ctx <- edge_load_model(

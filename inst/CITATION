@@ -7,7 +7,7 @@ bibentry(
     person("Pawan Rama", "Mali")
   ),
   year     = "2025",
-  note     = "R package version 0.1.4",
+  note     = "R package version 0.1.5",
   url      = "https://github.com/PawanRamaMali/edgemodelr"
 )
 
