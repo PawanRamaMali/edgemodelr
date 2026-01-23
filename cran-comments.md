@@ -1,48 +1,57 @@
-## Resubmission - edgemodelr 0.1.3
+## Resubmission - edgemodelr 0.1.4
 
-This is a resubmission addressing all issues from the previous CRAN check (2025-10-02).
+This is a resubmission of edgemodelr which was previously archived on CRAN (2025-10-02).
 
-### Changes in this version
+### Addressing Previous Archive Issues
 
-#### Fixed CRAN Check Issues:
-1. **Compiler warnings resolved**: Disabled `GGML_ATTRIBUTE_FORMAT` macro when building for R to eliminate unrecognized format function type warnings
-2. **macOS compilation fixed**: Replaced `<mach-o/dyld.h>` inclusion with forward declarations to avoid enum conflicts between `DYLD_BOOL` and R's `Rboolean`
-3. **Fedora Clang compatibility**: Implemented generic CPU configuration for cross-platform portability
-4. **Author attribution**: Added all copyright holders and contributors (llama.cpp authors, GGML contributors, YaRN implementation authors, etc.)
-5. **License compliance**: Updated LICENSE file and created inst/COPYRIGHTS with complete third-party attributions
+#### 1. Misrepresentation of authorship - FIXED
+All third-party code contributors are now properly credited in:
+- **DESCRIPTION**: Authors@R field includes all contributors with appropriate roles (aut, cph, ctb)
+- **inst/COPYRIGHTS**: Detailed attribution for llama.cpp, GGML, YaRN RoPE, DRY sampler, and Z-algorithm
 
-#### Additional Improvements:
-- Fixed integration test filtering issues in CI/CD
-- Added Windows skip conditions for resource-intensive E2E tests
-- Improved documentation and attribution
+Contributors now credited:
+- Georgi Gerganov (aut, cph) - Author of llama.cpp and GGML library
+- The ggml authors (cph) - llama.cpp and GGML contributors
+- Jeffrey Quesnelle & Bowen Peng (ctb, cph) - YaRN RoPE implementation
+- pi6am (ctb) - DRY sampler from Koboldcpp
+- Ivan Yurchenko (ctb) - Z-algorithm implementation
+
+#### 2. Platform-dependent code - FIXED
+- Removed all non-portable compiler flags (-march=native, -mtune=native)
+- Unix/macOS (Makevars): Uses generic CPU implementation (-DGGML_CPU_GENERIC)
+- Windows (Makevars.win): Uses x86 SIMD optimizations (clearly documented in file)
+- SystemRequirements properly documents: "C++17, GNU make or equivalent for building"
+
+#### 3. Repeated submissions - Acknowledged
+We will wait for this submission to be fully processed before any further submissions.
+
+### Changes in version 0.1.4
+
+#### New Features:
+1. **Small Model Configuration Helper**: New `edge_small_model_config()` function for optimized settings on resource-constrained devices
+2. **Adaptive Batch Processing**: Intelligent batch size optimization based on context length
+3. **Smart Thread Allocation**: Context-aware CPU thread management
+4. **Improved Ollama Integration**: Better GGUF version detection and error diagnostics
+5. **GPT4All CDN Support**: Added `edge_download_url()` for direct model downloads
+
+#### Bug Fixes:
+1. Fixed resource leak in Ollama model compatibility testing
+2. Improved error message truncation for better diagnostics
+3. Fixed GGUF version detection using numeric conversion to avoid integer overflow
 
 ### Test environments
-* local Windows 11 install, R 4.5.0
+* local Windows 11 install, R 4.5.2
 * GitHub Actions:
-  - ubuntu-latest: R (release, devel)
-  - macOS-latest: R (release, oldrel)
+  - ubuntu-latest: R (release, devel, oldrel-1)
+  - macOS-latest: R (release)
   - windows-latest: R (release)
-* R-hub (via rhub2):
-  - Ubuntu Linux 20.04.1 LTS, R-release, GCC
-  - Fedora Linux, R-devel, clang, gfortran
-  - Windows Server 2022, R-devel, 64 bit
-  - macOS 10.13.6 High Sierra, R-release, CRAN's setup
 
 ### R CMD check results
 There were no ERRORs or WARNINGs.
 
-There was 1 NOTE:
-* checking CRAN incoming feasibility ... NOTE
-
-  Possibly misspelled words in DESCRIPTION:
-    GGUF (9:73)
-    cpp (10:19)
-    llama (10:15, 13:22)
-
-These are not misspelled words but technical terms:
-- GGUF: A specific model file format used by llama.cpp
-- cpp: Abbreviation for C++ as in "llama.cpp"
-- llama: Part of the project name "llama.cpp"
+There were 2 NOTEs:
+1. CRAN incoming feasibility - Package was previously archived (addressed above)
+2. Unable to verify current time - Network/time sync issue, not a package problem
 
 ### What this package does
 This package enables R users to run large language models locally using the llama.cpp inference engine and GGUF model files. It provides complete privacy by keeping all computation local without requiring cloud APIs or internet connectivity.
@@ -72,16 +81,18 @@ The package includes a self-contained llama.cpp implementation (~56MB when insta
 #### macOS:
 - Fixed enum conflicts between system headers and R
 - Uses forward declarations for dyld functions
+- Generic CPU implementation ensures portability
 - Tested on both ARM64 and x86_64 architectures
 
 #### Linux:
 - Generic CPU implementation ensures portability
 - No architecture-specific optimizations that could cause issues
-- Tested on Ubuntu and Fedora with both GCC and Clang
+- Tested on Ubuntu with both GCC and Clang
 
 #### Windows:
+- Uses x86 SIMD optimizations (SSE2) for better performance
 - Compiles cleanly with Rtools
 - E2E tests skipped on Windows CI due to memory constraints (tests work locally)
 
 ### Installation and compilation
-The package compiles cleanly on all major platforms with proper C++17 support and includes comprehensive error handling for missing system requirements. All previous CRAN compilation issues have been resolved.
+The package compiles cleanly on all major platforms with proper C++17 support and includes comprehensive error handling for missing system requirements.

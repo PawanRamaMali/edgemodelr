@@ -79,9 +79,9 @@ edge_find_ollama_models <- function(ollama_dir = NULL, test_compatibility = FALS
 
     # Check if it looks like a GGUF file and get version
     gguf_info <- NULL
+    con <- NULL
     tryCatch({
       con <- file(file_path, "rb")
-      on.exit(close(con), add = TRUE)
       header <- readBin(con, "raw", n = 4)
       if (length(header) == 4 && rawToChar(header) == "GGUF") {
         # Read GGUF version (uint32 little-endian)
@@ -93,6 +93,8 @@ edge_find_ollama_models <- function(ollama_dir = NULL, test_compatibility = FALS
       }
     }, error = function(e) {
       # Skip files we can't read
+    }, finally = {
+      if (!is.null(con)) try(close(con), silent = TRUE)
     })
 
     if (is.null(gguf_info) || !gguf_info$valid) next

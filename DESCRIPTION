@@ -1,7 +1,7 @@
 Package: edgemodelr
 Type: Package
 Title: Local Large Language Model Inference Engine
-Version: 0.1.2
+Version: 0.1.4
 Authors@R: c(
     person("Pawan Rama", "Mali", email = "prm@outlook.in", role = c("aut", "cre", "cph")),
     person("Georgi", "Gerganov", role = c("aut", "cph"), comment = "Author of llama.cpp and GGML library"),
@@ -9,14 +9,16 @@ Authors@R: c(
     person("Jeffrey", "Quesnelle", role = c("ctb", "cph"), comment = "YaRN RoPE implementation"),
     person("Bowen", "Peng", role = c("ctb", "cph"), comment = "YaRN RoPE implementation"),
     person("pi6am", role = "ctb", comment = "DRY sampler from Koboldcpp"),
-    person("Ivan", "Yurchenko", role = "ctb", comment = "Z-algorithm implementation"))
+    person("Ivan", "Yurchenko", role = "ctb", comment = "Z-algorithm implementation"),
+    person("Dirk", "Eddelbuettel", role = "ctb", comment = "Connection handling fix"))
 Author: Pawan Rama Mali [aut, cre, cph],
   Georgi Gerganov [aut, cph] (Author of llama.cpp and GGML library),
   The ggml authors [cph] (llama.cpp and GGML contributors),
   Jeffrey Quesnelle [ctb, cph] (YaRN RoPE implementation),
   Bowen Peng [ctb, cph] (YaRN RoPE implementation),
   pi6am [ctb] (DRY sampler from Koboldcpp),
-  Ivan Yurchenko [ctb] (Z-algorithm implementation)
+  Ivan Yurchenko [ctb] (Z-algorithm implementation),
+  Dirk Eddelbuettel [ctb] (Connection handling fix)
 Maintainer: Pawan Rama Mali <prm@outlook.in>
 Description: Enables R users to run large language models locally using 'GGUF' model files
     and the 'llama.cpp' inference engine. Provides a complete R interface for loading models,
