@@ -278,6 +278,9 @@ jobs:
   CRAN-strict-macos:
     needs: R-CMD-check
     runs-on: macos-latest
+    # Allow failure due to R-devel Rcpp/R_ext/Callbacks.h issue
+    # See: https://github.com/RcppCore/Rcpp/issues/1417
+    continue-on-error: true
 
     name: macOS Strict (M1/ARM64)
 
