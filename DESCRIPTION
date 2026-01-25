@@ -10,7 +10,7 @@ Authors@R: c(
     person("Bowen", "Peng", role = c("ctb", "cph"), comment = "YaRN RoPE implementation"),
     person("pi6am", role = "ctb", comment = "DRY sampler from Koboldcpp"),
     person("Ivan", "Yurchenko", role = "ctb", comment = "Z-algorithm implementation"),
-    person("Dirk", "Eddelbuettel", role = "ctb", comment = "Connection handling fix"))
+    person("Dirk", "Eddelbuettel", role = c("ctb", "rev")))
 Author: Pawan Rama Mali [aut, cre, cph],
   Georgi Gerganov [aut, cph] (Author of llama.cpp and GGML library),
   The ggml authors [cph] (llama.cpp and GGML contributors),
