@@ -39,7 +39,7 @@ unsupported model architecture, invalid GGUF file, unsupported GGUF version,
 or a generic error (first 80 characters reported with truncation indicator).
 }
 \examples{
-\donttest{
+\dontrun{
 # Test an individual Ollama blob
 # is_ok <- test_ollama_model_compatibility("/path/to/blob", verbose = TRUE)
 #

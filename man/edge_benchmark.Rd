@@ -28,7 +28,7 @@ Test inference speed and throughput with the current model to measure
 the effectiveness of optimizations.
 }
 \examples{
-\donttest{
+\dontrun{
 setup <- edge_quick_setup("TinyLlama-1.1B")
 if (!is.null(setup$context)) {
   ctx <- setup$context

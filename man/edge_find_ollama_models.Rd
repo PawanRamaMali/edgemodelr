@@ -26,7 +26,7 @@ Ollama stores models as SHA-256 named blobs which are GGUF files that can
 be used directly with edgemodelr.
 }
 \examples{
-\donttest{
+\dontrun{
 # Find Ollama models
 ollama_info <- edge_find_ollama_models()
 

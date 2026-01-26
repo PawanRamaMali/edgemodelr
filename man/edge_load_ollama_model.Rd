@@ -21,7 +21,7 @@ Find and load an Ollama model using a partial SHA-256 hash instead of the full p
 This is more convenient than typing out the full blob path.
 }
 \examples{
-\donttest{
+\dontrun{
 # Load model using first 8 characters of SHA hash
 # ctx <- edge_load_ollama_model("b112e727")
 # result <- edge_completion(ctx, "Hello", n_predict = 10)
