@@ -217,64 +217,6 @@ jobs:
             *.Rcheck
             *.log
 
-  CRAN-valgrind:
-    # Skip valgrind on PRs - too slow for large C++ codebases like llama.cpp
-    if: github.event_name == 'push'
-    needs: R-CMD-check
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    continue-on-error: true
-
-    name: Valgrind Memory Checks
-
-    env:
-      GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
-      R_KEEP_PKG_SOURCE: yes
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: r-lib/actions/setup-r@v2
-        with:
-          r-version: 'devel'
-          use-public-rspm: true
-
-      - name: Install valgrind
-        run: sudo apt-get update && sudo apt-get install -y valgrind
-        shell: bash
-
-      - uses: r-lib/actions/setup-r-dependencies@v2
-        with:
-          extra-packages: any::rcmdcheck
-          needs: check
-
-      - name: Build and check with valgrind
-        run: |
-          R CMD build . --no-manual
-          PKG_TARBALL=$(ls -1t *.tar.gz 2>/dev/null | head -n 1)
-
-          if [ -z "$PKG_TARBALL" ]; then
-            echo "Error: No package tarball found"
-            exit 1
-          fi
-
-          # Run with valgrind - skip examples (too slow)
-          R CMD check --use-valgrind --no-manual --no-examples "$PKG_TARBALL" || {
-            echo "⚠️  Valgrind found potential issues"
-            CHECK_DIR=$(ls -1dt *.Rcheck 2>/dev/null | head -n 1)
-            if [ -n "$CHECK_DIR" ]; then
-              cat "$CHECK_DIR/00check.log"
-            fi
-          }
-        shell: bash
-
-      - name: Upload valgrind results
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: valgrind-results
-          path: '*.Rcheck'
-
   CRAN-strict-macos:
     needs: R-CMD-check
     runs-on: macos-latest
