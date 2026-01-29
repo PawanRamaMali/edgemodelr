@@ -18,16 +18,16 @@ External pointer to the loaded model context
 Load a local GGUF model for inference
 }
 \examples{
-\donttest{
-# Load a TinyLlama model
+\dontrun{
+# Load a TinyLlama model (requires model file)
 model_path <- "~/models/TinyLlama-1.1B-Chat.Q4_K_M.gguf"
 if (file.exists(model_path)) {
   ctx <- edge_load_model(model_path, n_ctx = 2048)
-  
+
   # Generate completion
   result <- edge_completion(ctx, "Explain R data.frame:", n_predict = 100)
   cat(result)
-  
+
   # Free model when done
   edge_free_model(ctx)
 }

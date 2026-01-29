@@ -142,12 +142,17 @@ jobs:
             exit 1
           fi
 
-          if grep -q "WARNING" "$CHECK_DIR/00check.log"; then
-            echo "⚠️  WARNINGs found in CRAN checks"
+          # Check for WARNINGs but ignore "Insufficient package version" which is expected
+          # when checking the same version that's already on CRAN
+          WARNING_COUNT=$(grep -c "WARNING" "$CHECK_DIR/00check.log" || echo "0")
+          VERSION_WARNING=$(grep -c "Insufficient package version" "$CHECK_DIR/00check.log" || echo "0")
+
+          if [ "$WARNING_COUNT" -gt "$VERSION_WARNING" ]; then
+            echo "⚠️  WARNINGs found in CRAN checks (excluding version warning)"
             exit 1
           fi
 
-          echo "✓ CRAN checks passed (only NOTEs or OK)"
+          echo "✓ CRAN checks passed (only NOTEs or expected warnings)"
         shell: bash
 
       - name: Upload check results
@@ -274,8 +279,13 @@ jobs:
             exit 1
           fi
 
-          if grep -q "WARNING" "$CHECK_DIR/00check.log"; then
-            echo "⚠️  WARNINGs found in strict macOS checks"
+          # Check for WARNINGs but ignore "Insufficient package version" which is expected
+          # when checking the same version that's already on CRAN
+          WARNING_COUNT=$(grep -c "WARNING" "$CHECK_DIR/00check.log" || echo "0")
+          VERSION_WARNING=$(grep -c "Insufficient package version" "$CHECK_DIR/00check.log" || echo "0")
+
+          if [ "$WARNING_COUNT" -gt "$VERSION_WARNING" ]; then
+            echo "⚠️  WARNINGs found in strict macOS checks (excluding version warning)"
             exit 1
           fi
 
