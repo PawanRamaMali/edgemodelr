@@ -14,7 +14,8 @@ NULL (invisibly)
 Free model context and release memory
 }
 \examples{
-\donttest{
+\dontrun{
+# Requires a downloaded model (not run in checks)
 model_path <- "model.gguf"
 if (file.exists(model_path)) {
   ctx <- edge_load_model(model_path)

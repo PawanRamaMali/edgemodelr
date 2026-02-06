@@ -18,8 +18,8 @@ List with model path and context (if llama.cpp is available)
 Quick setup for a popular model
 }
 \examples{
-\donttest{
-# Quick setup with TinyLlama
+\dontrun{
+# Quick setup with TinyLlama (downloads model, not run in checks)
 setup <- edge_quick_setup("TinyLlama-1.1B")
 ctx <- setup$context
 

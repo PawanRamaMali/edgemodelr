@@ -25,15 +25,16 @@ NULL (runs interactively)
 Interactive chat session with streaming responses
 }
 \examples{
-\donttest{
+\dontrun{
+# Requires a downloaded model (not run in checks)
 setup <- edge_quick_setup("TinyLlama-1.1B")
 ctx <- setup$context
 
 if (!is.null(ctx)) {
   # Start interactive chat with streaming
-  # edge_chat_stream(ctx, 
-  #   system_prompt = "You are a helpful R programming assistant.")
-  
+  edge_chat_stream(ctx,
+    system_prompt = "You are a helpful R programming assistant.")
+
   edge_free_model(ctx)
 }
 }

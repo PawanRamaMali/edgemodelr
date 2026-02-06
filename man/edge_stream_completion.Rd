@@ -25,13 +25,14 @@ List with full response and generation statistics
 Stream text completion with real-time token generation
 }
 \examples{
-\donttest{
+\dontrun{
+# Requires a downloaded model (not run in checks)
 model_path <- "model.gguf"
 if (file.exists(model_path)) {
   ctx <- edge_load_model(model_path)
-  
+
   # Basic streaming with token display
-  result <- edge_stream_completion(ctx, "Hello, how are you?", 
+  result <- edge_stream_completion(ctx, "Hello, how are you?",
     callback = function(data) {
       if (!data$is_final) {
         cat(data$token)
@@ -41,7 +42,7 @@ if (file.exists(model_path)) {
       }
       return(TRUE)  # Continue generation
     })
-  
+
   edge_free_model(ctx)
 }
 }

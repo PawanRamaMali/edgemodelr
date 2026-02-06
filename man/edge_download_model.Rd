@@ -23,15 +23,15 @@ Path to the downloaded model file
 Download a GGUF model from Hugging Face
 }
 \examples{
-\donttest{
-# Download TinyLlama model
-#model_path <- edge_download_model(
-#  model_id = "TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF",
-#  filename = "tinyllama-1.1b-chat-v1.0.q4_k_m.gguf"
-#)
+\dontrun{
+# Download TinyLlama model (large file, not run in checks)
+model_path <- edge_download_model(
+  model_id = "TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF",
+  filename = "tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf"
+)
 
-# Use the downloaded model (example only - requires actual model)
-if (FALSE && file.exists(model_path)) {
+# Use the downloaded model
+if (file.exists(model_path)) {
   ctx <- edge_load_model(model_path)
   response <- edge_completion(ctx, "Hello, how are you?")
   edge_free_model(ctx)

@@ -25,18 +25,11 @@ This function is useful for downloading models from GPT4All CDN or other direct 
 that don't require authentication.
 }
 \examples{
-\donttest{
-# Download from GPT4All CDN
+\dontrun{
+# Download from GPT4All CDN (large file, not run in checks)
 model_path <- edge_download_url(
   url = "https://gpt4all.io/models/gguf/mistral-7b-instruct-v0.1.Q4_0.gguf",
   filename = "mistral-7b.gguf"
 )
-
-# Use the downloaded model
-if (file.exists(model_path)) {
-  ctx <- edge_load_model(model_path)
-  response <- edge_completion(ctx, "Hello!")
-  edge_free_model(ctx)
-}
 }
 }
