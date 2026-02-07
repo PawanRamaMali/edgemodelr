@@ -1,44 +1,42 @@
-## Resubmission - edgemodelr 0.1.5
+## Resubmission - edgemodelr 0.1.6
 
-This is an urgent fix addressing CRAN's warning email (deadline: 2026-02-06).
+This is a follow-up fix addressing remaining CRAN check issues from 0.1.5.
 
-### Issues Fixed in 0.1.5
+### Issues Fixed in 0.1.6
 
-#### 1. donttest Example Failure - FIXED
-- Changed all `\donttest{}` to `\dontrun{}` for examples that download models
-- This prevents the 4GB model downloads during `--run-donttest` checks
-- Examples are still documented but won't run during CRAN checks
+#### 1. CRAN Example Downloads - FIXED
+- Fixed example download URLs and ensured all `\dontrun{}` examples are correct
+- Removed CI version warnings
 
-#### 2. M1 Mac Compiler Warnings - FIXED
-From https://www.stats.ox.ac.uk/pub/bdr/M1mac/edgemodelr.log
+#### 2. CRAN Pre-test Issues - FIXED
+- Fixed CRAN pre-test failures
+- Removed Valgrind checks from CI (too slow and not required for CRAN)
+- Simplified CI workflow
 
-Added explicit `static_cast<>` in `bindings.cpp`:
-- Lines 243, 246, 390, 393: `static_cast<float>()` for temperature/top_p
-- Lines 262, 267, 410, 415: `static_cast<int32_t>()` for buffer sizes
+#### 3. DESCRIPTION Cleanup
+- Streamlined DESCRIPTION metadata
 
-#### 3. Connection Handling - FIXED
-- Fixed `on.exit()` issue in loops (reported by @eddelbuettel)
-- Now uses `tryCatch/finally` for proper connection cleanup
+### Issues Previously Fixed (in 0.1.5)
 
-#### 4. C++17 SystemRequirement - REMOVED
+- Changed `\donttest{}` to `\dontrun{}` for examples that download models
+- Fixed M1 Mac compiler warnings with explicit `static_cast<>`
+- Fixed `on.exit()` connection handling in loops (thanks @eddelbuettel)
 - Removed explicit C++17 from SystemRequirements (PR #22 by @eddelbuettel)
-- Package builds fine with C++20 (preparing for R 4.6.0 default)
 
 ### Test environments
-* local Windows 11 install, R 4.5.2
+* local Windows 11 install, R 4.5.1
 * GitHub Actions:
   - ubuntu-latest: R (release, devel, oldrel-1)
   - macOS-latest: R (release)
-  - macOS-latest: R (release) with strict compiler flags (ARM64)
   - windows-latest: R (release)
-* r-universe (all platforms including ARM64) - builds successfully
 
 ### R CMD check results
 There were no ERRORs or WARNINGs.
 
 There was 1 NOTE:
-* checking CRAN incoming feasibility ... NOTE
-  - Days since last update: 1
+* checking installed package size ... NOTE
+  installed size is 8.0Mb
+  - This is expected due to bundled llama.cpp C/C++ source code (~56MB source, 7.6Mb compiled)
 
 ### Previous Archive Issues (addressed in 0.1.4)
 
