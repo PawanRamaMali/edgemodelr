@@ -86,6 +86,17 @@ BEGIN_RCPP
 END_RCPP
 }
 
+// edge_simd_info_internal
+Rcpp::List edge_simd_info_internal();
+RcppExport SEXP _edgemodelr_edge_simd_info_internal() {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    rcpp_result_gen = Rcpp::wrap(edge_simd_info_internal());
+    return rcpp_result_gen;
+END_RCPP
+}
+
 static const R_CallMethodDef CallEntries[] = {
     {"_edgemodelr_edge_load_model_internal", (DL_FUNC) &_edgemodelr_edge_load_model_internal, 3},
     {"_edgemodelr_edge_completion_internal", (DL_FUNC) &_edgemodelr_edge_completion_internal, 5},
@@ -93,6 +104,7 @@ static const R_CallMethodDef CallEntries[] = {
     {"_edgemodelr_is_valid_model_internal", (DL_FUNC) &_edgemodelr_is_valid_model_internal, 1},
     {"_edgemodelr_edge_completion_stream_internal", (DL_FUNC) &_edgemodelr_edge_completion_stream_internal, 6},
     {"_edgemodelr_set_llama_logging", (DL_FUNC) &_edgemodelr_set_llama_logging, 1},
+    {"_edgemodelr_edge_simd_info_internal", (DL_FUNC) &_edgemodelr_edge_simd_info_internal, 0},
     {NULL, NULL, 0}
 };
 

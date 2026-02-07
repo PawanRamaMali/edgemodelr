@@ -21,10 +21,49 @@ CORE_OBJECTS = bindings.o RcppExports.o \
 	llama/unicode-data.o llama/unicode.o \
 	ggml/ggml-cpu/ggml-cpu-c.o ggml/ggml-cpu/ggml-cpu-cpp.o ggml/ggml-cpu/ops.o \
 	ggml/ggml-cpu/binary-ops.o ggml/ggml-cpu/unary-ops.o ggml/ggml-cpu/vec.o \
-	ggml/ggml-cpu/traits.o ggml/ggml-cpu/repack.o ggml/ggml-cpu/quants.o
+	ggml/ggml-cpu/traits.o ggml/ggml-cpu/repack.o ggml/ggml-cpu/quants.o \
+	simd_info.o
 
-# Architecture-specific objects for x86_64 (Windows only)
-ARCH_OBJECTS = ggml/ggml-cpu/arch/x86/quants.o ggml/ggml-cpu/arch/x86/repack.o ggml/ggml-cpu/arch/x86/cpu-feats.o
+# ============================================================================
+# SIMD Optimization Configuration (Windows x86_64)
+# ============================================================================
+# Windows R is always x86_64. Override at install time:
+#   set EDGEMODELR_SIMD=AVX2 && R CMD INSTALL edgemodelr
+#
+# Valid values: GENERIC, SSE42, AVX, AVX2, AVX512, NATIVE
+# Default: SSE4.2 baseline (safe for all x86_64 CPUs since 2008)
+# ============================================================================
+
+ifeq ($(EDGEMODELR_SIMD),GENERIC)
+  GGML_CXXFLAGS += -DGGML_CPU_GENERIC
+  GGML_CFLAGS += -DGGML_CPU_GENERIC
+  ARCH_OBJECTS =
+else ifeq ($(EDGEMODELR_SIMD),NATIVE)
+  GGML_CXXFLAGS += -march=native
+  GGML_CFLAGS += -march=native
+  ARCH_OBJECTS = ggml/ggml-cpu/arch/x86/quants.o ggml/ggml-cpu/arch/x86/repack.o ggml/ggml-cpu/arch/x86/cpu-feats.o
+else ifeq ($(EDGEMODELR_SIMD),AVX512)
+  GGML_CXXFLAGS += -mavx512f -mavx512bw -mavx512dq -mavx512vl -mavx2 -mfma -mf16c -DGGML_AVX512 -DGGML_AVX2 -DGGML_FMA -DGGML_F16C -DGGML_AVX -DGGML_SSE42
+  GGML_CFLAGS += -mavx512f -mavx512bw -mavx512dq -mavx512vl -mavx2 -mfma -mf16c -DGGML_AVX512 -DGGML_AVX2 -DGGML_FMA -DGGML_F16C -DGGML_AVX -DGGML_SSE42
+  ARCH_OBJECTS = ggml/ggml-cpu/arch/x86/quants.o ggml/ggml-cpu/arch/x86/repack.o ggml/ggml-cpu/arch/x86/cpu-feats.o
+else ifeq ($(EDGEMODELR_SIMD),AVX2)
+  GGML_CXXFLAGS += -mavx2 -mfma -mf16c -DGGML_AVX2 -DGGML_FMA -DGGML_F16C -DGGML_AVX -DGGML_SSE42
+  GGML_CFLAGS += -mavx2 -mfma -mf16c -DGGML_AVX2 -DGGML_FMA -DGGML_F16C -DGGML_AVX -DGGML_SSE42
+  ARCH_OBJECTS = ggml/ggml-cpu/arch/x86/quants.o ggml/ggml-cpu/arch/x86/repack.o ggml/ggml-cpu/arch/x86/cpu-feats.o
+else ifeq ($(EDGEMODELR_SIMD),AVX)
+  GGML_CXXFLAGS += -mavx -mf16c -DGGML_AVX -DGGML_F16C -DGGML_SSE42
+  GGML_CFLAGS += -mavx -mf16c -DGGML_AVX -DGGML_F16C -DGGML_SSE42
+  ARCH_OBJECTS = ggml/ggml-cpu/arch/x86/quants.o ggml/ggml-cpu/arch/x86/repack.o ggml/ggml-cpu/arch/x86/cpu-feats.o
+else ifeq ($(EDGEMODELR_SIMD),SSE42)
+  GGML_CXXFLAGS += -msse4.2 -DGGML_SSE42
+  GGML_CFLAGS += -msse4.2 -DGGML_SSE42
+  ARCH_OBJECTS = ggml/ggml-cpu/arch/x86/quants.o ggml/ggml-cpu/arch/x86/repack.o ggml/ggml-cpu/arch/x86/cpu-feats.o
+else
+  # Default: SSE4.2 baseline (universal on all x86_64 CPUs since 2008)
+  GGML_CXXFLAGS += -msse4.2 -DGGML_SSE42
+  GGML_CFLAGS += -msse4.2 -DGGML_SSE42
+  ARCH_OBJECTS = ggml/ggml-cpu/arch/x86/quants.o ggml/ggml-cpu/arch/x86/repack.o ggml/ggml-cpu/arch/x86/cpu-feats.o
+endif
 
 # Complete objects list with architecture support
 OBJECTS = $(CORE_OBJECTS) $(ARCH_OBJECTS)
@@ -56,6 +95,10 @@ ggml/%.o: ggml/%.cpp
 	$(CXX) $(ALL_CPPFLAGS) $(GGML_CXXFLAGS) -c $< -o $@
 
 llama/%.o: llama/%.cpp
+	$(CXX) $(ALL_CPPFLAGS) $(GGML_CXXFLAGS) -c $< -o $@
+
+# SIMD info reporting (compiled with GGML flags to detect SIMD features)
+simd_info.o: simd_info.cpp
 	$(CXX) $(ALL_CPPFLAGS) $(GGML_CXXFLAGS) -c $< -o $@
 
 # Architecture-specific rules

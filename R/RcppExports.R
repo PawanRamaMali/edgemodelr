@@ -25,3 +25,7 @@ set_llama_logging <- function(enabled) {
     invisible(.Call(`_edgemodelr_set_llama_logging`, enabled))
 }
 
+edge_simd_info_internal <- function() {
+    .Call(`_edgemodelr_edge_simd_info_internal`)
+}
+

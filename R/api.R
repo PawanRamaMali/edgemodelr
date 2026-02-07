@@ -1224,6 +1224,32 @@ edge_benchmark <- function(ctx, prompt = "The quick brown fox", n_predict = 50, 
   )
 }
 
+#' Query SIMD optimization status
+#'
+#' Reports which SIMD (Single Instruction Multiple Data) features were enabled
+#' at compile time. This helps verify that the package is using CPU-optimized
+#' code paths for faster inference.
+#'
+#' @return List with:
+#' \describe{
+#'   \item{architecture}{CPU architecture (e.g., "x86_64", "aarch64")}
+#'   \item{compiler_features}{Character vector of compiler-detected SIMD features}
+#'   \item{ggml_features}{Character vector of GGML-level optimization flags}
+#'   \item{is_generic}{Logical; TRUE if compiled with generic (scalar) fallback}
+#' }
+#'
+#' @examples
+#' info <- edge_simd_info()
+#' cat("Architecture:", info$architecture, "\n")
+#' cat("SIMD features:", paste(info$compiler_features, collapse = ", "), "\n")
+#' if (info$is_generic) {
+#'   cat("Running in generic mode. Reinstall with EDGEMODELR_SIMD=AVX2 for better performance.\n")
+#' }
+#' @export
+edge_simd_info <- function() {
+  edge_simd_info_internal()
+}
+
 #' Find and prepare GGUF models for use with edgemodelr
 #'
 #' This function finds compatible GGUF model files from various sources including
