@@ -78,8 +78,12 @@ else
     GGML_CFLAGS += -msse4.2 -DGGML_SSE42
     ARCH_OBJECTS = ggml/ggml-cpu/arch/x86/quants.o ggml/ggml-cpu/arch/x86/repack.o ggml/ggml-cpu/arch/x86/cpu-feats.o
   else ifneq ($(filter aarch64 arm64,$(UNAME_M)),)
-    # ARM64: NEON is always available (part of the aarch64 ABI)
-    # No extra compiler flags needed; no x86 arch objects
+    # ARM64: NEON is used automatically via simd-mappings.h within the generic
+    # code paths. We must set GGML_CPU_GENERIC because we don't ship
+    # arch/aarch64/ objects, and without it the quants function aliases
+    # (e.g., quantize_row_q8_0) would be undefined at link time.
+    GGML_CXXFLAGS += -DGGML_CPU_GENERIC
+    GGML_CFLAGS += -DGGML_CPU_GENERIC
     ARCH_OBJECTS =
   else
     # Other architectures (e.g., s390x, ppc64, riscv64): generic fallback
