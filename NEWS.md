@@ -4,6 +4,18 @@
 
 ### New Features
 
+* **Flash attention support**: Enabled by default in `edge_load_model()` via `flash_attn = TRUE`. Reduces memory usage and improves attention computation speed on CPU.
+
+* **Full hardware thread utilization**: Removed the 4-thread cap for small contexts. `edge_load_model()` now uses all available CPU threads by default, with `n_threads_batch` set to max for prompt processing.
+
+* **User-configurable threading**: New `n_threads` parameter in `edge_load_model()` allows explicit control over CPU thread count. Pass `NULL` (default) for auto-detect or an integer to limit cores.
+
+* **Apple Accelerate framework** (macOS): Automatically links the Accelerate framework on macOS builds, enabling hardware-accelerated vDSP vector operations for faster matrix math.
+
+* **Compiler auto-vectorization**: Added `-ftree-vectorize` to GGML compilation flags on all platforms, allowing GCC/Clang to generate SIMD instructions for eligible loops beyond the hand-tuned GGML kernels.
+
+### Existing Features
+
 * **SIMD-optimized build system**: Replaced generic scalar fallback with architecture-aware SIMD detection in both `Makevars` (Unix) and `Makevars.win` (Windows)
   - x86_64: Enables SSE4.2 baseline by default (universal since Intel Nehalem 2008)
   - aarch64/arm64: NEON support built into the ABI (no extra flags needed)

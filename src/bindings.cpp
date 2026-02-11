@@ -101,7 +101,7 @@ struct EdgeModelContext {
 };
 
 // [[Rcpp::export]]
-SEXP edge_load_model_internal(std::string model_path, int n_ctx = 2048, int n_gpu_layers = 0) {
+SEXP edge_load_model_internal(std::string model_path, int n_ctx = 2048, int n_gpu_layers = 0, int n_threads = 0, bool flash_attn = true) {
   try {
     // Ensure llama is properly initialized
     ensure_llama_initialized();
@@ -155,11 +155,12 @@ SEXP edge_load_model_internal(std::string model_path, int n_ctx = 2048, int n_gp
     }
     ctx_params.n_batch = optimal_batch;
 
-    // Adaptive thread count for small models (they don't benefit from many threads)
+    // Thread configuration: use all hardware threads by default, allow user override
     int hardware_threads = std::max(1, (int)std::thread::hardware_concurrency());
-    // For small contexts (typical of small models), limit threads to avoid overhead
-    int optimal_threads = (n_ctx <= 2048) ? std::min(4, hardware_threads) : hardware_threads;
-    ctx_params.n_threads = optimal_threads;
+    int effective_threads = (n_threads > 0) ? std::min(n_threads, hardware_threads) : hardware_threads;
+    ctx_params.n_threads = effective_threads;
+    ctx_params.n_threads_batch = hardware_threads;  // batch processing always benefits from max threads
+    ctx_params.flash_attn = flash_attn;
     
     struct llama_context* ctx = llama_init_from_model(model, ctx_params);
     if (!ctx) {

@@ -3,8 +3,8 @@ PKG_CXXFLAGS = -DNDEBUG -DGGML_USE_CPU
 PKG_CFLAGS = -DNDEBUG -DGGML_USE_CPU
 
 # Cross-platform configuration without OpenMP for stability
-GGML_CXXFLAGS = $(PKG_CXXFLAGS) -fPIC
-GGML_CFLAGS = $(PKG_CFLAGS) -DUSING_R=1 -fPIC
+GGML_CXXFLAGS = $(PKG_CXXFLAGS) -fPIC -ftree-vectorize
+GGML_CFLAGS = $(PKG_CFLAGS) -DUSING_R=1 -fPIC -ftree-vectorize
 PKG_LIBS = $(LAPACK_LIBS) $(BLAS_LIBS) $(FLIBS)
 
 # Core object files (common to all architectures)
