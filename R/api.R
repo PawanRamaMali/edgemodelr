@@ -3,8 +3,12 @@
 #' @param model_path Path to a .gguf model file
 #' @param n_ctx Maximum context length (default: 2048)
 #' @param n_gpu_layers Number of layers to offload to GPU (default: 0, CPU-only)
+#' @param n_threads Number of CPU threads for inference (default: NULL = use all hardware threads).
+#'   Set to a lower value to leave cores free for other tasks.
+#' @param flash_attn Enable flash attention for faster inference (default: TRUE).
+#'   Reduces memory usage and improves speed. Set to FALSE for maximum compatibility.
 #' @return External pointer to the loaded model context
-#' 
+#'
 #' @examples
 #' \dontrun{
 #' # Quick setup with automatic model download (downloads ~700MB)
@@ -20,16 +24,16 @@
 #'   edge_free_model(ctx)
 #' }
 #'
-#' # Manual model loading from downloaded file
+#' # Manual model loading with threading control
 #' model_path <- "path/to/your/model.gguf"
 #' if (file.exists(model_path)) {
-#'   ctx <- edge_load_model(model_path, n_ctx = 2048, n_gpu_layers = 0)
+#'   ctx <- edge_load_model(model_path, n_ctx = 2048, n_threads = 4, flash_attn = TRUE)
 #'   # ... use model ...
 #'   edge_free_model(ctx)
 #' }
 #' }
 #' @export
-edge_load_model <- function(model_path, n_ctx = 2048L, n_gpu_layers = 0L) {
+edge_load_model <- function(model_path, n_ctx = 2048L, n_gpu_layers = 0L, n_threads = NULL, flash_attn = TRUE) {
   if (!file.exists(model_path)) {
     stop("Model file does not exist: ", model_path, "\n",
          "Try these options:\n",
@@ -54,6 +58,15 @@ edge_load_model <- function(model_path, n_ctx = 2048L, n_gpu_layers = 0L) {
   if (!is.numeric(n_gpu_layers) || n_gpu_layers < 0) {
     stop("n_gpu_layers must be a non-negative integer")
   }
+  # Validate n_threads: NULL means auto-detect (passed as 0L)
+  if (!is.null(n_threads)) {
+    if (!is.numeric(n_threads) || n_threads < 1) {
+      stop("n_threads must be a positive integer or NULL for auto-detect")
+    }
+  }
+  if (!is.logical(flash_attn) || length(flash_attn) != 1) {
+    stop("flash_attn must be TRUE or FALSE")
+  }
 
   # Adaptive context size optimization based on model size
   model_size_mb <- file.info(model_path)$size / (1024^2)
@@ -77,9 +90,11 @@ edge_load_model <- function(model_path, n_ctx = 2048L, n_gpu_layers = 0L) {
 
   # Try to load the model using the raw Rcpp function
   tryCatch({
-    edge_load_model_internal(normalizePath(model_path), 
+    edge_load_model_internal(normalizePath(model_path),
                            as.integer(n_ctx),
-                           as.integer(n_gpu_layers))
+                           as.integer(n_gpu_layers),
+                           as.integer(if (is.null(n_threads)) 0L else n_threads),
+                           as.logical(flash_attn))
   }, error = function(e) {
     # Provide more context about what went wrong
     if (grepl("llama_load_model_from_file", e$message)) {
@@ -1222,6 +1237,32 @@ edge_benchmark <- function(ctx, prompt = "The quick brown fox", n_predict = 50, 
     iterations = iterations,
     tokens_per_iteration = n_predict
   )
+}
+
+#' Query SIMD optimization status
+#'
+#' Reports which SIMD (Single Instruction Multiple Data) features were enabled
+#' at compile time. This helps verify that the package is using CPU-optimized
+#' code paths for faster inference.
+#'
+#' @return List with:
+#' \describe{
+#'   \item{architecture}{CPU architecture (e.g., "x86_64", "aarch64")}
+#'   \item{compiler_features}{Character vector of compiler-detected SIMD features}
+#'   \item{ggml_features}{Character vector of GGML-level optimization flags}
+#'   \item{is_generic}{Logical; TRUE if compiled with generic (scalar) fallback}
+#' }
+#'
+#' @examples
+#' info <- edge_simd_info()
+#' cat("Architecture:", info$architecture, "\n")
+#' cat("SIMD features:", paste(info$compiler_features, collapse = ", "), "\n")
+#' if (info$is_generic) {
+#'   cat("Running in generic mode. Reinstall with EDGEMODELR_SIMD=AVX2 for better performance.\n")
+#' }
+#' @export
+edge_simd_info <- function() {
+  edge_simd_info_internal()
 }
 
 #' Find and prepare GGUF models for use with edgemodelr
