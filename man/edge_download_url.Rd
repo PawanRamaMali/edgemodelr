@@ -2,8 +2,16 @@
 \alias{edge_download_url}
 \title{Download a model from a direct URL}
 \usage{
-edge_download_url(url, filename, cache_dir = NULL,
-                  force_download = FALSE, verbose = TRUE)
+edge_download_url(
+  url,
+  filename,
+  cache_dir = NULL,
+  force_download = FALSE,
+  verify_checksum = TRUE,
+  expected_sha256 = NULL,
+  trust_first_use = FALSE,
+  verbose = TRUE
+)
 }
 \arguments{
 \item{url}{Direct download URL for the model}
@@ -13,6 +21,12 @@ edge_download_url(url, filename, cache_dir = NULL,
 \item{cache_dir}{Directory to store downloaded models (default: user cache directory)}
 
 \item{force_download}{Force re-download even if file exists}
+
+\item{verify_checksum}{Verify SHA-256 checksum if available (default: TRUE)}
+
+\item{expected_sha256}{Optional expected SHA-256 hash for the file}
+
+\item{trust_first_use}{Store a local hash if no known hash exists (default: FALSE)}
 
 \item{verbose}{Whether to print progress messages}
 }

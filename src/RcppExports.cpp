@@ -87,7 +87,6 @@ BEGIN_RCPP
     return R_NilValue;
 END_RCPP
 }
-
 // edge_simd_info_internal
 Rcpp::List edge_simd_info_internal();
 RcppExport SEXP _edgemodelr_edge_simd_info_internal() {

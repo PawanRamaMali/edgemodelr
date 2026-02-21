@@ -9,10 +9,10 @@ edge_simd_info()
 \value{
 List with:
 \describe{
-  \item{architecture}{CPU architecture (e.g., "x86_64", "aarch64")}
-  \item{compiler_features}{Character vector of compiler-detected SIMD features}
-  \item{ggml_features}{Character vector of GGML-level optimization flags}
-  \item{is_generic}{Logical; TRUE if compiled with generic (scalar) fallback}
+\item{architecture}{CPU architecture (e.g., "x86_64", "aarch64")}
+\item{compiler_features}{Character vector of compiler-detected SIMD features}
+\item{ggml_features}{Character vector of GGML-level optimization flags}
+\item{is_generic}{Logical; TRUE if compiled with generic (scalar) fallback}
 }
 }
 \description{
