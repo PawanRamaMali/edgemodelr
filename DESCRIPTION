@@ -31,7 +31,8 @@ Suggests:
     knitr,
     rmarkdown,
     curl,
-    shiny
+    shiny,
+    openssl
 SystemRequirements: GNU make or equivalent for building
 Note: Package includes self-contained 'llama.cpp' implementation (~56MB)
   for complete functionality without external dependencies.

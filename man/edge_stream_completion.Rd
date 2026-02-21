@@ -2,8 +2,15 @@
 \alias{edge_stream_completion}
 \title{Stream text completion with real-time token generation}
 \usage{
-edge_stream_completion(ctx, prompt, callback, n_predict = 128L, temperature = 0.8, 
-                       top_p = 0.95)
+edge_stream_completion(
+  ctx,
+  prompt,
+  callback,
+  n_predict = 128L,
+  temperature = 0.8,
+  top_p = 0.95,
+  timeout_seconds = NULL
+)
 }
 \arguments{
 \item{ctx}{Model context from edge_load_model()}
@@ -17,6 +24,8 @@ edge_stream_completion(ctx, prompt, callback, n_predict = 128L, temperature = 0.
 \item{temperature}{Sampling temperature (default: 0.8)}
 
 \item{top_p}{Top-p sampling parameter (default: 0.95)}
+
+\item{timeout_seconds}{Optional timeout in seconds for inference}
 }
 \value{
 List with full response and generation statistics

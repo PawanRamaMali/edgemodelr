@@ -15,7 +15,7 @@
 - ⚡ **High Performance** - Leverages optimized llama.cpp C++ implementation
 - 🎯 **R-Native Interface** - Seamlessly integrates with R data science workflows
 - 💾 **Memory Efficient** - Supports quantized models for resource-constrained environments
-- 🛠️ **Zero Dependencies** - Self-contained installation with no external requirements
+- 🛠️ **No External Runtimes** - No Python/Java dependencies; compiled llama.cpp is bundled
 - 🔄 **Universal Compatibility** - Works with any GGUF model from Hugging Face, Ollama, or custom sources
 
 ## 📦 Installation
@@ -39,6 +39,15 @@ devtools::install_github("PawanRamaMali/edgemodelr")
 - **Compiler**: C++17 compatible compiler (GCC, Clang, or MSVC)
 - **Memory**: 4GB+ RAM (varies by model size)
 - **Storage**: 1GB+ for model files
+
+Suggested RAM by model size:
+
+| Model Size | Min RAM | Recommended RAM | Typical Context |
+|-----------|---------|-----------------|-----------------|
+| ~1B params | 4GB | 8GB | 1024-2048 |
+| ~3B params | 8GB | 16GB | 2048 |
+| ~7B params | 16GB | 32GB | 4096 |
+| ~13B params | 32GB | 64GB | 4096 |
 
 ## 🚀 Quick Start
 
@@ -112,6 +121,8 @@ if (length(models_info$models) > 0) {
 | `edge_free_model(ctx)` | Release model memory |
 | `is_valid_model(ctx)` | Check if model context is valid |
 | `edge_quick_setup(model_name)` | One-line model download and setup |
+| `edge_cache_info()` | View cache size and file count |
+| `edge_clean_cache()` | Clean old/large cached model files |
 
 ### Text Generation
 
@@ -137,6 +148,11 @@ if (length(models_info$models) > 0) {
 | `edge_small_model_config(model_size_mb, available_ram_gb, target)` | Get optimized settings for small models |
 | `edge_benchmark(ctx, prompt, n_predict, iterations)` | Benchmark model performance |
 | `edge_set_verbose(enabled)` | Control logging verbosity |
+
+Cache options:
+
+- `options(edgemodelr.cache_max_size_mb = 5000)` to set a cache size limit
+- `options(edgemodelr.cache_auto_clean = TRUE)` to enable automatic LRU cleanup on package load
 
 ## ⚡ Performance Optimizations for Small Models
 
@@ -179,7 +195,8 @@ result <- edge_completion(
 
 ## 🤖 Available Models
 
-**All models download directly without authentication** - ready for offline use!
+**GPT4All models download directly without authentication.**  
+Hugging Face models may require an access token depending on license terms (set `HF_TOKEN`).
 
 ### Small Models (Testing & Development)
 
@@ -187,6 +204,8 @@ result <- edge_completion(
 |-------|------|--------|----------|---------|
 | **TinyLlama-1.1B** | ~700MB | HuggingFace | Testing, development | `edge_quick_setup("TinyLlama-1.1B")` |
 | **TinyLlama-OpenOrca** | ~700MB | HuggingFace | Better chat | `edge_quick_setup("TinyLlama-OpenOrca")` |
+
+Model names are case-insensitive; common aliases like `Llama-3.2-3B` are accepted.
 
 ### Medium Models (4-5GB)
 

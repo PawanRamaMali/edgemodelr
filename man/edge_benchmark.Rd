@@ -8,7 +8,8 @@ edge_benchmark(
   ctx,
   prompt = "The quick brown fox",
   n_predict = 50,
-  iterations = 3
+  iterations = 3,
+  track_memory = FALSE
 )
 }
 \arguments{
@@ -19,6 +20,8 @@ edge_benchmark(
 \item{n_predict}{Number of tokens to generate for the test}
 
 \item{iterations}{Number of test iterations to average results}
+
+\item{track_memory}{If TRUE, attempt to report peak memory usage (best-effort)}
 }
 \value{
 List with performance metrics

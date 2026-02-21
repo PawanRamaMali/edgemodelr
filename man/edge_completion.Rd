@@ -2,7 +2,14 @@
 \alias{edge_completion}
 \title{Generate text completion using loaded model}
 \usage{
-edge_completion(ctx, prompt, n_predict = 128L, temperature = 0.8, top_p = 0.95)
+edge_completion(
+  ctx,
+  prompt,
+  n_predict = 128L,
+  temperature = 0.8,
+  top_p = 0.95,
+  timeout_seconds = NULL
+)
 }
 \arguments{
 \item{ctx}{Model context from edge_load_model()}
@@ -14,6 +21,8 @@ edge_completion(ctx, prompt, n_predict = 128L, temperature = 0.8, top_p = 0.95)
 \item{temperature}{Sampling temperature (default: 0.8)}
 
 \item{top_p}{Top-p sampling parameter (default: 0.95)}
+
+\item{timeout_seconds}{Optional timeout in seconds for inference}
 }
 \value{
 Generated text as character string
