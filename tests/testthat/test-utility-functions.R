@@ -8,7 +8,7 @@ test_that("edge_clean_cache handles non-existent cache directory", {
 
   result <- edge_clean_cache(
     cache_dir = file.path(tempdir(), "nonexistent_cache_dir_xyz"),
-    interactive = FALSE,
+    ask = FALSE,
     verbose = FALSE
   )
   expect_equal(length(result), 0)
@@ -21,7 +21,7 @@ test_that("edge_clean_cache handles empty cache directory", {
 
   result <- edge_clean_cache(
     cache_dir = temp_cache,
-    interactive = FALSE,
+    ask = FALSE,
     verbose = FALSE
   )
   expect_equal(length(result), 0)
@@ -42,7 +42,7 @@ test_that("edge_clean_cache respects max_age_days parameter", {
 result <- edge_clean_cache(
     cache_dir = temp_cache,
     max_age_days = 30,
-    interactive = FALSE,
+    ask = FALSE,
     verbose = FALSE
   )
 
@@ -59,7 +59,7 @@ test_that("edge_clean_cache accepts custom parameters", {
     cache_dir = temp_cache,
     max_age_days = 7,
     max_size_mb = 100,
-    interactive = FALSE,
+    ask = FALSE,
     verbose = FALSE
   ))
 })

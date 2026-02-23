@@ -78,27 +78,13 @@ else ifeq ($(EDGEMODELR_SIMD),SSE42)
   GGML_CFLAGS += -msse4.2 -DGGML_SSE42
   ARCH_OBJECTS = ggml/ggml-cpu/arch/x86/quants.o ggml/ggml-cpu/arch/x86/repack.o ggml/ggml-cpu/arch/x86/cpu-feats.o
 else
-  # Auto-detect based on architecture
-  ifeq ($(UNAME_M),x86_64)
-    # x86_64: Enable SSE4.2 baseline (universal since Intel Nehalem 2008)
-    # Includes arch-specific x86 quantization and repack optimizations
-    GGML_CXXFLAGS += -msse4.2 -DGGML_SSE42
-    GGML_CFLAGS += -msse4.2 -DGGML_SSE42
-    ARCH_OBJECTS = ggml/ggml-cpu/arch/x86/quants.o ggml/ggml-cpu/arch/x86/repack.o ggml/ggml-cpu/arch/x86/cpu-feats.o
-  else ifneq ($(filter aarch64 arm64,$(UNAME_M)),)
-    # ARM64: NEON is used automatically via simd-mappings.h within the generic
-    # code paths. We must set GGML_CPU_GENERIC because we don't ship
-    # arch/aarch64/ objects, and without it the quants function aliases
-    # (e.g., quantize_row_q8_0) would be undefined at link time.
-    GGML_CXXFLAGS += -DGGML_CPU_GENERIC
-    GGML_CFLAGS += -DGGML_CPU_GENERIC
-    ARCH_OBJECTS =
-  else
-    # Other architectures (e.g., s390x, ppc64, riscv64): generic fallback
-    GGML_CXXFLAGS += -DGGML_CPU_GENERIC
-    GGML_CFLAGS += -DGGML_CPU_GENERIC
-    ARCH_OBJECTS =
-  endif
+  # Default: portable generic build (no arch-specific flags).
+  # CRAN policy prohibits non-portable compiler flags (-msse4.2, -mavx, etc.)
+  # in the default install path. Users who want SIMD acceleration should set
+  # EDGEMODELR_SIMD=SSE42 (or AVX2/AVX512/NATIVE) at install time.
+  GGML_CXXFLAGS += -DGGML_CPU_GENERIC
+  GGML_CFLAGS += -DGGML_CPU_GENERIC
+  ARCH_OBJECTS =
 endif
 
 # Complete objects list with architecture support

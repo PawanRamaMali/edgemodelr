@@ -8,7 +8,7 @@
       auto_clean <- isTRUE(getOption("edgemodelr.cache_auto_clean", FALSE))
       if (info$total_size_mb > max_size_mb) {
         if (auto_clean) {
-          edge_clean_cache(cache_dir = cache_dir, interactive = FALSE, verbose = FALSE)
+          edge_clean_cache(cache_dir = cache_dir, ask = FALSE, verbose = FALSE)
         } else {
           packageStartupMessage(
             "edgemodelr cache size (", info$total_size_mb, " MB) exceeds limit (", max_size_mb,
