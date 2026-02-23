@@ -406,8 +406,7 @@ edge_download_model <- function(model_id, filename, cache_dir = NULL, force_down
     con <- file(path, "rb")
     on.exit(close(con))
     magic <- readBin(con, "raw", n = 4)
-    # GGUF magic: 0x47 0x47 0x55 0x46 ("GGUF")
-    return(identical(magic, as.raw(c(0x47, 0x47, 0x55, 0x46))))
+    return(identical(magic, charToRaw("GGUF")))
   }, error = function(e) {
     return(FALSE)
   })
@@ -422,7 +421,9 @@ edge_download_model <- function(model_id, filename, cache_dir = NULL, force_down
 
   # Preferred: openssl package if available
   if (requireNamespace("openssl", quietly = TRUE)) {
-    return(tolower(as.character(openssl::sha256(file(path)))))
+    con <- file(path, "rb")
+    on.exit(close(con), add = TRUE)
+    return(tolower(paste(as.character(openssl::sha256(con)), collapse = "")))
   }
 
   # Fallback: system utilities
@@ -671,26 +672,39 @@ edge_download_model <- function(model_id, filename, cache_dir = NULL, force_down
   return(FALSE)
 }
 
-#' Download using R's download.file with libcurl
+#' Download using R's download.file with libcurl (last resort, no auth)
 #' @keywords internal
 .download_with_r <- function(url, destfile, hf_token = "", verbose = TRUE, max_retries = 3) {
+  # Prefer the curl R package when a token is needed, as download.file(method="libcurl")
+  # does not support custom request headers.
+  if (nchar(hf_token) > 0 && requireNamespace("curl", quietly = TRUE)) {
+    if (verbose) message("Using curl R package for authenticated download...")
+    for (attempt in 1:max_retries) {
+      if (attempt > 1 && verbose) message("Retry attempt ", attempt, " of ", max_retries, "...")
+      result <- tryCatch({
+        h <- curl::new_handle()
+        curl::handle_setheaders(h, "Authorization" = paste("Bearer", hf_token))
+        curl::curl_download(url, destfile, handle = h, quiet = !verbose)
+        TRUE
+      }, error = function(e) {
+        if (verbose) message("curl download error: ", e$message)
+        FALSE
+      })
+      if (result && file.exists(destfile) && .is_valid_gguf_file(destfile)) return(TRUE)
+      if (attempt < max_retries) Sys.sleep(2)
+    }
+    return(FALSE)
+  }
+
+  # Unauthenticated fallback via download.file / libcurl
   for (attempt in 1:max_retries) {
     if (attempt > 1 && verbose) {
       message("Retry attempt ", attempt, " of ", max_retries, "...")
     }
 
-    # Set headers if token available
-    if (nchar(hf_token) > 0) {
-      old_headers <- getOption("HTTPUserAgent")
-      options(HTTPUserAgent = paste0("Bearer ", hf_token))
-      on.exit(options(HTTPUserAgent = old_headers), add = TRUE)
-    }
-
-    # Try libcurl method which handles redirects better
     result <- tryCatch({
-      # Increase timeout for large files
       old_timeout <- getOption("timeout")
-      options(timeout = 7200)  # 2 hours
+      options(timeout = 7200)  # 2 hours for large files
       on.exit(options(timeout = old_timeout), add = TRUE)
 
       utils::download.file(
@@ -699,12 +713,7 @@ edge_download_model <- function(model_id, filename, cache_dir = NULL, force_down
         mode = "wb",
         method = "libcurl",
         quiet = !verbose,
-        cacheOK = FALSE,
-        extra = if (nchar(hf_token) > 0) {
-          c("-H", paste0("Authorization: Bearer ", hf_token))
-        } else {
-          character(0)
-        }
+        cacheOK = FALSE
       )
       0  # Success
     }, error = function(e) {
@@ -712,10 +721,7 @@ edge_download_model <- function(model_id, filename, cache_dir = NULL, force_down
       1  # Failure
     }, warning = function(w) {
       if (verbose) message("Download warning: ", w$message)
-      # Check if file was downloaded despite warning
-      if (file.exists(destfile) && file.info(destfile)$size > 1024 * 1024) {
-        return(0)
-      }
+      if (file.exists(destfile) && file.info(destfile)$size > 1024 * 1024) return(0)
       return(1)
     })
 
@@ -752,15 +758,38 @@ edge_resolve_model_name <- function(model_name, models = NULL) {
 
   aliases <- c(
     "llama-3.2-3b" = "llama3.2-3b",
+    "llama3.2-3b-instruct" = "llama3.2-3b",
+    "llama-3.2-3b-instruct" = "llama3.2-3b",
     "llama-3-8b" = "llama3-8b",
+    "llama3-8b-instruct" = "llama3-8b",
+    "llama-3-8b-instruct" = "llama3-8b",
     "phi-3-mini" = "phi3-mini",
     "phi-3-mini-4k" = "phi3-mini",
+    "phi3-mini-4k" = "phi3-mini",
+    "tinyllama" = "TinyLlama-1.1B",
     "tinyllama-1.1b" = "TinyLlama-1.1B",
+    "tinyllama-chat" = "TinyLlama-1.1B",
     "tinyllama-openorca" = "TinyLlama-OpenOrca",
-    "mistral-7b" = "mistral-7b"
+    "tiny-llama" = "TinyLlama-1.1B",
+    "mistral" = "mistral-7b",
+    "mistral-7b-instruct" = "mistral-7b",
+    "orca2" = "orca2-13b",
+    "orca-2" = "orca2-13b",
+    "wizard" = "wizardlm-13b",
+    "wizardlm" = "wizardlm-13b",
+    "hermes" = "hermes-13b"
   )
   if (lower %in% names(aliases)) {
-    return(aliases[[lower]])
+    canonical <- aliases[[lower]]
+    # Verify the canonical name actually exists in models
+    if (canonical %in% models$name) return(canonical)
+    # Fall through to partial match if canonical was stale
+  }
+
+  # Partial substring match (last resort)
+  partial <- which(startsWith(tolower(models$name), lower) | startsWith(lower, tolower(models$name)))
+  if (length(partial) == 1L) {
+    return(models$name[partial])
   }
 
   NA_character_
@@ -1368,7 +1397,7 @@ build_chat_prompt <- function(history) {
 #' @param max_age_days Maximum age of files to keep in days (default: option edgemodelr.cache_max_age_days or 30)
 #' @param max_size_mb Maximum total cache size in MB (default: option edgemodelr.cache_max_size_mb or 5000)
 #' @param use_lru If TRUE, evict least-recently-used files when size exceeds limit
-#' @param interactive Whether to ask for user confirmation before deletion
+#' @param ask Whether to ask for user confirmation before deletion (only in interactive sessions)
 #' @param verbose Whether to print status messages (default: TRUE)
 #' @return Invisible list of deleted files
 #' @examples
@@ -1384,7 +1413,7 @@ edge_clean_cache <- function(cache_dir = NULL,
                              max_age_days = getOption("edgemodelr.cache_max_age_days", 30),
                              max_size_mb = getOption("edgemodelr.cache_max_size_mb", 5000),
                              use_lru = TRUE,
-                             interactive = TRUE,
+                             ask = TRUE,
                              verbose = TRUE) {
   if (is.null(cache_dir)) {
     cache_dir <- tools::R_user_dir("edgemodelr", "cache")
@@ -1435,8 +1464,8 @@ edge_clean_cache <- function(cache_dir = NULL,
             round(total_delete_size, 1), " MB)")
   }
   
-  # Ask for confirmation in interactive mode
-  if (interactive && interactive()) {
+  # Ask for confirmation only when requested and in an interactive session
+  if (ask && interactive()) {
     consent <- utils::askYesNo(
       paste("Delete", length(files_to_delete), "cached files?"),
       default = TRUE

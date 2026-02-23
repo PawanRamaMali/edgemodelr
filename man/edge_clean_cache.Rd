@@ -9,7 +9,7 @@ edge_clean_cache(
   max_age_days = getOption("edgemodelr.cache_max_age_days", 30),
   max_size_mb = getOption("edgemodelr.cache_max_size_mb", 5000),
   use_lru = TRUE,
-  interactive = TRUE,
+  ask = TRUE,
   verbose = TRUE
 )
 }
@@ -22,7 +22,7 @@ edge_clean_cache(
 
 \item{use_lru}{If TRUE, evict least-recently-used files when size exceeds limit}
 
-\item{interactive}{Whether to ask for user confirmation before deletion}
+\item{ask}{Whether to ask for user confirmation before deletion (only in interactive sessions)}
 
 \item{verbose}{Whether to print status messages (default: TRUE)}
 }
