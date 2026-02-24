@@ -6,20 +6,23 @@
 \usage{
 edge_clean_cache(
   cache_dir = NULL,
-  max_age_days = 30,
-  max_size_mb = 500,
-  interactive = TRUE,
+  max_age_days = getOption("edgemodelr.cache_max_age_days", 30),
+  max_size_mb = getOption("edgemodelr.cache_max_size_mb", 5000),
+  use_lru = TRUE,
+  ask = TRUE,
   verbose = TRUE
 )
 }
 \arguments{
 \item{cache_dir}{Cache directory path (default: user cache directory)}
 
-\item{max_age_days}{Maximum age of files to keep in days (default: 30)}
+\item{max_age_days}{Maximum age of files to keep in days (default: option edgemodelr.cache_max_age_days or 30)}
 
-\item{max_size_mb}{Maximum total cache size in MB (default: 500)}
+\item{max_size_mb}{Maximum total cache size in MB (default: option edgemodelr.cache_max_size_mb or 5000)}
 
-\item{interactive}{Whether to ask for user confirmation before deletion}
+\item{use_lru}{If TRUE, evict least-recently-used files when size exceeds limit}
+
+\item{ask}{Whether to ask for user confirmation before deletion (only in interactive sessions)}
 
 \item{verbose}{Whether to print status messages (default: TRUE)}
 }

@@ -1,7 +1,25 @@
 .onAttach <- function(libname, pkgname) {
-  # Removed startup messages to comply with CRAN policies
-  # Don't call C++ functions during package loading to avoid segfaults
-  # Logging will be set when first model is loaded
+  # Cache size check and optional auto-cleanup
+  tryCatch({
+    cache_dir <- tools::R_user_dir("edgemodelr", "cache")
+    if (dir.exists(cache_dir)) {
+      info <- edge_cache_info(cache_dir)
+      max_size_mb <- getOption("edgemodelr.cache_max_size_mb", 5000)
+      auto_clean <- isTRUE(getOption("edgemodelr.cache_auto_clean", FALSE))
+      if (info$total_size_mb > max_size_mb) {
+        if (auto_clean) {
+          edge_clean_cache(cache_dir = cache_dir, ask = FALSE, verbose = FALSE)
+        } else {
+          packageStartupMessage(
+            "edgemodelr cache size (", info$total_size_mb, " MB) exceeds limit (", max_size_mb,
+            " MB). Use edge_clean_cache() or set options(edgemodelr.cache_auto_clean = TRUE)."
+          )
+        }
+      }
+    }
+  }, error = function(e) {
+    # Silently ignore cache errors on attach
+  })
 }
 
 .onUnload <- function(libpath) {

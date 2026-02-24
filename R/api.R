@@ -71,6 +71,16 @@ edge_load_model <- function(model_path, n_ctx = 2048L, n_gpu_layers = 0L, n_thre
   # Adaptive context size optimization based on model size
   model_size_mb <- file.info(model_path)$size / (1024^2)
 
+  # Optional memory budget check (best-effort)
+  available_ram_gb <- getOption("edgemodelr.available_ram_gb", NA_real_)
+  if (is.numeric(available_ram_gb) && !is.na(available_ram_gb) && available_ram_gb > 0) {
+    available_mb <- available_ram_gb * 1024
+    if (model_size_mb > available_mb * 0.8) {
+      warning("Model size (", round(model_size_mb, 1), " MB) is close to or exceeds available RAM (",
+              round(available_mb, 1), " MB). Inference may be unstable or slow.")
+    }
+  }
+
   # Auto-optimize context for small models (< 2GB)
   if (model_size_mb < 2000 && n_ctx == 2048) {
     # Small models work best with smaller contexts for faster inference
@@ -89,12 +99,12 @@ edge_load_model <- function(model_path, n_ctx = 2048L, n_gpu_layers = 0L, n_thre
   }
 
   # Try to load the model using the raw Rcpp function
-  tryCatch({
+  ctx <- tryCatch({
     edge_load_model_internal(normalizePath(model_path),
-                           as.integer(n_ctx),
-                           as.integer(n_gpu_layers),
-                           as.integer(if (is.null(n_threads)) 0L else n_threads),
-                           as.logical(flash_attn))
+                             as.integer(n_ctx),
+                             as.integer(n_gpu_layers),
+                             as.integer(if (is.null(n_threads)) 0L else n_threads),
+                             as.logical(flash_attn))
   }, error = function(e) {
     # Provide more context about what went wrong
     if (grepl("llama_load_model_from_file", e$message)) {
@@ -105,6 +115,11 @@ edge_load_model <- function(model_path, n_ctx = 2048L, n_gpu_layers = 0L, n_thre
     }
     stop(e$message)
   })
+
+  # Touch file to update LRU metadata (best-effort)
+  try(Sys.setFileTime(model_path, Sys.time()), silent = TRUE)
+
+  ctx
 }
 
 #' Generate text completion using loaded model
@@ -114,6 +129,7 @@ edge_load_model <- function(model_path, n_ctx = 2048L, n_gpu_layers = 0L, n_thre
 #' @param n_predict Maximum tokens to generate (default: 128)
 #' @param temperature Sampling temperature (default: 0.8)
 #' @param top_p Top-p sampling parameter (default: 0.95)
+#' @param timeout_seconds Optional timeout in seconds for inference
 #' @return Generated text as character string
 #' 
 #' @examples
@@ -141,7 +157,11 @@ edge_load_model <- function(model_path, n_ctx = 2048L, n_gpu_layers = 0L, n_thre
 #' }
 #' }
 #' @export
-edge_completion <- function(ctx, prompt, n_predict = 128L, temperature = 0.8, top_p = 0.95) {
+edge_completion <- function(ctx, prompt, n_predict = 128L, temperature = 0.8, top_p = 0.95,
+                            timeout_seconds = NULL) {
+  if (!is_valid_model(ctx)) {
+    stop("Invalid model context. Load a model first with edge_load_model()")
+  }
   if (!is.character(prompt) || length(prompt) != 1L) {
     stop("Prompt must be a single character string")
   }
@@ -150,6 +170,16 @@ edge_completion <- function(ctx, prompt, n_predict = 128L, temperature = 0.8, to
   n_predict <- max(1, min(n_predict, 4096))  # Clamp to reasonable range
   temperature <- max(0.0, min(temperature, 2.0))  # Clamp temperature
   top_p <- max(0.1, min(top_p, 1.0))  # Clamp top_p
+
+  if (!is.null(timeout_seconds)) {
+    if (!is.numeric(timeout_seconds) || length(timeout_seconds) != 1 || timeout_seconds <= 0) {
+      stop("timeout_seconds must be a positive number of seconds")
+    }
+    old_limits <- setTimeLimit(elapsed = timeout_seconds, transient = TRUE)
+    on.exit({
+      setTimeLimit(cpu = Inf, elapsed = Inf, transient = TRUE)
+    }, add = TRUE)
+  }
 
   edge_completion_internal(ctx,
                          prompt,
@@ -212,6 +242,9 @@ is_valid_model <- function(ctx) {
 #' @param filename Specific GGUF file to download
 #' @param cache_dir Directory to store downloaded models (default: user cache directory via tools::R_user_dir())
 #' @param force_download Force re-download even if file exists
+#' @param verify_checksum Verify SHA-256 checksum if available (default: TRUE)
+#' @param expected_sha256 Optional expected SHA-256 hash for the model file
+#' @param trust_first_use Store a local hash if no known hash exists (default: FALSE)
 #' @return Path to the downloaded model file
 #'
 #' @examples
@@ -230,7 +263,9 @@ is_valid_model <- function(ctx) {
 #' }
 #' }
 #' @export
-edge_download_model <- function(model_id, filename, cache_dir = NULL, force_download = FALSE, verbose = TRUE) {
+edge_download_model <- function(model_id, filename, cache_dir = NULL, force_download = FALSE,
+                                verify_checksum = TRUE, expected_sha256 = NULL,
+                                trust_first_use = FALSE, verbose = TRUE) {
   # Parameter validation
   if (is.null(model_id) || !is.character(model_id) || length(model_id) != 1) {
     stop("model_id must be a string")
@@ -272,6 +307,11 @@ edge_download_model <- function(model_id, filename, cache_dir = NULL, force_down
     if (verbose) message("Created cache directory: ", cache_dir)
   }
 
+  if (!.is_writable_dir(cache_dir)) {
+    stop("Cache directory is not writable: ", cache_dir, "\n",
+         "Specify a writable cache_dir or adjust permissions.")
+  }
+
   # Construct local file path
   local_path <- file.path(cache_dir, basename(filename))
 
@@ -279,6 +319,14 @@ edge_download_model <- function(model_id, filename, cache_dir = NULL, force_down
   if (file.exists(local_path) && !force_download) {
     # Verify it's a valid GGUF file (starts with "GGUF" magic bytes)
     if (.is_valid_gguf_file(local_path)) {
+      .validate_model_checksum(local_path,
+                               model_id = model_id,
+                               filename = filename,
+                               cache_dir = cache_dir,
+                               expected_sha256 = expected_sha256,
+                               verify_checksum = verify_checksum,
+                               trust_first_use = trust_first_use,
+                               verbose = verbose)
       if (verbose) message("Model already exists: ", local_path)
       return(local_path)
     } else {
@@ -303,11 +351,20 @@ edge_download_model <- function(model_id, filename, cache_dir = NULL, force_down
   if (download_success && file.exists(local_path)) {
     # Verify the downloaded file is valid
     if (.is_valid_gguf_file(local_path)) {
+      .validate_model_checksum(local_path,
+                               model_id = model_id,
+                               filename = filename,
+                               cache_dir = cache_dir,
+                               expected_sha256 = expected_sha256,
+                               verify_checksum = verify_checksum,
+                               trust_first_use = trust_first_use,
+                               verbose = verbose)
       if (verbose) {
         file_size_mb <- round(file.info(local_path)$size / (1024^2), 1)
         message("Download completed successfully!")
         message("Model size: ", file_size_mb, "MB")
       }
+      try(Sys.setFileTime(local_path, Sys.time()), silent = TRUE)
       return(local_path)
     } else {
       # Downloaded file is not valid GGUF
@@ -352,11 +409,140 @@ edge_download_model <- function(model_id, filename, cache_dir = NULL, force_down
     con <- file(path, "rb")
     on.exit(close(con))
     magic <- readBin(con, "raw", n = 4)
-    # GGUF magic: 0x47 0x47 0x55 0x46 ("GGUF")
-    return(identical(magic, as.raw(c(0x47, 0x47, 0x55, 0x46))))
+    return(identical(magic, charToRaw("GGUF")))
   }, error = function(e) {
     return(FALSE)
   })
+}
+
+#' Compute SHA-256 hash for a file (best-effort, no new hard dependencies)
+#' @param path Path to the file
+#' @return Lowercase hex string or NA if computation not available
+#' @keywords internal
+.compute_sha256 <- function(path) {
+  if (!file.exists(path)) return(NA_character_)
+
+  # Preferred: openssl package if available
+  if (requireNamespace("openssl", quietly = TRUE)) {
+    con <- file(path, "rb")
+    on.exit(close(con), add = TRUE)
+    return(tolower(paste(as.character(openssl::sha256(con)), collapse = "")))
+  }
+
+  # Fallback: system utilities
+  if (nzchar(Sys.which("sha256sum"))) {
+    out <- tryCatch(system2("sha256sum", args = shQuote(path), stdout = TRUE, stderr = TRUE), error = function(e) "")
+    if (length(out) > 0 && grepl("^[0-9a-fA-F]{64}", out[1])) {
+      return(tolower(strsplit(out[1], "\\s+")[[1]][1]))
+    }
+  }
+  if (nzchar(Sys.which("shasum"))) {
+    out <- tryCatch(system2("shasum", args = c("-a", "256", shQuote(path)), stdout = TRUE, stderr = TRUE), error = function(e) "")
+    if (length(out) > 0 && grepl("^[0-9a-fA-F]{64}", out[1])) {
+      return(tolower(strsplit(out[1], "\\s+")[[1]][1]))
+    }
+  }
+  if (nzchar(Sys.which("certutil"))) {
+    out <- tryCatch(system2("certutil", args = c("-hashfile", shQuote(path), "SHA256"), stdout = TRUE, stderr = TRUE), error = function(e) "")
+    hash_line <- out[2]
+    if (length(hash_line) > 0 && grepl("^[0-9a-fA-F]{64}$", gsub("\\s+", "", hash_line))) {
+      return(tolower(gsub("\\s+", "", hash_line)))
+    }
+  }
+
+  NA_character_
+}
+
+#' Check directory writeability
+#' @keywords internal
+.is_writable_dir <- function(path) {
+  if (!dir.exists(path)) return(FALSE)
+  test_file <- file.path(path, paste0(".edgemodelr_write_test_", Sys.getpid()))
+  ok <- tryCatch({
+    writeLines("test", test_file)
+    TRUE
+  }, error = function(e) FALSE)
+  if (file.exists(test_file)) file.remove(test_file)
+  ok
+}
+
+#' Known hashes cache helpers (Trust-On-First-Use optional)
+#' @keywords internal
+.known_hashes_path <- function(cache_dir) {
+  file.path(cache_dir, "known_hashes.csv")
+}
+
+.get_known_hashes <- function(cache_dir) {
+  path <- .known_hashes_path(cache_dir)
+  if (!file.exists(path)) {
+    return(data.frame(model_id = character(), filename = character(), sha256 = character(), stringsAsFactors = FALSE))
+  }
+  tryCatch({
+    read.csv(path, stringsAsFactors = FALSE)
+  }, error = function(e) {
+    data.frame(model_id = character(), filename = character(), sha256 = character(), stringsAsFactors = FALSE)
+  })
+}
+
+.save_known_hashes <- function(df, cache_dir) {
+  path <- .known_hashes_path(cache_dir)
+  tryCatch({
+    write.csv(df, path, row.names = FALSE)
+  }, error = function(e) {
+    NULL
+  })
+}
+
+.validate_model_checksum <- function(path, model_id = NULL, filename = NULL, cache_dir = NULL,
+                                    expected_sha256 = NULL, verify_checksum = TRUE, trust_first_use = FALSE,
+                                    verbose = TRUE) {
+  if (!verify_checksum) return(TRUE)
+
+  if (is.null(cache_dir)) {
+    cache_dir <- tools::R_user_dir("edgemodelr", "cache")
+  }
+
+  known <- .get_known_hashes(cache_dir)
+  if (is.null(expected_sha256) && nrow(known) > 0) {
+    hit <- known
+    if (!is.null(model_id)) hit <- hit[hit$model_id == model_id, , drop = FALSE]
+    if (!is.null(filename)) hit <- hit[hit$filename == filename, , drop = FALSE]
+    if (nrow(hit) > 0) {
+      expected_sha256 <- hit$sha256[1]
+    }
+  }
+
+  if (is.null(expected_sha256) || !nzchar(expected_sha256)) {
+    if (verbose) {
+      message("Checksum: no known SHA-256 for this model; skipping verification. ",
+              "Set expected_sha256 or enable trust-first-use to store a local hash.")
+    }
+    if (trust_first_use) {
+      computed <- .compute_sha256(path)
+      if (!is.na(computed)) {
+        known <- rbind(known, data.frame(model_id = model_id, filename = filename, sha256 = computed,
+                                         stringsAsFactors = FALSE))
+        .save_known_hashes(known, cache_dir)
+        if (verbose) message("Checksum stored locally (trust-first-use).")
+      } else if (verbose) {
+        message("Checksum: unable to compute SHA-256 on this system.")
+      }
+    }
+    return(TRUE)
+  }
+
+  computed <- .compute_sha256(path)
+  if (is.na(computed)) {
+    stop("Checksum verification requested but SHA-256 could not be computed on this system.\n",
+         "Install the 'openssl' R package or ensure sha256sum/shasum/certutil is available.")
+  }
+
+  if (!identical(tolower(expected_sha256), tolower(computed))) {
+    stop("Checksum mismatch for downloaded model. ",
+         "Expected: ", expected_sha256, " but got: ", computed)
+  }
+
+  TRUE
 }
 
 #' Robust file download with retry and resume support
@@ -489,26 +675,39 @@ edge_download_model <- function(model_id, filename, cache_dir = NULL, force_down
   return(FALSE)
 }
 
-#' Download using R's download.file with libcurl
+#' Download using R's download.file with libcurl (last resort, no auth)
 #' @keywords internal
 .download_with_r <- function(url, destfile, hf_token = "", verbose = TRUE, max_retries = 3) {
+  # Prefer the curl R package when a token is needed, as download.file(method="libcurl")
+  # does not support custom request headers.
+  if (nchar(hf_token) > 0 && requireNamespace("curl", quietly = TRUE)) {
+    if (verbose) message("Using curl R package for authenticated download...")
+    for (attempt in 1:max_retries) {
+      if (attempt > 1 && verbose) message("Retry attempt ", attempt, " of ", max_retries, "...")
+      result <- tryCatch({
+        h <- curl::new_handle()
+        curl::handle_setheaders(h, "Authorization" = paste("Bearer", hf_token))
+        curl::curl_download(url, destfile, handle = h, quiet = !verbose)
+        TRUE
+      }, error = function(e) {
+        if (verbose) message("curl download error: ", e$message)
+        FALSE
+      })
+      if (result && file.exists(destfile) && .is_valid_gguf_file(destfile)) return(TRUE)
+      if (attempt < max_retries) Sys.sleep(2)
+    }
+    return(FALSE)
+  }
+
+  # Unauthenticated fallback via download.file / libcurl
   for (attempt in 1:max_retries) {
     if (attempt > 1 && verbose) {
       message("Retry attempt ", attempt, " of ", max_retries, "...")
     }
 
-    # Set headers if token available
-    if (nchar(hf_token) > 0) {
-      old_headers <- getOption("HTTPUserAgent")
-      options(HTTPUserAgent = paste0("Bearer ", hf_token))
-      on.exit(options(HTTPUserAgent = old_headers), add = TRUE)
-    }
-
-    # Try libcurl method which handles redirects better
     result <- tryCatch({
-      # Increase timeout for large files
       old_timeout <- getOption("timeout")
-      options(timeout = 7200)  # 2 hours
+      options(timeout = 7200)  # 2 hours for large files
       on.exit(options(timeout = old_timeout), add = TRUE)
 
       utils::download.file(
@@ -517,12 +716,7 @@ edge_download_model <- function(model_id, filename, cache_dir = NULL, force_down
         mode = "wb",
         method = "libcurl",
         quiet = !verbose,
-        cacheOK = FALSE,
-        extra = if (nchar(hf_token) > 0) {
-          c("-H", paste0("Authorization: Bearer ", hf_token))
-        } else {
-          character(0)
-        }
+        cacheOK = FALSE
       )
       0  # Success
     }, error = function(e) {
@@ -530,10 +724,7 @@ edge_download_model <- function(model_id, filename, cache_dir = NULL, force_down
       1  # Failure
     }, warning = function(w) {
       if (verbose) message("Download warning: ", w$message)
-      # Check if file was downloaded despite warning
-      if (file.exists(destfile) && file.info(destfile)$size > 1024 * 1024) {
-        return(0)
-      }
+      if (file.exists(destfile) && file.info(destfile)$size > 1024 * 1024) return(0)
       return(1)
     })
 
@@ -547,6 +738,64 @@ edge_download_model <- function(model_id, filename, cache_dir = NULL, force_down
   }
 
   return(FALSE)
+}
+
+#' Resolve a model name to the canonical entry in edge_list_models()
+#' @param model_name User-provided model name
+#' @param models Optional models data.frame
+#' @return Canonical model name or NA if not found
+#' @keywords internal
+edge_resolve_model_name <- function(model_name, models = NULL) {
+  if (is.null(models)) {
+    models <- edge_list_models()
+  }
+  if (!is.character(model_name) || length(model_name) != 1) return(NA_character_)
+
+  if (model_name %in% models$name) return(model_name)
+
+  lower <- tolower(model_name)
+  name_lower <- tolower(models$name)
+  if (lower %in% name_lower) {
+    return(models$name[match(lower, name_lower)])
+  }
+
+  aliases <- c(
+    "llama-3.2-3b" = "llama3.2-3b",
+    "llama3.2-3b-instruct" = "llama3.2-3b",
+    "llama-3.2-3b-instruct" = "llama3.2-3b",
+    "llama-3-8b" = "llama3-8b",
+    "llama3-8b-instruct" = "llama3-8b",
+    "llama-3-8b-instruct" = "llama3-8b",
+    "phi-3-mini" = "phi3-mini",
+    "phi-3-mini-4k" = "phi3-mini",
+    "phi3-mini-4k" = "phi3-mini",
+    "tinyllama" = "TinyLlama-1.1B",
+    "tinyllama-1.1b" = "TinyLlama-1.1B",
+    "tinyllama-chat" = "TinyLlama-1.1B",
+    "tinyllama-openorca" = "TinyLlama-OpenOrca",
+    "tiny-llama" = "TinyLlama-1.1B",
+    "mistral" = "mistral-7b",
+    "mistral-7b-instruct" = "mistral-7b",
+    "orca2" = "orca2-13b",
+    "orca-2" = "orca2-13b",
+    "wizard" = "wizardlm-13b",
+    "wizardlm" = "wizardlm-13b",
+    "hermes" = "hermes-13b"
+  )
+  if (lower %in% names(aliases)) {
+    canonical <- aliases[[lower]]
+    # Verify the canonical name actually exists in models
+    if (canonical %in% models$name) return(canonical)
+    # Fall through to partial match if canonical was stale
+  }
+
+  # Partial substring match (last resort)
+  partial <- which(startsWith(tolower(models$name), lower) | startsWith(lower, tolower(models$name)))
+  if (length(partial) == 1L) {
+    return(models$name[partial])
+  }
+
+  NA_character_
 }
 
 #' List popular pre-configured models
@@ -608,6 +857,11 @@ edge_list_models <- function() {
       "gpt4all", "gpt4all", "huggingface", "huggingface",
       "gpt4all", "gpt4all", "gpt4all", "gpt4all"
     ),
+    requires_auth = c(
+      FALSE, FALSE,
+      FALSE, FALSE, FALSE, FALSE,
+      FALSE, FALSE, FALSE, FALSE
+    ),
     stringsAsFactors = FALSE
   )
 
@@ -621,6 +875,9 @@ edge_list_models <- function() {
 #'
 #' @param model_name Name of the model from edge_list_models()
 #' @param cache_dir Directory to store downloaded models (default: user cache directory via tools::R_user_dir())
+#' @param verify_checksum Verify SHA-256 checksum if available (default: TRUE)
+#' @param expected_sha256 Optional expected SHA-256 hash for the model file
+#' @param trust_first_use Store a local hash if no known hash exists (default: FALSE)
 #' @param verbose Whether to print status messages (default: TRUE)
 #' @return List with model path and context (if llama.cpp is available)
 #'
@@ -640,7 +897,8 @@ edge_list_models <- function() {
 #' }
 #' }
 #' @export
-edge_quick_setup <- function(model_name, cache_dir = NULL, verbose = TRUE) {
+edge_quick_setup <- function(model_name, cache_dir = NULL, verify_checksum = TRUE,
+                             expected_sha256 = NULL, trust_first_use = FALSE, verbose = TRUE) {
   # Parameter validation
   if (is.null(model_name)) {
     model_name <- ""
@@ -653,17 +911,24 @@ edge_quick_setup <- function(model_name, cache_dir = NULL, verbose = TRUE) {
   }
 
   models <- edge_list_models()
-  model_info <- models[models$name == model_name, ]
-
+  resolved_name <- edge_resolve_model_name(model_name, models)
+  if (is.na(resolved_name)) {
+    stop("Model '", model_name, "' not found. Available models:\n",
+         paste(models$name, collapse = ", "))
+  }
+  model_info <- models[models$name == resolved_name, , drop = FALSE]
   if (nrow(model_info) == 0) {
     stop("Model '", model_name, "' not found. Available models:\n",
          paste(models$name, collapse = ", "))
   }
+  model_info <- model_info[1, , drop = FALSE]
 
   if (verbose) {
     message("Setting up ", model_name, " (", model_info$size, ")...")
     if (model_info$source == "gpt4all") {
       message("Source: GPT4All CDN (direct download, no auth required)")
+    } else if (model_info$source == "huggingface") {
+      message("Source: Hugging Face (some models may require HF_TOKEN depending on license)")
     }
   }
 
@@ -672,6 +937,9 @@ edge_quick_setup <- function(model_name, cache_dir = NULL, verbose = TRUE) {
     url = model_info$download_url,
     filename = model_info$filename,
     cache_dir = cache_dir,
+    verify_checksum = verify_checksum,
+    expected_sha256 = expected_sha256,
+    trust_first_use = trust_first_use,
     verbose = verbose
   )
 
@@ -700,6 +968,9 @@ edge_quick_setup <- function(model_name, cache_dir = NULL, verbose = TRUE) {
 #' @param filename Local filename to save as
 #' @param cache_dir Directory to store downloaded models (default: user cache directory)
 #' @param force_download Force re-download even if file exists
+#' @param verify_checksum Verify SHA-256 checksum if available (default: TRUE)
+#' @param expected_sha256 Optional expected SHA-256 hash for the file
+#' @param trust_first_use Store a local hash if no known hash exists (default: FALSE)
 #' @param verbose Whether to print progress messages
 #' @return Path to the downloaded model file
 #'
@@ -712,7 +983,9 @@ edge_quick_setup <- function(model_name, cache_dir = NULL, verbose = TRUE) {
 #' )
 #' }
 #' @export
-edge_download_url <- function(url, filename, cache_dir = NULL, force_download = FALSE, verbose = TRUE) {
+edge_download_url <- function(url, filename, cache_dir = NULL, force_download = FALSE,
+                              verify_checksum = TRUE, expected_sha256 = NULL,
+                              trust_first_use = FALSE, verbose = TRUE) {
   # Validate inputs
 
 if (is.null(url) || !is.character(url) || nchar(url) == 0) {
@@ -742,11 +1015,24 @@ if (is.null(url) || !is.character(url) || nchar(url) == 0) {
     if (verbose) message("Created cache directory: ", cache_dir)
   }
 
+  if (!.is_writable_dir(cache_dir)) {
+    stop("Cache directory is not writable: ", cache_dir, "\n",
+         "Specify a writable cache_dir or adjust permissions.")
+  }
+
   local_path <- file.path(cache_dir, basename(filename))
 
   # Check if valid file exists
   if (file.exists(local_path) && !force_download) {
     if (.is_valid_gguf_file(local_path)) {
+      .validate_model_checksum(local_path,
+                               model_id = NULL,
+                               filename = filename,
+                               cache_dir = cache_dir,
+                               expected_sha256 = expected_sha256,
+                               verify_checksum = verify_checksum,
+                               trust_first_use = trust_first_use,
+                               verbose = verbose)
       if (verbose) message("Model already exists: ", local_path)
       return(local_path)
     } else {
@@ -765,10 +1051,19 @@ if (is.null(url) || !is.character(url) || nchar(url) == 0) {
   success <- .robust_download(url, local_path, verbose = verbose)
 
   if (success && file.exists(local_path) && .is_valid_gguf_file(local_path)) {
+    .validate_model_checksum(local_path,
+                             model_id = NULL,
+                             filename = filename,
+                             cache_dir = cache_dir,
+                             expected_sha256 = expected_sha256,
+                             verify_checksum = verify_checksum,
+                             trust_first_use = trust_first_use,
+                             verbose = verbose)
     if (verbose) {
       file_size_gb <- round(file.info(local_path)$size / (1024^3), 2)
       message("Download completed! Size: ", file_size_gb, " GB")
     }
+    try(Sys.setFileTime(local_path, Sys.time()), silent = TRUE)
     return(local_path)
   } else {
     if (file.exists(local_path)) file.remove(local_path)
@@ -919,17 +1214,54 @@ edge_small_model_config <- function(model_size_mb = NULL, available_ram_gb = NUL
 #'   edge_free_model(ctx)
 #' }
 #' }
+#' @param timeout_seconds Optional timeout in seconds for inference
 #' @export
-edge_stream_completion <- function(ctx, prompt, callback, n_predict = 128L, temperature = 0.8, top_p = 0.95) {
+edge_stream_completion <- function(ctx, prompt, callback, n_predict = 128L, temperature = 0.8, top_p = 0.95,
+                                   timeout_seconds = NULL) {
   if (!is.function(callback)) {
     stop("Callback must be a function")
   }
-  
+
   if (!is.character(prompt) || length(prompt) != 1L) {
     stop("Prompt must be a single character string")
   }
+
+  if (!is_valid_model(ctx)) {
+    stop("Invalid model context. Load a model first with edge_load_model()")
+  }
   
-  edge_completion_stream_internal(ctx, prompt, callback, 
+  if (!is.null(timeout_seconds)) {
+    if (!is.numeric(timeout_seconds) || length(timeout_seconds) != 1 || timeout_seconds <= 0) {
+      stop("timeout_seconds must be a positive number of seconds")
+    }
+  }
+
+  start_time <- Sys.time()
+  safe_callback <- function(data) {
+    if (!is.null(timeout_seconds)) {
+      elapsed <- as.numeric(difftime(Sys.time(), start_time, units = "secs"))
+      if (elapsed > timeout_seconds) {
+        message("Timeout reached, stopping generation.")
+        return(FALSE)
+      }
+    }
+
+    result <- tryCatch({
+      callback(data)
+    }, error = function(e) {
+      message("Callback error: ", e$message)
+      return(FALSE)
+    })
+
+    if (!is.logical(result) || length(result) != 1 || is.na(result)) {
+      message("Callback must return TRUE/FALSE; stopping generation.")
+      return(FALSE)
+    }
+
+    result
+  }
+
+  edge_completion_stream_internal(ctx, prompt, safe_callback,
                                  as.integer(n_predict),
                                  as.numeric(temperature),
                                  as.numeric(top_p))
@@ -1019,8 +1351,8 @@ edge_chat_stream <- function(ctx, system_prompt = NULL, max_history = 10, n_pred
       n_predict = n_predict, 
       temperature = temperature)
     
-    # Extract assistant response (remove the prompt part)
-    assistant_response <- sub(prompt, "", result$full_response, fixed = TRUE)
+    # Use the response captured during streaming
+    assistant_response <- current_response
     
     # Add assistant response to history
     conversation_history <- append(conversation_history, 
@@ -1045,9 +1377,13 @@ build_chat_prompt <- function(history) {
   if (length(history) == 0) {
     return("")
   }
-  
+
+  if (!is.list(history) || !all(sapply(history, function(x) is.list(x) && !is.null(x$role) && !is.null(x$content)))) {
+    stop("history must be a list of turns each with $role and $content fields")
+  }
+
   prompt_parts <- c()
-  
+
   for (turn in history) {
     if (turn$role == "system") {
       prompt_parts <- c(prompt_parts, paste("System:", turn$content))
@@ -1069,9 +1405,10 @@ build_chat_prompt <- function(history) {
 #' policies about actively managing cached content and keeping sizes small.
 #'
 #' @param cache_dir Cache directory path (default: user cache directory)
-#' @param max_age_days Maximum age of files to keep in days (default: 30)
-#' @param max_size_mb Maximum total cache size in MB (default: 500)
-#' @param interactive Whether to ask for user confirmation before deletion
+#' @param max_age_days Maximum age of files to keep in days (default: option edgemodelr.cache_max_age_days or 30)
+#' @param max_size_mb Maximum total cache size in MB (default: option edgemodelr.cache_max_size_mb or 5000)
+#' @param use_lru If TRUE, evict least-recently-used files when size exceeds limit
+#' @param ask Whether to ask for user confirmation before deletion (only in interactive sessions)
 #' @param verbose Whether to print status messages (default: TRUE)
 #' @return Invisible list of deleted files
 #' @examples
@@ -1083,7 +1420,12 @@ build_chat_prompt <- function(history) {
 #' edge_clean_cache(max_age_days = 7, max_size_mb = 100)
 #' }
 #' @export
-edge_clean_cache <- function(cache_dir = NULL, max_age_days = 30, max_size_mb = 500, interactive = TRUE, verbose = TRUE) {
+edge_clean_cache <- function(cache_dir = NULL,
+                             max_age_days = getOption("edgemodelr.cache_max_age_days", 30),
+                             max_size_mb = getOption("edgemodelr.cache_max_size_mb", 5000),
+                             use_lru = TRUE,
+                             ask = TRUE,
+                             verbose = TRUE) {
   if (is.null(cache_dir)) {
     cache_dir <- tools::R_user_dir("edgemodelr", "cache")
   }
@@ -1111,7 +1453,7 @@ edge_clean_cache <- function(cache_dir = NULL, max_age_days = 30, max_size_mb = 
   total_size <- sum(file_info$size_mb, na.rm = TRUE)
   size_files <- character(0)
   if (total_size > max_size_mb) {
-    file_info_sorted <- file_info[order(file_info$mtime), ]
+    file_info_sorted <- if (use_lru) file_info[order(file_info$mtime), ] else file_info
     cumsum_size <- cumsum(file_info_sorted$size_mb)
     excess_files <- file_info_sorted[cumsum_size <= (total_size - max_size_mb), ]
     if (nrow(excess_files) > 0) {
@@ -1133,8 +1475,8 @@ edge_clean_cache <- function(cache_dir = NULL, max_age_days = 30, max_size_mb = 
             round(total_delete_size, 1), " MB)")
   }
   
-  # Ask for confirmation in interactive mode
-  if (interactive && interactive()) {
+  # Ask for confirmation only when requested and in an interactive session
+  if (ask && interactive()) {
     consent <- utils::askYesNo(
       paste("Delete", length(files_to_delete), "cached files?"),
       default = TRUE
@@ -1162,6 +1504,25 @@ edge_clean_cache <- function(cache_dir = NULL, max_age_days = 30, max_size_mb = 
   }
   
   invisible(deleted_files)
+}
+
+#' Cache size information
+#' @param cache_dir Cache directory path
+#' @return List with total_size_mb and file_count
+#' @export
+edge_cache_info <- function(cache_dir = NULL) {
+  if (is.null(cache_dir)) {
+    cache_dir <- tools::R_user_dir("edgemodelr", "cache")
+  }
+  if (!dir.exists(cache_dir)) {
+    return(list(cache_dir = cache_dir, total_size_mb = 0, file_count = 0))
+  }
+  files <- list.files(cache_dir, full.names = TRUE, recursive = TRUE)
+  if (length(files) == 0) {
+    return(list(cache_dir = cache_dir, total_size_mb = 0, file_count = 0))
+  }
+  size_mb <- sum(file.info(files)$size / (1024^2), na.rm = TRUE)
+  list(cache_dir = cache_dir, total_size_mb = round(size_mb, 1), file_count = length(files))
 }
 
 #' Control llama.cpp logging verbosity
@@ -1193,6 +1554,7 @@ edge_set_verbose <- function(enabled = FALSE) {
 #' @param prompt Test prompt to use for benchmarking (default: standard test)
 #' @param n_predict Number of tokens to generate for the test
 #' @param iterations Number of test iterations to average results
+#' @param track_memory If TRUE, attempt to report peak memory usage (best-effort)
 #' @return List with performance metrics
 #'
 #' @examples
@@ -1206,18 +1568,23 @@ edge_set_verbose <- function(enabled = FALSE) {
 #' }
 #' }
 #' @export
-edge_benchmark <- function(ctx, prompt = "The quick brown fox", n_predict = 50, iterations = 3) {
+edge_benchmark <- function(ctx, prompt = "The quick brown fox", n_predict = 50, iterations = 3,
+                           track_memory = FALSE) {
   if (!is_valid_model(ctx)) {
     stop("Invalid model context")
   }
 
   times <- numeric(iterations)
   tokens_per_sec <- numeric(iterations)
+  peak_memory_mb <- NA_real_
 
   message("Running performance benchmark with ", iterations, " iterations...")
 
   for (i in 1:iterations) {
     start_time <- Sys.time()
+    if (track_memory && exists("memory.size", where = baseenv(), inherits = TRUE)) {
+      peak_memory_mb <- max(peak_memory_mb, utils::memory.size(), na.rm = TRUE)
+    }
     result <- edge_completion(ctx, prompt, n_predict = n_predict, temperature = 0.0)
     end_time <- Sys.time()
 
@@ -1235,7 +1602,8 @@ edge_benchmark <- function(ctx, prompt = "The quick brown fox", n_predict = 50, 
     max_tokens_per_second = max(tokens_per_sec),
     total_time = sum(times),
     iterations = iterations,
-    tokens_per_iteration = n_predict
+    tokens_per_iteration = n_predict,
+    peak_memory_mb = if (track_memory) peak_memory_mb else NA_real_
   )
 }
 
@@ -1350,11 +1718,17 @@ edge_find_gguf_models <- function(source_dirs = NULL, target_dir = NULL, create_
     ollama_paths <- c(
       path.expand("~/.ollama/models/blobs"),
       file.path(Sys.getenv("USERPROFILE"), ".ollama", "models", "blobs"),
+      file.path(Sys.getenv("USERPROFILE"), "OneDrive", ".ollama", "models", "blobs"),
+      file.path(Sys.getenv("APPDATA"), "Ollama", "models", "blobs"),
+      file.path(Sys.getenv("APPDATA"), ".ollama", "models", "blobs"),
+      file.path(Sys.getenv("LOCALAPPDATA"), "Ollama", "models", "blobs"),
+      file.path(Sys.getenv("LOCALAPPDATA"), ".ollama", "models", "blobs"),
       "/usr/share/ollama/models/blobs"
     )
     for (path in ollama_paths) {
-      if (dir.exists(path)) {
-        source_dirs <- c(source_dirs, path)
+      expanded <- path.expand(path)
+      if (dir.exists(expanded)) {
+        source_dirs <- c(source_dirs, expanded)
         if (verbose) message("[*] Found Ollama models: ", path)
         break
       }

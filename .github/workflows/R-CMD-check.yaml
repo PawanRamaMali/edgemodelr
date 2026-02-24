@@ -142,13 +142,15 @@ jobs:
             exit 1
           fi
 
-          # Check for WARNINGs but ignore "Insufficient package version" which is expected
-          # when checking the same version that's already on CRAN
-          WARNING_COUNT=$(grep -c "WARNING" "$CHECK_DIR/00check.log" || echo "0")
-          VERSION_WARNING=$(grep -c "Insufficient package version" "$CHECK_DIR/00check.log" || echo "0")
+          # Check for WARNINGs, excluding the "CRAN incoming feasibility" version check
+          # (which warns when the submitted version already exists on CRAN - expected in CI)
+          REAL_WARNINGS=$(grep "WARNING" "$CHECK_DIR/00check.log" \
+            | grep -v "checking CRAN incoming feasibility" \
+            | grep -v "^Status:" || true)
 
-          if [ "$WARNING_COUNT" -gt "$VERSION_WARNING" ]; then
-            echo "⚠️  WARNINGs found in CRAN checks (excluding version warning)"
+          if [ -n "$REAL_WARNINGS" ]; then
+            echo "⚠️  WARNINGs found in CRAN checks"
+            echo "$REAL_WARNINGS"
             exit 1
           fi
 
@@ -279,13 +281,15 @@ jobs:
             exit 1
           fi
 
-          # Check for WARNINGs but ignore "Insufficient package version" which is expected
-          # when checking the same version that's already on CRAN
-          WARNING_COUNT=$(grep -c "WARNING" "$CHECK_DIR/00check.log" || echo "0")
-          VERSION_WARNING=$(grep -c "Insufficient package version" "$CHECK_DIR/00check.log" || echo "0")
+          # Check for WARNINGs, excluding the "CRAN incoming feasibility" version check
+          # (which warns when the submitted version already exists on CRAN - expected in CI)
+          REAL_WARNINGS=$(grep "WARNING" "$CHECK_DIR/00check.log" \
+            | grep -v "checking CRAN incoming feasibility" \
+            | grep -v "^Status:" || true)
 
-          if [ "$WARNING_COUNT" -gt "$VERSION_WARNING" ]; then
-            echo "⚠️  WARNINGs found in strict macOS checks (excluding version warning)"
+          if [ -n "$REAL_WARNINGS" ]; then
+            echo "⚠️  WARNINGs found in strict macOS checks"
+            echo "$REAL_WARNINGS"
             exit 1
           fi
 
