@@ -1218,15 +1218,16 @@ edge_small_model_config <- function(model_size_mb = NULL, available_ram_gb = NUL
 #' @export
 edge_stream_completion <- function(ctx, prompt, callback, n_predict = 128L, temperature = 0.8, top_p = 0.95,
                                    timeout_seconds = NULL) {
-  if (!is_valid_model(ctx)) {
-    stop("Invalid model context. Load a model first with edge_load_model()")
-  }
   if (!is.function(callback)) {
     stop("Callback must be a function")
   }
-  
+
   if (!is.character(prompt) || length(prompt) != 1L) {
     stop("Prompt must be a single character string")
+  }
+
+  if (!is_valid_model(ctx)) {
+    stop("Invalid model context. Load a model first with edge_load_model()")
   }
   
   if (!is.null(timeout_seconds)) {
