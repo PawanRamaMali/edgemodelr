@@ -1,30 +1,24 @@
-## Resubmission - edgemodelr 0.1.6
+## Submission - edgemodelr 0.2.0
 
-This is a follow-up fix addressing remaining CRAN check issues from 0.1.5.
+### Changes in 0.2.0
 
-### Issues Fixed in 0.1.6
+#### Bug Fixes
+- Fixed SHA-256 checksum validation (was hashing the path string, not file contents)
+- Fixed HuggingFace token authentication in downloads (now uses curl with proper Authorization header)
+- Fixed model alias resolution with case-insensitive and partial prefix matching
+- Fixed `edge_clean_cache()`: renamed `interactive` parameter to `ask` to avoid shadowing base R `interactive()`
+- Fixed GGUF magic byte validation to use raw byte comparison throughout (`identical(header, charToRaw("GGUF"))`)
+- Fixed `edge_completion()` and `edge_stream_completion()` to validate model context early
+- Fixed `edge_chat_stream()` response extraction to use streamed response directly
+- Added input validation to `build_chat_prompt()`
 
-#### 1. CRAN Example Downloads - FIXED
-- Fixed example download URLs and ensured all `\dontrun{}` examples are correct
-- Removed CI version warnings
-
-#### 2. CRAN Pre-test Issues - FIXED
-- Fixed CRAN pre-test failures
-- Removed Valgrind checks from CI (too slow and not required for CRAN)
-- Simplified CI workflow
-
-#### 3. DESCRIPTION Cleanup
-- Streamlined DESCRIPTION metadata
-
-### Issues Previously Fixed (in 0.1.5)
-
-- Changed `\donttest{}` to `\dontrun{}` for examples that download models
-- Fixed M1 Mac compiler warnings with explicit `static_cast<>`
-- Fixed `on.exit()` connection handling in loops (thanks @eddelbuettel)
-- Removed explicit C++17 from SystemRequirements (PR #22 by @eddelbuettel)
+#### CRAN Compliance
+- Default build is now fully portable (no `-msse4.2` or other non-portable flags); SIMD acceleration is opt-in via `EDGEMODELR_SIMD` environment variable
+- All examples that download models use `\dontrun{}`
+- Removed development-only files from the repository
 
 ### Test environments
-* local Windows 11 install, R 4.5.1
+* local Windows 11, R 4.5.1
 * GitHub Actions:
   - ubuntu-latest: R (release, devel, oldrel-1)
   - macOS-latest: R (release)
@@ -35,11 +29,8 @@ There were no ERRORs or WARNINGs.
 
 There was 1 NOTE:
 * checking installed package size ... NOTE
-  installed size is 8.0Mb
-  - This is expected due to bundled llama.cpp C/C++ source code (~56MB source, 7.6Mb compiled)
+  installed size is ~8MB
+  - Expected: the package bundles the llama.cpp inference engine (~56MB C/C++ source, ~8MB compiled)
 
-### Previous Archive Issues (addressed in 0.1.4)
-
-All third-party code contributors are properly credited in:
-- DESCRIPTION: Authors@R field
-- inst/COPYRIGHTS: Detailed attribution
+### Third-party code
+All bundled code (llama.cpp, GGML) is credited in DESCRIPTION Authors@R and inst/COPYRIGHTS.

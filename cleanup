@@ -1,4 +1,0 @@
-#!/bin/sh
-
-find . -name \*.o -delete
-find . -name \*.so -delete

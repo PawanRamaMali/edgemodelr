@@ -19,10 +19,8 @@
 ^\.RData$
 ^\.Ruserdata$
 ^docs$
-^NEWS\.md$
 ^codecov\.yml$
 ^examples$
-^issues\.md$
-^MODEL_TESTING\.md$
-^test_.*\.R$
 ^cran-comments\.md$
+^cleanup$
+^_backup$
