@@ -156,7 +156,7 @@ Cache options:
 
 ## ⚡ Performance Optimizations for Small Models
 
-**NEW in v0.1.4**: Automatic optimizations for small language models (1B-3B parameters)!
+Automatic optimizations for small language models (1B-3B parameters):
 
 ```r
 library(edgemodelr)
@@ -215,7 +215,7 @@ Model names are case-insensitive; common aliases like `Llama-3.2-3B` are accepte
 | **Mistral-7B** | ~4.1GB | GPT4All CDN | High quality | `edge_quick_setup("mistral-7b")` |
 | **Phi-3-mini** | ~2.4GB | HuggingFace | Reasoning | `edge_quick_setup("phi3-mini")` |
 
-### Large Models (7-9GB) - NEW!
+### Large Models (7-9GB)
 
 | Model | Size | Source | Use Case | Command |
 |-------|------|--------|----------|---------|
@@ -446,7 +446,7 @@ edge_free_model(ctx)
 
 ### Performance Optimizations
 
-- **SIMD Instructions**: Automatic AVX/AVX2/FMA detection
+- **SIMD Instructions**: Optional AVX/AVX2/AVX512 acceleration (set `EDGEMODELR_SIMD=AVX2` at install time; default is portable generic build)
 - **Multi-threading**: Uses all available CPU cores
 - **Memory Efficiency**: Optimized batch processing
 - **Smart Quantization**: Q4_K_M and Q5_K_M support
@@ -543,7 +543,7 @@ system("gcc --version")  # Should show C++17 support
 
 ## 🤝 Contributing
 
-We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) for details.
+We welcome contributions! Please open an issue or pull request on GitHub.
 
 ### Development Setup
 
