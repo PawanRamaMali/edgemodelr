@@ -83,7 +83,7 @@ edge_find_ollama_models <- function(ollama_dir = NULL, test_compatibility = FALS
     tryCatch({
       con <- file(file_path, "rb")
       header <- readBin(con, "raw", n = 4)
-      if (length(header) == 4 && rawToChar(header) == "GGUF") {
+      if (identical(header, charToRaw("GGUF"))) {
         # Read GGUF version (uint32 little-endian)
         version_bytes <- readBin(con, "raw", n = 4)
         if (length(version_bytes) == 4) {

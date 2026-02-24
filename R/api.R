@@ -159,6 +159,9 @@ edge_load_model <- function(model_path, n_ctx = 2048L, n_gpu_layers = 0L, n_thre
 #' @export
 edge_completion <- function(ctx, prompt, n_predict = 128L, temperature = 0.8, top_p = 0.95,
                             timeout_seconds = NULL) {
+  if (!is_valid_model(ctx)) {
+    stop("Invalid model context. Load a model first with edge_load_model()")
+  }
   if (!is.character(prompt) || length(prompt) != 1L) {
     stop("Prompt must be a single character string")
   }
@@ -1215,6 +1218,9 @@ edge_small_model_config <- function(model_size_mb = NULL, available_ram_gb = NUL
 #' @export
 edge_stream_completion <- function(ctx, prompt, callback, n_predict = 128L, temperature = 0.8, top_p = 0.95,
                                    timeout_seconds = NULL) {
+  if (!is_valid_model(ctx)) {
+    stop("Invalid model context. Load a model first with edge_load_model()")
+  }
   if (!is.function(callback)) {
     stop("Callback must be a function")
   }
@@ -1344,8 +1350,8 @@ edge_chat_stream <- function(ctx, system_prompt = NULL, max_history = 10, n_pred
       n_predict = n_predict, 
       temperature = temperature)
     
-    # Extract assistant response (remove the prompt part)
-    assistant_response <- sub(prompt, "", result$full_response, fixed = TRUE)
+    # Use the response captured during streaming
+    assistant_response <- current_response
     
     # Add assistant response to history
     conversation_history <- append(conversation_history, 
@@ -1370,9 +1376,13 @@ build_chat_prompt <- function(history) {
   if (length(history) == 0) {
     return("")
   }
-  
+
+  if (!is.list(history) || !all(sapply(history, function(x) is.list(x) && !is.null(x$role) && !is.null(x$content)))) {
+    stop("history must be a list of turns each with $role and $content fields")
+  }
+
   prompt_parts <- c()
-  
+
   for (turn in history) {
     if (turn$role == "system") {
       prompt_parts <- c(prompt_parts, paste("System:", turn$content))
