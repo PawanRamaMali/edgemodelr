@@ -1953,3 +1953,154 @@ edge_find_gguf_models <- function(source_dirs = NULL, target_dir = NULL, create_
   ))
 }
 
+
+# ── CUDA / GPU backend support ─────────────────────────────────────────────────
+
+#' Return the default path for the installed CUDA backend DLL
+#' @keywords internal
+edge_cuda_default_path <- function() {
+  cuda_dir <- file.path(tools::R_user_dir("edgemodelr", "cache"), "cuda")
+  dll <- if (.Platform$OS.type == "windows") "ggml-cuda-12.4.dll" else "libggml-cuda.so"
+  path <- file.path(cuda_dir, dll)
+  if (file.exists(path)) path else NULL
+}
+
+#' Install the CUDA backend for GPU-accelerated inference
+#'
+#' Downloads a pre-built GGML CUDA backend shared library and stores it in the
+#' edgemodelr cache. After installation, restart your R session (or call
+#' `edge_reload_cuda()`) so the GPU backend is picked up during model loading.
+#'
+#' @param cuda_version CUDA version string. One of `"12.4"` (default) or `"13.1"`.
+#' @param force Re-download even if already installed.
+#' @param llama_build llama.cpp build number to pull the backend from
+#'   (default: `"b8179"`, the version bundled in this package).
+#' @return Invisibly returns the path to the installed CUDA backend DLL.
+#' @examples
+#' \dontrun{
+#' edge_install_cuda()                  # GPU inference enabled after restart
+#' ctx <- edge_load_model("model.gguf", n_gpu_layers = 35)
+#' }
+#' @export
+edge_install_cuda <- function(cuda_version = "12.4",
+                              force = FALSE,
+                              llama_build = "b8179") {
+  if (!.Platform$OS.type == "windows") {
+    stop("edge_install_cuda() currently supports Windows only. ",
+         "On Linux/macOS, build with EDGEMODELR_CUDA=1 at install time.")
+  }
+
+  cuda_dir <- file.path(tools::R_user_dir("edgemodelr", "cache"), "cuda")
+  dir.create(cuda_dir, recursive = TRUE, showWarnings = FALSE)
+
+  dll_name <- sprintf("ggml-cuda-%s.dll", cuda_version)
+  dest <- file.path(cuda_dir, dll_name)
+
+  if (file.exists(dest) && !force) {
+    message("CUDA backend already installed at:\n  ", dest)
+    message("Use force = TRUE to re-download.")
+    invisible(edge_activate_cuda(dest))
+    return(invisible(dest))
+  }
+
+  # Download from llama.cpp GitHub Releases
+  zip_name <- sprintf("llama-%s-bin-win-cuda-%s-x64.zip", llama_build, cuda_version)
+  release_url <- sprintf(
+    "https://github.com/ggml-org/llama.cpp/releases/download/%s/%s",
+    llama_build, zip_name
+  )
+
+  tmp_zip <- tempfile(fileext = ".zip")
+  on.exit(unlink(tmp_zip), add = TRUE)
+
+  message("Downloading llama.cpp CUDA backend (", cuda_version, ") from GitHub Releases...")
+  message("This is a ~200MB download. Please wait...")
+
+  tryCatch({
+    utils::download.file(release_url, tmp_zip, mode = "wb", quiet = FALSE)
+  }, error = function(e) {
+    stop("Failed to download CUDA backend: ", conditionMessage(e),
+         "\nURL: ", release_url)
+  })
+
+  # Extract only ggml-cuda*.dll from the zip
+  message("Extracting CUDA backend DLL...")
+  zip_contents <- utils::unzip(tmp_zip, list = TRUE)
+  cuda_dlls <- zip_contents$Name[grepl("ggml-cuda", zip_contents$Name, fixed = TRUE) &
+                                   grepl("[.]dll$", zip_contents$Name)]
+
+  if (length(cuda_dlls) == 0) {
+    stop("Could not find ggml-cuda DLL in the downloaded archive.\n",
+         "Contents: ", paste(head(zip_contents$Name, 20), collapse = ", "))
+  }
+
+  # Extract the best match (prefer exact ggml-cuda-{version}.dll)
+  best <- cuda_dlls[grepl(sprintf("ggml-cuda-%s", cuda_version), cuda_dlls)]
+  if (length(best) == 0) best <- cuda_dlls[1]
+
+  utils::unzip(tmp_zip, files = best[1], exdir = cuda_dir, junkpaths = TRUE)
+
+  # Rename to our canonical name if needed
+  extracted <- file.path(cuda_dir, basename(best[1]))
+  if (!identical(extracted, dest)) {
+    file.rename(extracted, dest)
+  }
+
+  message("CUDA backend installed at:\n  ", dest)
+  message("\nTo activate GPU support, restart your R session or call:")
+  message("  edge_reload_cuda()")
+
+  edge_activate_cuda(dest)
+  invisible(dest)
+}
+
+#' Activate an installed CUDA backend without restarting R
+#'
+#' This loads the CUDA backend DLL into the current session. It must be called
+#' before the first `edge_load_model()` call in the session, otherwise a session
+#' restart is required.
+#'
+#' @param path Path to the CUDA DLL. Defaults to the standard install location.
+#' @return Invisibly returns `TRUE` if activation succeeded.
+#' @export
+edge_reload_cuda <- function(path = NULL) {
+  if (is.null(path)) {
+    path <- edge_cuda_default_path()
+    if (is.null(path)) {
+      stop("No CUDA backend found. Run edge_install_cuda() first.")
+    }
+  }
+  edge_activate_cuda(path)
+}
+
+#' @keywords internal
+edge_activate_cuda <- function(path) {
+  if (!file.exists(path)) {
+    warning("CUDA backend not found at: ", path)
+    return(invisible(FALSE))
+  }
+  ok <- edge_use_cuda_backend_internal(path)
+  if (ok) {
+    message("CUDA backend registered: ", path)
+    message("GPU layers will be used when n_gpu_layers > 0 in edge_load_model().")
+  }
+  invisible(ok)
+}
+
+#' Check whether a CUDA backend is installed and active
+#'
+#' @return A list with `installed` (logical), `active` (logical), and `path`
+#'   (character or NA).
+#' @export
+edge_cuda_info <- function() {
+  installed_path <- edge_cuda_default_path()
+  active_path    <- edge_cuda_backend_path_internal()
+
+  list(
+    installed = !is.null(installed_path),
+    active    = nchar(active_path) > 0,
+    path      = if (nchar(active_path) > 0) active_path
+                else if (!is.null(installed_path)) installed_path
+                else NA_character_
+  )
+}

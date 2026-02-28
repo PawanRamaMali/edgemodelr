@@ -29,6 +29,10 @@ static bool g_logging_enabled = false;
 // Global variable to control console output suppression (for CRAN compliance)
 bool g_suppress_console_output = true;
 
+// Path to an optional CUDA backend DLL, set by edge_use_cuda_backend_internal()
+// Must be set BEFORE the first call to ensure_llama_initialized()
+static std::string g_cuda_backend_path;
+
 // Custom log callback to suppress output
 void quiet_log_callback(ggml_log_level level, const char * text, void * user_data) {
   // Only output critical errors using R's error system, suppress all other output
@@ -46,17 +50,40 @@ static void ensure_llama_initialized() {
     // Set up quiet logging
     llama_log_set(quiet_log_callback, NULL);
 
-    // Load all available backends (including CPU)
+    // Load CUDA (or other GPU) backend if configured via edge_use_cuda_backend_internal()
+    if (!g_cuda_backend_path.empty()) {
+      ggml_backend_reg_t cuda_reg = ggml_backend_load(g_cuda_backend_path.c_str());
+      if (!cuda_reg && g_logging_enabled) {
+        Rcpp::warning("Failed to load GPU backend from: " + g_cuda_backend_path +
+                      ". Falling back to CPU.");
+      }
+    }
+
+    // Load all available backends (CPU always present, GPU backends via dynamic loading)
     ggml_backend_load_all();
 
     // Initialize llama backend
     llama_backend_init();
 
-    // Register CPU backend explicitly
+    // Register CPU backend explicitly (belt-and-suspenders in case load_all missed it)
     ggml_backend_register(ggml_backend_cpu_reg());
 
     initialized = true;
   }
+}
+
+// [[Rcpp::export]]
+bool edge_use_cuda_backend_internal(std::string path) {
+  // Store the path for use during next ensure_llama_initialized() call.
+  // Note: if initialization has already run, this has no effect — the user
+  // must restart R or call edge_reload_backends_internal() to apply.
+  g_cuda_backend_path = path;
+  return true;
+}
+
+// [[Rcpp::export]]
+std::string edge_cuda_backend_path_internal() {
+  return g_cuda_backend_path;
 }
 
 struct EdgeModelContext {
@@ -160,7 +187,10 @@ SEXP edge_load_model_internal(std::string model_path, int n_ctx = 2048, int n_gp
     int effective_threads = (n_threads > 0) ? std::min(n_threads, hardware_threads) : hardware_threads;
     ctx_params.n_threads = effective_threads;
     ctx_params.n_threads_batch = hardware_threads;  // batch processing always benefits from max threads
-    ctx_params.flash_attn = flash_attn;
+    // flash_attn was a bool in older llama.cpp; b8179 changed to an enum
+    ctx_params.flash_attn_type = flash_attn
+      ? LLAMA_FLASH_ATTN_TYPE_ENABLED
+      : LLAMA_FLASH_ATTN_TYPE_DISABLED;
     
     struct llama_context* ctx = llama_init_from_model(model, ctx_params);
     if (!ctx) {
