@@ -24,3 +24,6 @@
 ^cran-comments\.md$
 ^cleanup$
 ^_backup$
+^err\.txt$
+^out\.txt$
+^update_llama\.py$

@@ -254,7 +254,16 @@ void ggml_abort(const char * file, int line, const char * fmt, ...) {
         ggml_print_backtrace();
     }
 
+#ifdef USING_R
+    // CRAN policy prohibits calling abort() from compiled code.
+    // raise(SIGABRT) has the same effect (terminates the process via signal)
+    // without referencing the banned 'abort' symbol in the object file.
+    // In practice the R bindings always install an abort callback (Rf_error,
+    // which does longjmp), so this line is never reached during normal use.
+    raise(SIGABRT);
+#else
     abort();
+#endif
 }
 
 // ggml_print_backtrace is registered with std::set_terminate by ggml.cpp

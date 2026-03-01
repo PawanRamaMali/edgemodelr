@@ -2929,9 +2929,10 @@ static std::string llama_decode_text(const std::string & text) {
     const auto cpts = unicode_cpts_from_utf8(text);
     for (const auto cpt : cpts) {
         const auto utf8 = unicode_cpt_to_utf8(cpt);
-        try {
-            decoded_text += unicode_utf8_to_byte(utf8);
-        } catch (const std::out_of_range & /*e*/) {
+        uint8_t byte;
+        if (unicode_utf8_to_byte_safe(utf8, byte)) {
+            decoded_text += (char)byte;
+        } else {
             decoded_text += "[UNK_BYTE_0x";
             for (const auto c : utf8) {
                 decoded_text += format("%02x", (uint8_t) c);

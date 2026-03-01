@@ -1,10 +1,11 @@
+CXX_STD = CXX17
 PKG_CPPFLAGS = -I../inst/include -I./llama -I./llama/models -I./ggml -I./ggml/ggml-cpu -DUSING_R=1 -DGGML_BUILD_FOR_R
-PKG_CXXFLAGS = -DNDEBUG -DGGML_USE_CPU -std=c++17
+PKG_CXXFLAGS = -DNDEBUG -DGGML_USE_CPU
 PKG_CFLAGS = -DNDEBUG -DGGML_USE_CPU
 
 # Cross-platform configuration without OpenMP for stability
 GGML_CXXFLAGS = $(PKG_CXXFLAGS) -fPIC -ftree-vectorize
-GGML_CFLAGS = $(PKG_CFLAGS) -DUSING_R=1 -fPIC -ftree-vectorize
+GGML_CFLAGS = $(PKG_CFLAGS) -DUSING_R=1 -fPIC -ftree-vectorize -fno-builtin-printf
 PKG_LIBS = $(LAPACK_LIBS) $(BLAS_LIBS) $(FLIBS)
 
 # Apple Accelerate framework for macOS (vDSP vector operations)

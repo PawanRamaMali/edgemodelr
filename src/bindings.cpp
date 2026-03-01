@@ -135,7 +135,7 @@ SEXP edge_load_model_internal(std::string model_path, int n_ctx = 2048, int n_gp
     
     llama_model_params model_params = llama_model_default_params();
     model_params.n_gpu_layers = n_gpu_layers;
-    
+
     struct llama_model* model = llama_model_load_from_file(model_path.c_str(), model_params);
     if (!model) {
       // Check if file exists
