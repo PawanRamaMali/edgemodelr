@@ -1,11 +1,8 @@
-#ifndef GGML_VERSION_H
-#define GGML_VERSION_H
-
+// GGML version for edgemodelr build (llama.cpp b8179)
+#pragma once
 #define GGML_VERSION_MAJOR 0
-#define GGML_VERSION_MINOR 1
-#define GGML_VERSION_PATCH 0
-
-#define GGML_VERSION "0.1.0"
-#define GGML_COMMIT "edgemodelr-build"
-
-#endif // GGML_VERSION_H
+#define GGML_VERSION_MINOR 9
+#define GGML_VERSION_PATCH 7
+#define GGML_VERSION "0.9.7"
+#define GGML_BUILD_NUMBER 8179
+#define GGML_COMMIT "b8179"

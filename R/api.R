@@ -2,7 +2,8 @@
 #'
 #' @param model_path Path to a .gguf model file
 #' @param n_ctx Maximum context length (default: 2048)
-#' @param n_gpu_layers Number of layers to offload to GPU (default: 0, CPU-only)
+#' @param n_gpu_layers Number of layers to offload to GPU (default: 0, CPU-only).
+#'   Use -1 to offload all layers (requires CUDA backend via edge_install_cuda()).
 #' @param n_threads Number of CPU threads for inference (default: NULL = use all hardware threads).
 #'   Set to a lower value to leave cores free for other tasks.
 #' @param flash_attn Enable flash attention for faster inference (default: TRUE).
@@ -55,8 +56,8 @@ edge_load_model <- function(model_path, n_ctx = 2048L, n_gpu_layers = 0L, n_thre
   if (!is.numeric(n_ctx) || n_ctx <= 0) {
     stop("n_ctx must be a positive integer")
   }
-  if (!is.numeric(n_gpu_layers) || n_gpu_layers < 0) {
-    stop("n_gpu_layers must be a non-negative integer")
+  if (!is.numeric(n_gpu_layers) || (n_gpu_layers < 0 && n_gpu_layers != -1)) {
+    stop("n_gpu_layers must be a non-negative integer, or -1 to offload all layers to GPU")
   }
   # Validate n_threads: NULL means auto-detect (passed as 0L)
   if (!is.null(n_threads)) {
@@ -99,10 +100,13 @@ edge_load_model <- function(model_path, n_ctx = 2048L, n_gpu_layers = 0L, n_thre
   }
 
   # Try to load the model using the raw Rcpp function
+  # -1 means "all layers on GPU"; translate to a large number for llama.cpp
+  n_gpu_layers_actual <- if (n_gpu_layers == -1) .Machine$integer.max else as.integer(n_gpu_layers)
+
   ctx <- tryCatch({
     edge_load_model_internal(normalizePath(model_path),
                              as.integer(n_ctx),
-                             as.integer(n_gpu_layers),
+                             n_gpu_layers_actual,
                              as.integer(if (is.null(n_threads)) 0L else n_threads),
                              as.logical(flash_attn))
   }, error = function(e) {
@@ -1953,3 +1957,305 @@ edge_find_gguf_models <- function(source_dirs = NULL, target_dir = NULL, create_
   ))
 }
 
+
+# ── CUDA / GPU backend support ─────────────────────────────────────────────────
+
+#' Return the default path for the installed CUDA backend DLL
+#' @keywords internal
+edge_cuda_default_path <- function() {
+  cuda_dir <- file.path(tools::R_user_dir("edgemodelr", "cache"), "cuda")
+  if (!dir.exists(cuda_dir)) return(NULL)
+  if (.Platform$OS.type == "windows") {
+    dlls <- list.files(cuda_dir, pattern = "^ggml-cuda.*\\.dll$", full.names = TRUE)
+  } else {
+    dlls <- list.files(cuda_dir, pattern = "^(lib)?ggml-cuda.*\\.so(\\..*)?$", full.names = TRUE)
+  }
+  if (length(dlls) > 0) dlls[which.max(file.info(dlls)$mtime)] else NULL
+}
+
+#' Install the CUDA backend for GPU-accelerated inference
+#'
+#' Downloads a pre-built GGML CUDA backend shared library and stores it in the
+#' edgemodelr cache. After installation, restart your R session (or call
+#' `edge_reload_cuda()`) so the GPU backend is picked up during model loading.
+#'
+#' @param cuda_version CUDA version string. One of `"12.4"` or `"13.1"` (default).
+#'   Use `"13.1"` for Blackwell GPUs (RTX 50 series, GeForce sm_120).
+#' @param force Re-download even if already installed.
+#' @param llama_build llama.cpp build number to pull the backend from
+#'   (default: `"b8179"`, the version bundled in this package).
+#' @return Invisibly returns the path to the installed CUDA backend DLL.
+#' @examples
+#' \dontrun{
+#' edge_install_cuda()                  # GPU inference enabled after restart
+#' ctx <- edge_load_model("model.gguf", n_gpu_layers = 35)
+#' }
+#' @export
+edge_install_cuda <- function(cuda_version = "13.1",
+                              force = FALSE,
+                              llama_build = "b8179") {
+  if (!.Platform$OS.type == "windows") {
+    stop("edge_install_cuda() currently supports Windows only. ",
+         "On Linux/macOS, build with EDGEMODELR_CUDA=1 at install time.")
+  }
+
+  cuda_dir <- file.path(tools::R_user_dir("edgemodelr", "cache"), "cuda")
+  dir.create(cuda_dir, recursive = TRUE, showWarnings = FALSE)
+
+  dll_name <- sprintf("ggml-cuda-%s.dll", cuda_version)
+  dest <- file.path(cuda_dir, dll_name)
+
+  if (file.exists(dest) && !force) {
+    message("CUDA backend already installed at:\n  ", dest)
+    message("Use force = TRUE to re-download.")
+    invisible(edge_activate_cuda(dest))
+    return(invisible(dest))
+  }
+
+  # Download from llama.cpp GitHub Releases
+  zip_name <- sprintf("llama-%s-bin-win-cuda-%s-x64.zip", llama_build, cuda_version)
+  release_url <- sprintf(
+    "https://github.com/ggml-org/llama.cpp/releases/download/%s/%s",
+    llama_build, zip_name
+  )
+
+  tmp_zip <- tempfile(fileext = ".zip")
+  on.exit(unlink(tmp_zip), add = TRUE)
+
+  message("Downloading llama.cpp CUDA backend (", cuda_version, ") from GitHub Releases...")
+  message("This is a ~200MB download. Please wait...")
+
+  tryCatch({
+    utils::download.file(release_url, tmp_zip, mode = "wb", quiet = FALSE)
+  }, error = function(e) {
+    stop("Failed to download CUDA backend: ", conditionMessage(e),
+         "\nURL: ", release_url)
+  })
+
+  # Extract ggml-cuda*.dll plus ggml shared libraries it depends on
+  message("Extracting CUDA backend DLL and dependencies...")
+  zip_contents <- utils::unzip(tmp_zip, list = TRUE)
+  all_dlls <- zip_contents$Name[grepl("[.]dll$", zip_contents$Name)]
+
+  cuda_dlls <- all_dlls[grepl("ggml-cuda", all_dlls, fixed = TRUE)]
+  if (length(cuda_dlls) == 0) {
+    stop("Could not find ggml-cuda DLL in the downloaded archive.\n",
+         "Contents: ", paste(head(zip_contents$Name, 20), collapse = ", "))
+  }
+
+  # Extract the best match (prefer exact ggml-cuda-{version}.dll)
+  best <- cuda_dlls[grepl(sprintf("ggml-cuda-%s", cuda_version), cuda_dlls)]
+  if (length(best) == 0) best <- cuda_dlls[1]
+
+  # Also extract ggml shared runtime DLLs that ggml-cuda.dll links against
+  # (ggml-base.dll and ggml.dll from the same release are required dependencies)
+  companion_dlls <- all_dlls[grepl("^(ggml-base|ggml)[.]dll$", basename(all_dlls))]
+  to_extract <- unique(c(best[1], companion_dlls))
+  utils::unzip(tmp_zip, files = to_extract, exdir = cuda_dir, junkpaths = TRUE)
+  if (length(companion_dlls) > 0) {
+    message("Also extracted companion DLLs: ",
+            paste(basename(companion_dlls), collapse = ", "))
+  }
+
+  # Rename ggml-cuda to our canonical versioned name if needed
+  extracted <- file.path(cuda_dir, basename(best[1]))
+  if (!identical(extracted, dest)) {
+    file.rename(extracted, dest)
+  }
+
+  message("CUDA backend installed at:\n  ", dest)
+  message("\nTo activate GPU support, restart your R session or call:")
+  message("  edge_reload_cuda()")
+
+  edge_activate_cuda(dest)
+  invisible(dest)
+}
+
+#' Install CUDA runtime libraries required for GPU inference
+#'
+#' The CUDA backend (`ggml-cuda-XX.dll`) requires two sets of runtime DLLs
+#' that are **not** included with the NVIDIA display driver:
+#' \itemize{
+#'   \item \strong{nvcudart_hybrid64.dll} — CUDA hybrid runtime, already
+#'         present on your system in the Windows DriverStore (installed with
+#'         the GPU driver). This function copies it to the edgemodelr cache.
+#'   \item \strong{cublas64_13.dll / cublasLt64_13.dll} — cuBLAS linear-algebra
+#'         library (~400 MB download from NVIDIA's official redistrib server).
+#' }
+#'
+#' After running this function, call \code{edge_reload_cuda()} and load a model
+#' with \code{n_gpu_layers = -1} to run on your GPU.
+#'
+#' @param cuda_version CUDA major version string, e.g. \code{"13.1"} (default).
+#'   Must match the version used with \code{\link{edge_install_cuda}()}.
+#' @param force Reinstall even if the runtime DLLs are already present.
+#' @return Invisibly returns the cuda cache directory path.
+#' @seealso \code{\link{edge_install_cuda}}, \code{\link{edge_reload_cuda}}
+#' @examples
+#' \dontrun{
+#' edge_install_cuda()          # install ggml-cuda GPU backend DLL (~140 MB)
+#' edge_install_cuda_toolkit()  # install CUDA runtime DLLs (~400 MB, one-time)
+#' edge_reload_cuda()           # activate in this R session
+#' ctx <- edge_load_model("model.gguf", n_gpu_layers = -1)
+#' result <- edge_completion(ctx, "Hello", n_predict = 20)
+#' }
+#' @export
+edge_install_cuda_toolkit <- function(cuda_version = "13.1", force = FALSE) {
+  if (.Platform$OS.type != "windows") {
+    stop("edge_install_cuda_toolkit() is only needed on Windows. ",
+         "On Linux/macOS, install the CUDA Toolkit via your package manager.")
+  }
+
+  cuda_dir <- file.path(tools::R_user_dir("edgemodelr", "cache"), "cuda")
+  dir.create(cuda_dir, recursive = TRUE, showWarnings = FALSE)
+
+  # Check if already installed
+  cublas_present <- length(list.files(cuda_dir, pattern = "^cublas64.*\\.dll$",
+                                      ignore.case = TRUE)) > 0
+  cudart_present <- length(list.files(cuda_dir, pattern = "^nvcudart_hybrid64\\.dll$",
+                                      ignore.case = TRUE)) > 0
+  if (!force && cublas_present && cudart_present) {
+    message("CUDA runtime already installed in:\n  ", cuda_dir)
+    message("Use force = TRUE to reinstall.")
+    return(invisible(cuda_dir))
+  }
+
+  # --- Step 1: nvcudart_hybrid64.dll from Windows DriverStore (no download) ---
+  if (force || !cudart_present) {
+    driver_store <- file.path(Sys.getenv("SystemRoot", "C:\\Windows"),
+                              "System32", "DriverStore", "FileRepository")
+    hybrid_dlls <- list.files(driver_store, pattern = "^nvcudart_hybrid64\\.dll$",
+                               recursive = TRUE, full.names = TRUE)
+    if (length(hybrid_dlls) > 0) {
+      dest <- file.path(cuda_dir, "nvcudart_hybrid64.dll")
+      file.copy(hybrid_dlls[1], dest, overwrite = TRUE)
+      message("Copied nvcudart_hybrid64.dll from Windows DriverStore.")
+    } else {
+      message("Note: nvcudart_hybrid64.dll not found in DriverStore (unexpected).")
+      message("      It is normally installed with the NVIDIA GPU driver.")
+    }
+  }
+
+  # --- Step 2: cublas64_13.dll from NVIDIA redistrib (~400 MB) ---
+  if (force || !cublas_present) {
+    major_minor <- paste(strsplit(cuda_version, "\\.")[[1]][1:2], collapse = ".")
+    redistrib_base <- "https://developer.download.nvidia.com/compute/cuda/redist"
+    manifest_url   <- sprintf("%s/redistrib_%s.0.json", redistrib_base, major_minor)
+
+    message("Fetching NVIDIA redistrib manifest for CUDA ", cuda_version, "...")
+    manifest_text <- tryCatch({
+      con <- url(manifest_url)
+      on.exit(close(con), add = TRUE)
+      paste(readLines(con, warn = FALSE), collapse = "\n")
+    }, error = function(e) {
+      stop("Could not fetch NVIDIA redistrib manifest for CUDA ", cuda_version,
+           ".\nURL: ", manifest_url,
+           "\nMake sure you are connected to the internet and CUDA ",
+           cuda_version, " is publicly released.")
+    })
+
+    # Extract relative_path for libcublas/windows-x86_64
+    pattern <- '"relative_path":\\s*"(libcublas/windows-x86_64/[^"]+\\.zip)"'
+    m <- regmatches(manifest_text, regexpr(pattern, manifest_text, perl = TRUE))
+    if (length(m) == 0) {
+      stop("Could not find libcublas/windows-x86_64 in the CUDA ", cuda_version,
+           " redistrib manifest.")
+    }
+    rel_path <- sub(pattern, "\\1", m, perl = TRUE)
+    cublas_url <- paste0(redistrib_base, "/", rel_path)
+
+    tmp_zip <- tempfile(fileext = ".zip")
+    on.exit(unlink(tmp_zip), add = TRUE)
+
+    message("Downloading cuBLAS for CUDA ", cuda_version, "...")
+    message("URL: ", cublas_url)
+    message("(This is a ~400 MB one-time download. Please wait...)")
+    old_timeout <- getOption("timeout")
+    options(timeout = 3600)   # 1-hour cap for large files
+    on.exit(options(timeout = old_timeout), add = TRUE)
+    tryCatch({
+      utils::download.file(cublas_url, tmp_zip, mode = "wb", quiet = FALSE)
+    }, error = function(e) {
+      stop("Download failed: ", conditionMessage(e))
+    })
+
+    # Extract only cublas64_XX.dll and cublasLt64_XX.dll
+    zip_contents <- utils::unzip(tmp_zip, list = TRUE)
+    cublas_dlls  <- zip_contents$Name[
+      grepl("^(cublas64|cublasLt64).*\\.dll$", basename(zip_contents$Name),
+            ignore.case = TRUE)
+    ]
+    if (length(cublas_dlls) == 0) {
+      stop("No cublas DLLs found in the downloaded archive.")
+    }
+    message("Extracting cuBLAS DLLs...")
+    utils::unzip(tmp_zip, files = cublas_dlls, exdir = cuda_dir, junkpaths = TRUE)
+    message("Installed: ", paste(basename(cublas_dlls), collapse = ", "))
+  }
+
+  installed <- list.files(cuda_dir, pattern = "\\.(dll|DLL)$", full.names = FALSE)
+  message("\nAll files in cuda dir:\n", paste0("  ", installed, collapse = "\n"))
+  message("\nDone! Call edge_reload_cuda() to activate GPU inference.")
+
+  invisible(cuda_dir)
+}
+
+#' Activate an installed CUDA backend without restarting R
+#'
+#' This loads the CUDA backend DLL into the current session. It must be called
+#' before the first `edge_load_model()` call in the session, otherwise a session
+#' restart is required.
+#'
+#' @param path Path to the CUDA DLL. Defaults to the standard install location.
+#' @return Invisibly returns `TRUE` if activation succeeded.
+#' @export
+edge_reload_cuda <- function(path = NULL) {
+  if (is.null(path)) {
+    path <- edge_cuda_default_path()
+    if (is.null(path)) {
+      stop("No CUDA backend found. Run edge_install_cuda() first.")
+    }
+  }
+  edge_activate_cuda(path)
+}
+
+#' @keywords internal
+edge_activate_cuda <- function(path) {
+  if (!file.exists(path)) {
+    warning("CUDA backend not found at: ", path)
+    return(invisible(FALSE))
+  }
+  # Add the cuda directory to PATH so Windows DLL loader can find cudart/cublas
+  # dependencies when ggml-cuda-XX.dll is loaded.
+  cuda_dir <- normalizePath(dirname(path), winslash = "\\", mustWork = FALSE)
+  current_path <- Sys.getenv("PATH")
+  if (!grepl(cuda_dir, current_path, fixed = TRUE)) {
+    path_sep <- if (.Platform$OS.type == "windows") ";" else ":"
+    Sys.setenv(PATH = paste(cuda_dir, current_path, sep = path_sep))
+  }
+  ok <- edge_use_cuda_backend_internal(path)
+  if (ok) {
+    message("CUDA backend registered: ", path)
+    message("GPU layers will be used when n_gpu_layers > 0 in edge_load_model().")
+  }
+  invisible(ok)
+}
+
+#' Check whether a CUDA backend is installed and active
+#'
+#' @return A list with `installed` (logical), `active` (logical), and `path`
+#'   (character or NA).
+#' @export
+edge_cuda_info <- function() {
+  installed_path <- edge_cuda_default_path()
+  active_path    <- edge_cuda_backend_path_internal()
+  backend_loaded <- edge_cuda_backend_loaded_internal()
+
+  list(
+    installed = !is.null(installed_path),
+    active    = backend_loaded,
+    path      = if (nchar(active_path) > 0) active_path
+                else if (!is.null(installed_path)) installed_path
+                else NA_character_
+  )
+}

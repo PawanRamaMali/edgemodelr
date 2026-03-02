@@ -9,7 +9,6 @@
 #include <cstring>
 #include <vector>
 #include <sstream>
-#include "r_output_redirect.h"
 
 struct llama_logger_state {
     ggml_log_callback log_callback = llama_log_callback_default;
@@ -21,10 +20,14 @@ static llama_logger_state g_logger_state;
 time_meas::time_meas(int64_t & t_acc, bool disable) : t_start_us(disable ? -1 : ggml_time_us()), t_acc(t_acc) {}
 
 time_meas::~time_meas() {
-        if (t_start_us >= 0) {
-            t_acc += ggml_time_us() - t_start_us;
-        }
+    if (t_start_us >= 0) {
+        t_acc += ggml_time_us() - t_start_us;
     }
+}
+
+void llama_log_get(ggml_log_callback * log_callback, void ** user_data) {
+    ggml_log_get(log_callback, user_data);
+}
 
 void llama_log_set(ggml_log_callback log_callback, void * user_data) {
     ggml_log_set(log_callback, user_data);
@@ -59,9 +62,8 @@ void llama_log_internal(ggml_log_level level, const char * format, ...) {
 void llama_log_callback_default(ggml_log_level level, const char * text, void * user_data) {
     (void) level;
     (void) user_data;
-    // Direct stderr access commented out for R package compliance
-    // fputs(text, stderr);
-    // fflush(stderr);
+    fputs(text, stderr);
+    fflush(stderr);
 }
 
 void replace_all(std::string & s, const std::string & search, const std::string & replace) {
@@ -107,9 +109,9 @@ std::string llama_format_tensor_shape(const std::vector<int64_t> & ne) {
 
 std::string llama_format_tensor_shape(const struct ggml_tensor * t) {
     char buf[256];
-    snprintf(buf, sizeof(buf), "%5" PRId64, t->ne[0]);
+    snprintf(buf, sizeof(buf), "%6" PRId64, t->ne[0]);
     for (int i = 1; i < GGML_MAX_DIMS; i++) {
-        snprintf(buf + strlen(buf), sizeof(buf) - strlen(buf), ", %5" PRId64, t->ne[i]);
+        snprintf(buf + strlen(buf), sizeof(buf) - strlen(buf), ", %6" PRId64, t->ne[i]);
     }
     return buf;
 }

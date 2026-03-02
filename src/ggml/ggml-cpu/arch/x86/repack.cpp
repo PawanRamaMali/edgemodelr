@@ -18,7 +18,9 @@
 #define GGML_CPU_CLANG_WORKAROUND
 #include "../../repack.h"
 
-// Removed GCC diagnostic pragmas for CRAN compliance
+#if defined(__GNUC__)
+#pragma GCC diagnostic ignored "-Woverlength-strings"
+#endif
 
 #define UNUSED GGML_UNUSED
 
@@ -520,7 +522,8 @@ template<typename block_tx8>
 static void gemv_q4_b32_8x8_q8_0_lut_avx(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, const void * GGML_RESTRICT vy, int nr, int nc, __m256i signextendlut) {
     static_assert(
             std::is_same_v<block_tx8, block_q4_0x8> ||
-            std::is_same_v<block_tx8, block_iq4_nlx8>,
+            std::is_same_v<block_tx8, block_iq4_nlx8> ||
+            std::is_same_v<block_tx8, block_mxfp4x8>,
             "Unsupported block type");
 
     const int qk = QK8_0;
@@ -578,6 +581,18 @@ static void gemv_q4_b32_8x8_q8_0_lut_avx(int n, float * GGML_RESTRICT s, size_t 
                         std::is_same_v<block_tx8, block_q4_0x8> ||
                         std::is_same_v<block_tx8, block_iq4_nlx8>) {
                     col_scale_f32 = GGML_F32Cx8_REARRANGE_LOAD(b_ptr[b].d, changemask);
+                } else if constexpr (std::is_same_v<block_tx8, block_mxfp4x8>) {
+                    // Load 8 E8M0 exponents and convert to float via LUT
+                    // Rearranged to match changemask order: 0,4,1,5,2,6,3,7
+                    col_scale_f32 = _mm256_set_ps(
+                        GGML_CPU_E8M0_TO_FP32_HALF(b_ptr[b].e[7]),
+                        GGML_CPU_E8M0_TO_FP32_HALF(b_ptr[b].e[3]),
+                        GGML_CPU_E8M0_TO_FP32_HALF(b_ptr[b].e[6]),
+                        GGML_CPU_E8M0_TO_FP32_HALF(b_ptr[b].e[2]),
+                        GGML_CPU_E8M0_TO_FP32_HALF(b_ptr[b].e[5]),
+                        GGML_CPU_E8M0_TO_FP32_HALF(b_ptr[b].e[1]),
+                        GGML_CPU_E8M0_TO_FP32_HALF(b_ptr[b].e[4]),
+                        GGML_CPU_E8M0_TO_FP32_HALF(b_ptr[b].e[0]));
                 }
 
                 // Load and convert to FP32 scale from block_q8_0
@@ -626,7 +641,8 @@ template<typename block_tx8>
 static void gemm_q4_b32_8x8_q8_0_lut_avx(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, const void * GGML_RESTRICT vy, int nr, int nc, __m256i signextendlut) {
     static_assert(
             std::is_same_v<block_tx8, block_q4_0x8> ||
-            std::is_same_v<block_tx8, block_iq4_nlx8>,
+            std::is_same_v<block_tx8, block_iq4_nlx8> ||
+            std::is_same_v<block_tx8, block_mxfp4x8>,
             "Unsupported block type");
 
     const int qk = QK8_0;
@@ -644,7 +660,7 @@ static void gemm_q4_b32_8x8_q8_0_lut_avx(int n, float * GGML_RESTRICT s, size_t 
     __m256i requiredOrder = _mm256_set_epi32(3, 2, 1, 0, 7, 6, 5, 4);
     int64_t xstart = 0;
     int anr = nr - nr%16; // Used to align nr with boundary of 16
-#ifdef __AVX512F__
+#if defined(__AVX512BW__) && defined(__AVX512DQ__)
     int anc = nc - nc%16; // Used to align nc with boundary of 16
                           // Mask to mask out nibbles from packed bytes expanded to 512 bit length
     const __m512i m4bexpanded = _mm512_set1_epi8(0x0F);
@@ -747,6 +763,25 @@ static void gemm_q4_b32_8x8_q8_0_lut_avx(int n, float * GGML_RESTRICT s, size_t 
                         std::is_same_v<block_tx8, block_q4_0x8> ||
                         std::is_same_v<block_tx8, block_iq4_nlx8>) {
                     col_scale_f32 = GGML_F32Cx8x2_LOAD(b_ptr_0[b].d, b_ptr_1[b].d);
+                } else if constexpr (std::is_same_v<block_tx8, block_mxfp4x8>) {
+                    //TODO: simd-ify
+                    col_scale_f32 = _mm512_set_ps(
+                        GGML_CPU_E8M0_TO_FP32_HALF(b_ptr_1[b].e[7]),
+                        GGML_CPU_E8M0_TO_FP32_HALF(b_ptr_1[b].e[6]),
+                        GGML_CPU_E8M0_TO_FP32_HALF(b_ptr_1[b].e[5]),
+                        GGML_CPU_E8M0_TO_FP32_HALF(b_ptr_1[b].e[4]),
+                        GGML_CPU_E8M0_TO_FP32_HALF(b_ptr_1[b].e[3]),
+                        GGML_CPU_E8M0_TO_FP32_HALF(b_ptr_1[b].e[2]),
+                        GGML_CPU_E8M0_TO_FP32_HALF(b_ptr_1[b].e[1]),
+                        GGML_CPU_E8M0_TO_FP32_HALF(b_ptr_1[b].e[0]),
+                        GGML_CPU_E8M0_TO_FP32_HALF(b_ptr_0[b].e[7]),
+                        GGML_CPU_E8M0_TO_FP32_HALF(b_ptr_0[b].e[6]),
+                        GGML_CPU_E8M0_TO_FP32_HALF(b_ptr_0[b].e[5]),
+                        GGML_CPU_E8M0_TO_FP32_HALF(b_ptr_0[b].e[4]),
+                        GGML_CPU_E8M0_TO_FP32_HALF(b_ptr_0[b].e[3]),
+                        GGML_CPU_E8M0_TO_FP32_HALF(b_ptr_0[b].e[2]),
+                        GGML_CPU_E8M0_TO_FP32_HALF(b_ptr_0[b].e[1]),
+                        GGML_CPU_E8M0_TO_FP32_HALF(b_ptr_0[b].e[0]));
                 }
 
                 // Process LHS in pairs of rows
@@ -876,7 +911,7 @@ static void gemm_q4_b32_8x8_q8_0_lut_avx(int n, float * GGML_RESTRICT s, size_t 
                 const __m256i rhs_raw_mat_89AB_1 = _mm256_loadu_si256((const __m256i *)(b_ptr_1[b].qs + 64));
                 const __m256i rhs_raw_mat_CDEF_1 = _mm256_loadu_si256((const __m256i *)(b_ptr_1[b].qs + 96));
 
-                // Save the values in the following vectors in the formats B0B1B4B5, B2B3B6B7 for further processing and storing of valuess
+                // Save the values in the following vectors in the formats B0B1B4B5, B2B3B6B7 for further processing and storing of values
                 const __m256i rhs_raw_mat_0145_0 = _mm256_blend_epi32(rhs_raw_mat_0123_0, _mm256_permutevar8x32_epi32(rhs_raw_mat_4567_0, requiredOrder), 240);
                 const __m256i rhs_raw_mat_2367_0 = _mm256_blend_epi32(_mm256_permutevar8x32_epi32(rhs_raw_mat_0123_0, requiredOrder), rhs_raw_mat_4567_0, 240);
                 const __m256i rhs_raw_mat_0145_1 = _mm256_blend_epi32(rhs_raw_mat_0123_1, _mm256_permutevar8x32_epi32(rhs_raw_mat_4567_1, requiredOrder), 240);
@@ -939,6 +974,25 @@ static void gemm_q4_b32_8x8_q8_0_lut_avx(int n, float * GGML_RESTRICT s, size_t 
                         std::is_same_v<block_tx8, block_q4_0x8> ||
                         std::is_same_v<block_tx8, block_iq4_nlx8>) {
                     col_scale_f32 = GGML_F32Cx8x2_LOAD(b_ptr_0[b].d, b_ptr_1[b].d);
+                } else if constexpr (std::is_same_v<block_tx8, block_mxfp4x8>) {
+                    //TODO: simd-ify
+                    col_scale_f32 = _mm512_set_ps(
+                        GGML_CPU_E8M0_TO_FP32_HALF(b_ptr_1[b].e[7]),
+                        GGML_CPU_E8M0_TO_FP32_HALF(b_ptr_1[b].e[6]),
+                        GGML_CPU_E8M0_TO_FP32_HALF(b_ptr_1[b].e[5]),
+                        GGML_CPU_E8M0_TO_FP32_HALF(b_ptr_1[b].e[4]),
+                        GGML_CPU_E8M0_TO_FP32_HALF(b_ptr_1[b].e[3]),
+                        GGML_CPU_E8M0_TO_FP32_HALF(b_ptr_1[b].e[2]),
+                        GGML_CPU_E8M0_TO_FP32_HALF(b_ptr_1[b].e[1]),
+                        GGML_CPU_E8M0_TO_FP32_HALF(b_ptr_1[b].e[0]),
+                        GGML_CPU_E8M0_TO_FP32_HALF(b_ptr_0[b].e[7]),
+                        GGML_CPU_E8M0_TO_FP32_HALF(b_ptr_0[b].e[6]),
+                        GGML_CPU_E8M0_TO_FP32_HALF(b_ptr_0[b].e[5]),
+                        GGML_CPU_E8M0_TO_FP32_HALF(b_ptr_0[b].e[4]),
+                        GGML_CPU_E8M0_TO_FP32_HALF(b_ptr_0[b].e[3]),
+                        GGML_CPU_E8M0_TO_FP32_HALF(b_ptr_0[b].e[2]),
+                        GGML_CPU_E8M0_TO_FP32_HALF(b_ptr_0[b].e[1]),
+                        GGML_CPU_E8M0_TO_FP32_HALF(b_ptr_0[b].e[0]));
                 }
 
                 // Load the four blocks of quantized values interleaved with each other in chunks of eight - A0,A1,A2,A3
@@ -1039,7 +1093,7 @@ static void gemm_q4_b32_8x8_q8_0_lut_avx(int n, float * GGML_RESTRICT s, size_t 
         xstart = anc/8;
         y = 0;
     }
-#endif // __AVX512F__
+#endif // __AVX512BW__ && __AVX512DQ__
 
     // Take group of four block_q8_0x4 structures at each pass of the loop and perform dot product operation
 
@@ -1121,6 +1175,16 @@ static void gemm_q4_b32_8x8_q8_0_lut_avx(int n, float * GGML_RESTRICT s, size_t 
                         std::is_same_v<block_tx8, block_q4_0x8> ||
                         std::is_same_v<block_tx8, block_iq4_nlx8>) {
                     col_scale_f32 = GGML_F32Cx8_LOAD(b_ptr[b].d);
+                } else if constexpr (std::is_same_v<block_tx8, block_mxfp4x8>) {
+                    col_scale_f32 = _mm256_set_ps(
+                        GGML_CPU_E8M0_TO_FP32_HALF(b_ptr[b].e[7]),
+                        GGML_CPU_E8M0_TO_FP32_HALF(b_ptr[b].e[6]),
+                        GGML_CPU_E8M0_TO_FP32_HALF(b_ptr[b].e[5]),
+                        GGML_CPU_E8M0_TO_FP32_HALF(b_ptr[b].e[4]),
+                        GGML_CPU_E8M0_TO_FP32_HALF(b_ptr[b].e[3]),
+                        GGML_CPU_E8M0_TO_FP32_HALF(b_ptr[b].e[2]),
+                        GGML_CPU_E8M0_TO_FP32_HALF(b_ptr[b].e[1]),
+                        GGML_CPU_E8M0_TO_FP32_HALF(b_ptr[b].e[0]));
                 }
 
                 // Process LHS in groups of four
@@ -1229,7 +1293,7 @@ static void gemm_q4_b32_8x8_q8_0_lut_avx(int n, float * GGML_RESTRICT s, size_t 
                 const __m256i rhs_raw_mat_0123_1 = _mm256_loadu_si256((const __m256i *)(b_ptr[b].qs + 64));
                 const __m256i rhs_raw_mat_4567_1 = _mm256_loadu_si256((const __m256i *)(b_ptr[b].qs + 96));
 
-                // Save the values in the following vectors in the formats B0B1B4B5, B2B3B6B7 for further processing and storing of valuess
+                // Save the values in the following vectors in the formats B0B1B4B5, B2B3B6B7 for further processing and storing of values
                 const __m256i rhs_raw_mat_0145_0 = _mm256_blend_epi32(rhs_raw_mat_0123_0, _mm256_permutevar8x32_epi32(rhs_raw_mat_4567_0, requiredOrder), 240);
                 const __m256i rhs_raw_mat_2367_0 = _mm256_blend_epi32(_mm256_permutevar8x32_epi32(rhs_raw_mat_0123_0, requiredOrder), rhs_raw_mat_4567_0, 240);
                 const __m256i rhs_raw_mat_0145_1 = _mm256_blend_epi32(rhs_raw_mat_0123_1, _mm256_permutevar8x32_epi32(rhs_raw_mat_4567_1, requiredOrder), 240);
@@ -1281,6 +1345,16 @@ static void gemm_q4_b32_8x8_q8_0_lut_avx(int n, float * GGML_RESTRICT s, size_t 
                         std::is_same_v<block_tx8, block_q4_0x8> ||
                         std::is_same_v<block_tx8, block_iq4_nlx8>) {
                     col_scale_f32 = GGML_F32Cx8_LOAD(b_ptr[b].d);
+                } else if constexpr (std::is_same_v<block_tx8, block_mxfp4x8>) {
+                    col_scale_f32 = _mm256_set_ps(
+                        GGML_CPU_E8M0_TO_FP32_HALF(b_ptr[b].e[7]),
+                        GGML_CPU_E8M0_TO_FP32_HALF(b_ptr[b].e[6]),
+                        GGML_CPU_E8M0_TO_FP32_HALF(b_ptr[b].e[5]),
+                        GGML_CPU_E8M0_TO_FP32_HALF(b_ptr[b].e[4]),
+                        GGML_CPU_E8M0_TO_FP32_HALF(b_ptr[b].e[3]),
+                        GGML_CPU_E8M0_TO_FP32_HALF(b_ptr[b].e[2]),
+                        GGML_CPU_E8M0_TO_FP32_HALF(b_ptr[b].e[1]),
+                        GGML_CPU_E8M0_TO_FP32_HALF(b_ptr[b].e[0]));
                 }
 
                 // Load the four blocks of quantized values interleaved with each other in chunks of eight - A0,A1,A2,A3
@@ -1621,6 +1695,19 @@ void ggml_gemv_iq4_nl_8x8_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const 
 #endif
 
     ggml_gemv_iq4_nl_8x8_q8_0_generic(n, s, bs, vx, vy, nr, nc);
+}
+
+void ggml_gemv_mxfp4_8x8_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, const void * GGML_RESTRICT vy, int nr, int nc) {
+#if defined(__AVX2__)
+    __m256i signextendlut = _mm256_castsi128_si256(_mm_loadu_si128((const __m128i*)kvalues_mxfp4));
+    signextendlut = _mm256_permute2f128_si256(signextendlut, signextendlut, 0);
+
+    gemv_q4_b32_8x8_q8_0_lut_avx<block_mxfp4x8>(n, s, bs, vx, vy, nr, nc, signextendlut);
+
+    return;
+#endif
+
+    ggml_gemv_mxfp4_8x8_q8_0_generic(n, s, bs, vx, vy, nr, nc);
 }
 
 void ggml_gemv_q2_K_8x8_q8_K(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, const void * GGML_RESTRICT vy, int nr, int nc) {
@@ -1987,7 +2074,7 @@ void ggml_gemm_q4_K_8x8_q8_K(int n, float * GGML_RESTRICT s, size_t bs, const vo
     __m256i requiredOrder = _mm256_set_epi32(3, 2, 1, 0, 7, 6, 5, 4);
     int64_t xstart = 0;
     int anr = nr - nr % 16;; // Used to align nr with boundary of 16
-#ifdef __AVX512F__
+#if defined(__AVX512BW__) && defined(__AVX512DQ__)
     int anc = nc - nc % 16; // Used to align nc with boundary of 16
     // Mask to mask out nibbles from packed bytes expanded to 512 bit length
     const __m512i m4bexpanded = _mm512_set1_epi8(0x0F);
@@ -2725,7 +2812,7 @@ void ggml_gemm_q4_K_8x8_q8_K(int n, float * GGML_RESTRICT s, size_t bs, const vo
         xstart = anc/8;
         y = 0;
     }
-#endif //AVX512F
+#endif // __AVX512BW__ && __AVX512DQ__
 
     // Take group of four block_q8_Kx4 structures at each pass of the loop and perform dot product operation
     for (; y < anr / 4; y += 4) {
@@ -3421,6 +3508,21 @@ void ggml_gemm_iq4_nl_8x8_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const 
     ggml_gemm_iq4_nl_4x4_q8_0(n, s, bs, vx, vy, nr, nc);
 }
 
+void ggml_gemm_mxfp4_8x8_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, const void * GGML_RESTRICT vy, int nr, int nc) {
+#if defined(__AVX2__) || defined(__AVX512F__)
+    {
+        __m256i signextendlut = _mm256_castsi128_si256(_mm_loadu_si128((const __m128i*)kvalues_mxfp4));
+        signextendlut = _mm256_permute2f128_si256(signextendlut, signextendlut, 0);
+
+        gemm_q4_b32_8x8_q8_0_lut_avx<block_mxfp4x8>(n, s, bs, vx, vy, nr, nc, signextendlut);
+
+        return;
+    }
+#endif // defined(__AVX2__) || defined(__AVX512F__)
+
+    ggml_gemm_mxfp4_8x8_q8_0_generic(n, s, bs, vx, vy, nr, nc);
+}
+
 void ggml_gemm_q2_K_8x8_q8_K(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, const void * GGML_RESTRICT vy, int nr, int nc) {
     const int qk = QK_K;
     const int nb = n / qk;
@@ -3465,7 +3567,7 @@ void ggml_gemm_q2_K_8x8_q8_K(int n, float * GGML_RESTRICT s, size_t bs, const vo
     __m256i scalesmask2 = _mm256_castsi128_si256(scalesmask2_sse);
     scalesmask2 = _mm256_permute2f128_si256(scalesmask2, scalesmask2, 0);
 
-#ifdef __AVX512F__
+#if defined(__AVX512BW__) && defined(__AVX512DQ__)
 
     int anc = nc - nc % 16; // Used to align nc with boundary of 16
 
@@ -4945,7 +5047,7 @@ void ggml_gemm_q2_K_8x8_q8_K(int n, float * GGML_RESTRICT s, size_t bs, const vo
         y = 0;
     }
 
-#endif //AVX512F
+#endif // __AVX512BW__ && __AVX512DQ__
 
     // Take group of four block_q8_Kx4 structures at each pass of the loop and perform dot product operation
     for (; y < anr / 4; y += 4) {

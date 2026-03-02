@@ -13,30 +13,6 @@
 #include <stdlib.h> // for qsort
 #include <stdio.h>  // for GGML_ASSERT
 
-// R package compatibility: redirect stdio functions to R alternatives
-#ifdef USING_R
-  // Prevent R's Rboolean enum conflicts by defining macros first
-  #ifndef TRUE
-    #define TRUE 1
-  #endif
-  #ifndef FALSE
-    #define FALSE 0
-  #endif
-  #define R_NO_REMAP 1
-  #include <R.h>
-  // Replace printf with Rprintf to avoid puts/putchar calls in R packages
-  #define printf Rprintf
-  // Undefine any enum-based TRUE/FALSE from R headers and redefine as macros
-  #ifdef TRUE
-    #undef TRUE
-    #define TRUE 1
-  #endif
-  #ifdef FALSE
-    #undef FALSE
-    #define FALSE 0
-  #endif
-#endif
-
 #define GROUP_MAX_EPS 1e-15f
 #define GROUP_MAX_EPS_IQ3_XXS 1e-8f
 #define GROUP_MAX_EPS_IQ2_S 1e-8f
@@ -3194,9 +3170,9 @@ static void quantize_row_iq2_xxs_impl(const float * GGML_RESTRICT x, void * GGML
                 for (int i = 0; i < 8; ++i) u |= (L[8*k+i] << 2*i);
                 int grid_index = kmap_q2xs[u];
                 if (grid_index < 0) {
-                    printf("Oops: found point %u not on grid:", u);
-                    for (int i = 0; i < 8; ++i) printf(" %d", L[8*k+i]);
-                    printf("\n");
+                    fprintf(stderr, "Oops: found point %u not on grid:", u);
+                    for (int i = 0; i < 8; ++i) fprintf(stderr, " %d", L[8*k+i]);
+                    fprintf(stderr, "\n");
                     GGML_ABORT("fatal error");
                 }
                 q2[2*ib+0] |= ((uint32_t) grid_index << 8*k);
@@ -3373,9 +3349,9 @@ static void quantize_row_iq2_xs_impl(const float * GGML_RESTRICT x, void * GGML_
                 for (int i = 0; i < 8; ++i) u |= (L[8*k+i] << 2*i);
                 int grid_index = kmap_q2xs[u];
                 if (grid_index < 0) {
-                    printf("Oops: found point %u not on grid:", u);
-                    for (int i = 0; i < 8; ++i) printf(" %d", L[8*k+i]);
-                    printf("\n");
+                    fprintf(stderr, "Oops: found point %u not on grid:", u);
+                    for (int i = 0; i < 8; ++i) fprintf(stderr, " %d", L[8*k+i]);
+                    fprintf(stderr, "\n");
                     GGML_ABORT("fatal error");
                 }
                 q2[2*ib+k] = grid_index | (block_signs[k] << 9);
@@ -3745,6 +3721,7 @@ static void quantize_row_iq3_xxs_impl(int grid_size, const float * GGML_RESTRICT
             }
             float best = 0;
             float scale = max/(2*kMaxQ-1);
+            for (int k = 0; k < 8; ++k) is_on_grid[k] = true;
             for (int is = -15; is <= 15; ++is) {
                 float id = (2*kMaxQ-1+is*0.2f)/max;
                 float this_scale = 1/id;
@@ -5024,12 +5001,12 @@ void quantize_row_iq2_s_ref(const float * GGML_RESTRICT x, block_iq2_s * GGML_RE
 
 static bool validate_float(float f, size_t i) {
     if (isinf(f)) {
-        GGML_LOG_ERROR("ggml_validate_row_data: found inf value at block %u", (unsigned)i);
+        fprintf(stderr, "ggml_validate_row_data: found inf value at block %zu\n", i);
         return false;
     }
 
     if (isnan(f)) {
-        GGML_LOG_ERROR("ggml_validate_row_data: found nan value at block %u", (unsigned)i);
+        fprintf(stderr, "ggml_validate_row_data: found nan value at block %zu\n", i);
         return false;
     }
 
@@ -5046,12 +5023,12 @@ static bool isnan_fp16(ggml_fp16_t f) {
 
 static bool validate_fp16(ggml_fp16_t f, size_t i) {
     if (isinf_fp16(f)) {
-        GGML_LOG_ERROR("ggml_validate_row_data: found inf value at block %u", (unsigned)i);
+        fprintf(stderr, "ggml_validate_row_data: found inf value at block %zu\n", i);
         return false;
     }
 
     if (isnan_fp16(f)) {
-        GGML_LOG_ERROR("ggml_validate_row_data: found nan value at block %u", (unsigned)i);
+        fprintf(stderr, "ggml_validate_row_data: found nan value at block %zu\n", i);
         return false;
     }
 
@@ -5060,7 +5037,7 @@ static bool validate_fp16(ggml_fp16_t f, size_t i) {
 
 static bool validate_e_e8m0(uint8_t e, size_t i) {
     if (e == 0xff) {
-        GGML_LOG_ERROR("ggml_validate_row_data: found invalid e value %d at block %u", e, (unsigned)i);
+        fprintf(stderr, "ggml_validate_row_data: found invalid e value %d at block %zu\n", e, i);
         return false;
     }
 
@@ -5103,12 +5080,12 @@ static bool validate_e_e8m0(uint8_t e, size_t i) {
 
 bool ggml_validate_row_data(enum ggml_type type, const void * data, size_t nbytes) {
     if (type < 0 || type >= GGML_TYPE_COUNT) {
-        GGML_LOG_ERROR("%s: invalid type %d", __func__, type);
+        fprintf(stderr, "%s: invalid type %d\n", __func__, type);
         return false;
     }
 
     if (nbytes % ggml_type_size(type) != 0) {
-        GGML_LOG_ERROR("%s: invalid size %u for type %s (type size = %u)", __func__, (unsigned)nbytes, ggml_type_name(type), (unsigned)ggml_type_size(type));
+        fprintf(stderr, "%s: invalid size %zu for type %s (type size = %zu)\n", __func__, nbytes, ggml_type_name(type), ggml_type_size(type));
         return false;
     }
 
@@ -5125,11 +5102,11 @@ bool ggml_validate_row_data(enum ggml_type type, const void * data, size_t nbyte
                     infs += (f[i] & 0x7fff) == 0x7f80;
                 }
                 if (nans) {
-                    GGML_LOG_ERROR("%s: found %d NaNs in row of %u BF16 values", __func__, nans, (unsigned)nb);
+                    fprintf(stderr, "%s: found %d NaNs in row of %zu BF16 values\n", __func__, nans, nb);
                     return false;
                 }
                 if (infs) {
-                    GGML_LOG_ERROR("%s: found %d infinities in row of %u BF16 values", __func__, infs, (unsigned)nb);
+                    fprintf(stderr, "%s: found %d infinities in row of %zu BF16 values\n", __func__, infs, nb);
                     return false;
                 }
             } break;
@@ -5339,7 +5316,7 @@ bool ggml_validate_row_data(enum ggml_type type, const void * data, size_t nbyte
             break;
         default:
             {
-                GGML_LOG_ERROR("%s: invalid type %d", __func__, type);
+                fprintf(stderr, "%s: invalid type %d\n", __func__, type);
                 return false;
             }
     }

@@ -5,10 +5,7 @@
 #include <string>
 #include <vector>
 
-// Disable format attributes when building for R to avoid CRAN warnings
-#if defined(GGML_BUILD_FOR_R) || defined(USING_R)
-#    define LLAMA_ATTRIBUTE_FORMAT(...)
-#elif defined(__GNUC__)
+#ifdef __GNUC__
 #    if defined(__MINGW32__) && !defined(__clang__)
 #        define LLAMA_ATTRIBUTE_FORMAT(...) __attribute__((format(gnu_printf, __VA_ARGS__)))
 #    else
@@ -40,7 +37,7 @@ void llama_log_callback_default(ggml_log_level level, const char * text, void * 
 template <typename T>
 struct no_init {
     T value;
-    no_init() { /* do nothing */ }
+    no_init() = default;
 };
 
 struct time_meas {
@@ -50,6 +47,16 @@ struct time_meas {
     const int64_t t_start_us;
 
     int64_t & t_acc;
+};
+
+template <typename T>
+struct buffer_view {
+    T * data;
+    size_t size = 0;
+
+    bool has_data() const {
+        return data && size > 0;
+    }
 };
 
 void replace_all(std::string & s, const std::string & search, const std::string & replace);
@@ -62,3 +69,5 @@ std::string llama_format_tensor_shape(const std::vector<int64_t> & ne);
 std::string llama_format_tensor_shape(const struct ggml_tensor * t);
 
 std::string gguf_kv_to_str(const struct gguf_context * ctx_gguf, int i);
+
+#define LLAMA_TENSOR_NAME_FATTN "__fattn__"

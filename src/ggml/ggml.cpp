@@ -1,7 +1,11 @@
 #include "ggml-impl.h"
 
-#include <cstdlib>
 #include <exception>
+
+// In R builds we skip installing a custom terminate handler:
+//  - R has its own exception/error handling machinery.
+//  - CRAN policy prohibits calling exit/abort from compiled code.
+#ifndef USING_R
 
 static std::terminate_handler previous_terminate_handler;
 
@@ -10,7 +14,7 @@ GGML_NORETURN static void ggml_uncaught_exception() {
     if (previous_terminate_handler) {
         previous_terminate_handler();
     }
-    abort(); // unreachable unless previous_terminate_handler was nullptr
+    std::terminate(); // unreachable unless previous_terminate_handler was nullptr
 }
 
 static bool ggml_uncaught_exception_init = []{
@@ -24,3 +28,5 @@ static bool ggml_uncaught_exception_init = []{
     std::set_terminate(ggml_uncaught_exception);
     return true;
 }();
+
+#endif // USING_R

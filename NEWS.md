@@ -1,3 +1,56 @@
+# edgemodelr 0.3.0
+
+## CUDA GPU Support and Qwen3 Tokenizer Fix
+
+### New Features
+
+* **CUDA GPU acceleration** (Windows): New `edge_install_cuda()` and
+  `edge_install_cuda_toolkit()` functions set up GPU inference automatically.
+  - `edge_install_cuda()` downloads the matching `ggml-cuda` dynamic backend
+    from llama.cpp releases and extracts the companion `ggml-base.dll` /
+    `ggml.dll` runtime libraries.
+  - `edge_install_cuda_toolkit()` copies `nvcudart_hybrid64.dll` from the
+    Windows DriverStore (already on any NVIDIA-driver machine, no download
+    required) and fetches `cublas64` / `cublasLt64` from NVIDIA's redistrib
+    server.
+  - `edge_reload_cuda()` activates the CUDA backend in the current R session
+    without restarting R.
+  - `edge_cuda_info()` reports whether CUDA is installed and active.
+  - Pass `n_gpu_layers = -1L` to `edge_load_model()` for full GPU offload.
+  - Tested on NVIDIA RTX 5070 Ti (Blackwell sm_120, CUDA 13.1, 12 GB VRAM):
+    Qwen3-14B loads in 3.4 s with full VRAM offload.
+
+* **Updated llama.cpp to build b8179 (GGML 0.9.7)**: Brings all upstream
+  model architecture updates, sampler improvements, and quantization fixes.
+
+### Bug Fixes
+
+* **Qwen3 / QWEN2 tokenizer 40-minute load time** (8000× speedup): The
+  QWEN2 byte-level regex pattern caused GCC's `std::regex` to spend 40+
+  minutes in exponential backtracking. Added a hand-written fast path
+  `unicode_regex_split_custom_qwen2()` in `unicode.cpp`, matching the logic
+  of the existing llama-3 fast path. Qwen3-14B now loads in 0.3 s on CPU
+  (3.4 s on GPU including VRAM transfer). Covers QWEN2 and QWEN3.5 variants.
+
+### CRAN Compliance
+
+* Replaced `abort()` in `ggml_abort()` with `raise(SIGABRT)` under
+  `#ifdef USING_R`; replaces `abort()` token in `ggml.cpp` with
+  `std::terminate()`.
+* Guarded `ggml_print_backtrace()` body and `fflush(stdout)` /
+  `fprintf(stderr, …)` in `ggml_abort()` with `#ifndef USING_R` to remove
+  `_Exit`, `stdout`, and `stderr` symbol references from `ggml.o` on macOS.
+* Added `#define _GNU_SOURCE` to `ggml-cpu.c` (required for `SCHED_BATCH`,
+  `CPU_ZERO`, `pthread_setaffinity_np` on Linux).
+* `CXX_STD = CXX17` replaces `-std=c++17` in `PKG_CXXFLAGS` in both
+  `Makevars` and `Makevars.win`.
+* `-fno-builtin-printf` added to `GGML_CFLAGS` to suppress
+  `printf → puts` optimizations.
+* Man pages added for `edge_install_cuda`, `edge_install_cuda_toolkit`,
+  `edge_reload_cuda`, `edge_cuda_info`.
+
+---
+
 # edgemodelr 0.2.0
 
 ## SIMD Optimizations for Faster CPU Inference
