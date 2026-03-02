@@ -27,3 +27,4 @@
 ^err\.txt$
 ^out\.txt$
 ^update_llama\.py$
+^docker$
