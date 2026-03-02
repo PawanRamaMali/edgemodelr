@@ -33,6 +33,9 @@ bool g_suppress_console_output = true;
 // Must be set BEFORE the first call to ensure_llama_initialized()
 static std::string g_cuda_backend_path;
 
+// Tracks whether the CUDA backend DLL was successfully loaded by ggml_backend_load()
+static bool g_cuda_backend_loaded = false;
+
 // Custom log callback to suppress output
 void quiet_log_callback(ggml_log_level level, const char * text, void * user_data) {
   // Only output critical errors using R's error system, suppress all other output
@@ -53,7 +56,9 @@ static void ensure_llama_initialized() {
     // Load CUDA (or other GPU) backend if configured via edge_use_cuda_backend_internal()
     if (!g_cuda_backend_path.empty()) {
       ggml_backend_reg_t cuda_reg = ggml_backend_load(g_cuda_backend_path.c_str());
-      if (!cuda_reg && g_logging_enabled) {
+      if (cuda_reg) {
+        g_cuda_backend_loaded = true;
+      } else if (g_logging_enabled) {
         Rcpp::warning("Failed to load GPU backend from: " + g_cuda_backend_path +
                       ". Falling back to CPU.");
       }
@@ -84,6 +89,11 @@ bool edge_use_cuda_backend_internal(std::string path) {
 // [[Rcpp::export]]
 std::string edge_cuda_backend_path_internal() {
   return g_cuda_backend_path;
+}
+
+// [[Rcpp::export]]
+bool edge_cuda_backend_loaded_internal() {
+  return g_cuda_backend_loaded;
 }
 
 struct EdgeModelContext {

@@ -9,6 +9,10 @@ edge_cuda_backend_path_internal <- function() {
     .Call(`_edgemodelr_edge_cuda_backend_path_internal`)
 }
 
+edge_cuda_backend_loaded_internal <- function() {
+    .Call(`_edgemodelr_edge_cuda_backend_loaded_internal`)
+}
+
 edge_load_model_internal <- function(model_path, n_ctx = 2048L, n_gpu_layers = 0L, n_threads = 0L, flash_attn = TRUE) {
     .Call(`_edgemodelr_edge_load_model_internal`, model_path, n_ctx, n_gpu_layers, n_threads, flash_attn)
 }

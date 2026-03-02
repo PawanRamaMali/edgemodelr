@@ -1970,7 +1970,7 @@ edge_cuda_default_path <- function() {
   } else {
     dlls <- list.files(cuda_dir, pattern = "^(lib)?ggml-cuda.*\\.so(\\..*)?$", full.names = TRUE)
   }
-  if (length(dlls) > 0) dlls[1] else NULL
+  if (length(dlls) > 0) dlls[which.max(file.info(dlls)$mtime)] else NULL
 }
 
 #' Install the CUDA backend for GPU-accelerated inference
@@ -2230,7 +2230,8 @@ edge_activate_cuda <- function(path) {
   cuda_dir <- normalizePath(dirname(path), winslash = "\\", mustWork = FALSE)
   current_path <- Sys.getenv("PATH")
   if (!grepl(cuda_dir, current_path, fixed = TRUE)) {
-    Sys.setenv(PATH = paste(cuda_dir, current_path, sep = ";"))
+    path_sep <- if (.Platform$OS.type == "windows") ";" else ":"
+    Sys.setenv(PATH = paste(cuda_dir, current_path, sep = path_sep))
   }
   ok <- edge_use_cuda_backend_internal(path)
   if (ok) {
@@ -2248,10 +2249,11 @@ edge_activate_cuda <- function(path) {
 edge_cuda_info <- function() {
   installed_path <- edge_cuda_default_path()
   active_path    <- edge_cuda_backend_path_internal()
+  backend_loaded <- edge_cuda_backend_loaded_internal()
 
   list(
     installed = !is.null(installed_path),
-    active    = nchar(active_path) > 0,
+    active    = backend_loaded,
     path      = if (nchar(active_path) > 0) active_path
                 else if (!is.null(installed_path)) installed_path
                 else NA_character_
