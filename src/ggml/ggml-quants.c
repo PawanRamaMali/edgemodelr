@@ -3170,9 +3170,9 @@ static void quantize_row_iq2_xxs_impl(const float * GGML_RESTRICT x, void * GGML
                 for (int i = 0; i < 8; ++i) u |= (L[8*k+i] << 2*i);
                 int grid_index = kmap_q2xs[u];
                 if (grid_index < 0) {
-                    printf("Oops: found point %u not on grid:", u);
-                    for (int i = 0; i < 8; ++i) printf(" %d", L[8*k+i]);
-                    printf("\n");
+                    fprintf(stderr, "Oops: found point %u not on grid:", u);
+                    for (int i = 0; i < 8; ++i) fprintf(stderr, " %d", L[8*k+i]);
+                    fprintf(stderr, "\n");
                     GGML_ABORT("fatal error");
                 }
                 q2[2*ib+0] |= ((uint32_t) grid_index << 8*k);
@@ -3349,9 +3349,9 @@ static void quantize_row_iq2_xs_impl(const float * GGML_RESTRICT x, void * GGML_
                 for (int i = 0; i < 8; ++i) u |= (L[8*k+i] << 2*i);
                 int grid_index = kmap_q2xs[u];
                 if (grid_index < 0) {
-                    printf("Oops: found point %u not on grid:", u);
-                    for (int i = 0; i < 8; ++i) printf(" %d", L[8*k+i]);
-                    printf("\n");
+                    fprintf(stderr, "Oops: found point %u not on grid:", u);
+                    for (int i = 0; i < 8; ++i) fprintf(stderr, " %d", L[8*k+i]);
+                    fprintf(stderr, "\n");
                     GGML_ABORT("fatal error");
                 }
                 q2[2*ib+k] = grid_index | (block_signs[k] << 9);

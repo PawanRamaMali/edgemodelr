@@ -141,6 +141,12 @@ static void ggml_print_backtrace_symbols(void) {
 #endif
 
 void ggml_print_backtrace(void) {
+#ifdef USING_R
+    // In R builds this function is a no-op: R's error handler manages the call
+    // stack. The fork/exec/gdb machinery below uses _Exit() and fprintf(stderr)
+    // which violate CRAN policy, so the entire body is excluded.
+    return;
+#else
     const char * GGML_NO_BACKTRACE = getenv("GGML_NO_BACKTRACE");
     if (GGML_NO_BACKTRACE) {
         return;
@@ -219,6 +225,7 @@ void ggml_print_backtrace(void) {
 #endif
         waitpid(child_pid, NULL, 0);
     }
+#endif // USING_R
 }
 #else
 void ggml_print_backtrace(void) {
@@ -236,7 +243,12 @@ GGML_API ggml_abort_callback_t ggml_set_abort_callback(ggml_abort_callback_t cal
 }
 
 void ggml_abort(const char * file, int line, const char * fmt, ...) {
+#ifndef USING_R
+    // In R builds, fflush(stdout) is omitted: the abort callback (Rf_error)
+    // does longjmp and never returns, so flushing stdout is not needed.
+    // Referencing stdout violates CRAN's compiled-code policy on macOS.
     fflush(stdout);
+#endif
 
     char message[2048];
     int offset = snprintf(message, sizeof(message), "%s:%d: ", file, line);
@@ -248,11 +260,14 @@ void ggml_abort(const char * file, int line, const char * fmt, ...) {
 
     if (g_abort_callback) {
         g_abort_callback(message);
-    } else {
+    }
+#ifndef USING_R
+    else {
         // default: print error and backtrace to stderr
         fprintf(stderr, "%s\n", message);
         ggml_print_backtrace();
     }
+#endif
 
 #ifdef USING_R
     // CRAN policy prohibits calling abort() from compiled code.
@@ -261,6 +276,7 @@ void ggml_abort(const char * file, int line, const char * fmt, ...) {
     // In practice the R bindings always install an abort callback (Rf_error,
     // which does longjmp), so this line is never reached during normal use.
     raise(SIGABRT);
+    for (;;) {} // unreachable; satisfies _Noreturn requirement for the compiler
 #else
     abort();
 #endif

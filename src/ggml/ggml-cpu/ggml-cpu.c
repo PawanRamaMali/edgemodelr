@@ -1,6 +1,12 @@
 #define _CRT_SECURE_NO_DEPRECATE // Disables "unsafe" warnings on Windows
 #define _USE_MATH_DEFINES // For M_PI on MSVC
 
+// Required for SCHED_BATCH, CPU_ZERO, pthread_setaffinity_np on Linux.
+// Must be defined before any system headers are included.
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
+
 #include "ggml-backend-impl.h"
 #include "ggml-backend.h"
 #include "traits.h"
