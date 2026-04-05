@@ -537,6 +537,230 @@ List edge_completion_stream_internal(SEXP model_ptr, std::string prompt, Functio
 }
 
 // [[Rcpp::export]]
+std::string edge_completion_grammar_internal(SEXP model_ptr, std::string prompt, std::string grammar_str, std::string grammar_root, int n_predict = 512, double temperature = 0.3, double top_p = 0.95) {
+  try {
+    if (TYPEOF(model_ptr) != EXTPTRSXP) {
+      stop("Invalid model context");
+    }
+
+    XPtr<EdgeModelContext> edge_ctx(model_ptr);
+
+    if (!edge_ctx->is_valid() || edge_ctx->ctx == nullptr || edge_ctx->model == nullptr) {
+      stop("Invalid model context or null pointers");
+    }
+
+    if (n_predict <= 0) stop("n_predict must be positive");
+    if (temperature < 0.0 || temperature > 2.0) stop("Temperature must be between 0.0 and 2.0");
+    if (top_p <= 0.0 || top_p > 1.0) stop("top_p must be between 0.0 and 1.0");
+
+    const struct llama_vocab* vocab = llama_model_get_vocab(edge_ctx->model);
+    if (!vocab) stop("Failed to get vocabulary from model");
+
+    // Tokenize
+    const int n_prompt_tokens = -llama_tokenize(vocab, prompt.c_str(), (int32_t)prompt.size(), NULL, 0, true, true);
+    if (n_prompt_tokens <= 0) stop("Failed to determine prompt token count");
+
+    std::vector<llama_token> prompt_tokens(n_prompt_tokens);
+    if (llama_tokenize(vocab, prompt.c_str(), (int32_t)prompt.size(), prompt_tokens.data(), (int32_t)prompt_tokens.size(), true, true) < 0) {
+      stop("Failed to tokenize prompt");
+    }
+
+    // Process prompt
+    llama_batch batch = llama_batch_get_one(prompt_tokens.data(), (int32_t)prompt_tokens.size());
+    if (llama_decode(edge_ctx->ctx, batch)) stop("Failed to process prompt");
+
+    // Build sampler chain WITH grammar constraint
+    auto sampler_chain_params = llama_sampler_chain_default_params();
+    auto * sampler = llama_sampler_chain_init(sampler_chain_params);
+
+    // Add grammar sampler first (constrains token selection)
+    if (!grammar_str.empty()) {
+      auto * grammar_sampler = llama_sampler_init_grammar(vocab, grammar_str.c_str(), grammar_root.c_str());
+      if (!grammar_sampler) {
+        llama_sampler_free(sampler);
+        stop("Failed to parse GBNF grammar. Check grammar syntax.");
+      }
+      llama_sampler_chain_add(sampler, grammar_sampler);
+    }
+
+    // Add standard samplers
+    if (top_p < 1.0f) {
+      llama_sampler_chain_add(sampler, llama_sampler_init_top_p(static_cast<float>(top_p), 1));
+    }
+    if (temperature > 0.0f) {
+      llama_sampler_chain_add(sampler, llama_sampler_init_temp(static_cast<float>(temperature)));
+    }
+    llama_sampler_chain_add(sampler, llama_sampler_init_dist(12345));
+
+    // Generate tokens (only collect generated text, not prompt)
+    std::string result;
+    result.reserve(n_predict * 8);
+
+    for (int i = 0; i < n_predict; ++i) {
+      llama_token new_token = llama_sampler_sample(sampler, edge_ctx->ctx, -1);
+
+      if (llama_vocab_is_eog(vocab, new_token)) break;
+
+      std::vector<char> piece(512);
+      int n_chars = llama_token_to_piece(vocab, new_token, piece.data(), static_cast<int32_t>(piece.size()), 0, true);
+      if (n_chars < 0) {
+        piece.resize(static_cast<size_t>(std::abs(n_chars)) + 1);
+        n_chars = llama_token_to_piece(vocab, new_token, piece.data(), static_cast<int32_t>(piece.size()), 0, true);
+      }
+      if (n_chars > 0) {
+        result.append(piece.data(), n_chars);
+      }
+
+      llama_sampler_accept(sampler, new_token);
+      batch = llama_batch_get_one(&new_token, 1);
+      if (llama_decode(edge_ctx->ctx, batch)) break;
+    }
+
+    llama_sampler_free(sampler);
+    return result;
+
+  } catch (const std::exception& e) {
+    stop("Error during grammar completion: " + std::string(e.what()));
+  }
+}
+
+// [[Rcpp::export]]
+NumericMatrix edge_embeddings_internal(SEXP model_ptr, std::vector<std::string> texts, bool normalize = true) {
+  try {
+    if (TYPEOF(model_ptr) != EXTPTRSXP) {
+      stop("Invalid model context");
+    }
+
+    XPtr<EdgeModelContext> edge_ctx(model_ptr);
+
+    if (!edge_ctx->is_valid() || edge_ctx->ctx == nullptr || edge_ctx->model == nullptr) {
+      stop("Invalid model context or null pointers");
+    }
+
+    if (texts.empty()) stop("texts must not be empty");
+
+    const struct llama_vocab* vocab = llama_model_get_vocab(edge_ctx->model);
+    if (!vocab) stop("Failed to get vocabulary from model");
+
+    const int n_embd = llama_model_n_embd(edge_ctx->model);
+    if (n_embd <= 0) stop("Failed to get embedding dimension from model");
+
+    // Enable embeddings mode
+    llama_set_embeddings(edge_ctx->ctx, true);
+
+    const int n_texts = static_cast<int>(texts.size());
+    NumericMatrix result(n_texts, n_embd);
+
+    for (int t = 0; t < n_texts; ++t) {
+      // Clear KV cache between texts
+      llama_memory_t mem = llama_get_memory(edge_ctx->ctx);
+      if (mem) {
+        llama_memory_clear(mem, true);
+      }
+
+      // Tokenize
+      const std::string& text = texts[t];
+      const int n_tokens = -llama_tokenize(vocab, text.c_str(), (int32_t)text.size(), NULL, 0, true, true);
+      if (n_tokens <= 0) {
+        warning("Failed to tokenize text at index " + std::to_string(t + 1) + ", skipping");
+        continue;
+      }
+
+      std::vector<llama_token> tokens(n_tokens);
+      if (llama_tokenize(vocab, text.c_str(), (int32_t)text.size(), tokens.data(), (int32_t)tokens.size(), true, true) < 0) {
+        warning("Failed to tokenize text at index " + std::to_string(t + 1) + ", skipping");
+        continue;
+      }
+
+      // Create batch with all tokens requesting output
+      struct llama_batch batch = llama_batch_init(n_tokens, 0, 1);
+      batch.n_tokens = n_tokens;
+      for (int i = 0; i < n_tokens; ++i) {
+        batch.token[i] = tokens[i];
+        batch.pos[i] = i;
+        batch.n_seq_id[i] = 1;
+        batch.seq_id[i][0] = 0;
+        batch.logits[i] = (i == n_tokens - 1) ? 1 : 0;  // only last token for pooling
+      }
+
+      // Encode (uses encoder path, no KV cache)
+      if (llama_encode(edge_ctx->ctx, batch) != 0) {
+        // Fallback to decode for generative models
+        if (llama_decode(edge_ctx->ctx, batch) != 0) {
+          llama_batch_free(batch);
+          warning("Failed to process text at index " + std::to_string(t + 1) + ", skipping");
+          continue;
+        }
+      }
+
+      // Get embeddings - try sequence-level pooling first, then per-token
+      const float* embd = llama_get_embeddings_seq(edge_ctx->ctx, 0);
+      if (!embd) {
+        embd = llama_get_embeddings_ith(edge_ctx->ctx, -1);  // last token
+      }
+      if (!embd) {
+        embd = llama_get_embeddings(edge_ctx->ctx);  // fallback to all embeddings
+      }
+
+      if (embd) {
+        if (normalize) {
+          // L2 normalize
+          double norm = 0.0;
+          for (int i = 0; i < n_embd; ++i) {
+            norm += static_cast<double>(embd[i]) * static_cast<double>(embd[i]);
+          }
+          norm = std::sqrt(norm);
+          if (norm > 0.0) {
+            for (int i = 0; i < n_embd; ++i) {
+              result(t, i) = static_cast<double>(embd[i]) / norm;
+            }
+          } else {
+            for (int i = 0; i < n_embd; ++i) {
+              result(t, i) = 0.0;
+            }
+          }
+        } else {
+          for (int i = 0; i < n_embd; ++i) {
+            result(t, i) = static_cast<double>(embd[i]);
+          }
+        }
+      } else {
+        warning("Failed to extract embeddings for text at index " + std::to_string(t + 1));
+      }
+
+      llama_batch_free(batch);
+    }
+
+    // Restore to generation mode
+    llama_set_embeddings(edge_ctx->ctx, false);
+
+    return result;
+
+  } catch (const std::exception& e) {
+    // Try to restore generation mode on error
+    try {
+      XPtr<EdgeModelContext> edge_ctx(model_ptr);
+      if (edge_ctx->is_valid()) {
+        llama_set_embeddings(edge_ctx->ctx, false);
+      }
+    } catch (...) {}
+    stop("Error during embedding extraction: " + std::string(e.what()));
+  }
+}
+
+// [[Rcpp::export]]
+int edge_model_n_embd_internal(SEXP model_ptr) {
+  try {
+    if (TYPEOF(model_ptr) != EXTPTRSXP) stop("Invalid model context");
+    XPtr<EdgeModelContext> edge_ctx(model_ptr);
+    if (!edge_ctx->is_valid()) stop("Invalid model context");
+    return llama_model_n_embd(edge_ctx->model);
+  } catch (const std::exception& e) {
+    stop("Error getting embedding dimension: " + std::string(e.what()));
+  }
+}
+
+// [[Rcpp::export]]
 void set_llama_logging(bool enabled) {
   g_logging_enabled = enabled;
   // Also control general console output suppression

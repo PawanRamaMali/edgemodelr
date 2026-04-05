@@ -2259,3 +2259,485 @@ edge_cuda_info <- function() {
                 else NA_character_
   )
 }
+
+# ============================================================================
+# Structured Output / Grammar-Constrained Generation
+# ============================================================================
+
+#' Generate text constrained by a GBNF grammar
+#'
+#' Uses llama.cpp's grammar-constrained sampling to force output to conform
+#' to a GBNF grammar specification. This ensures structured, parseable output.
+#'
+#' @param ctx Model context from edge_load_model()
+#' @param prompt The input prompt
+#' @param grammar A GBNF grammar string defining allowed output structure
+#' @param grammar_root The root rule name in the grammar (default: "root")
+#' @param n_predict Maximum tokens to generate (default: 512)
+#' @param temperature Sampling temperature (default: 0.3, lower for structured output)
+#' @param top_p Nucleus sampling threshold (default: 0.95)
+#' @return Character string containing only the generated text (not the prompt)
+#'
+#' @details
+#' GBNF (GGML BNF) is a format for defining formal grammars that constrain
+#' model output. This is useful for generating JSON, XML, or any structured format.
+#'
+#' Common GBNF patterns:
+#' \itemize{
+#'   \item JSON object: Use \code{edge_json_grammar()} for convenience
+#'   \item Enum/choices: \code{'root ::= "yes" | "no" | "maybe"'}
+#'   \item Number: \code{'root ::= [0-9]+'}
+#' }
+#'
+#' @examples
+#' \dontrun{
+#' ctx <- edge_load_model("model.gguf")
+#'
+#' # Force yes/no output
+#' grammar <- 'root ::= "yes" | "no"'
+#' result <- edge_grammar_completion(ctx, "Is the sky blue? Answer:", grammar)
+#'
+#' # Force JSON output
+#' json_grammar <- edge_json_grammar(list(
+#'   sentiment = c("positive", "negative", "neutral"),
+#'   confidence = "number"
+#' ))
+#' result <- edge_grammar_completion(ctx,
+#'   "Analyze sentiment: 'I love this product'\nJSON:",
+#'   json_grammar)
+#'
+#' edge_free_model(ctx)
+#' }
+#' @export
+edge_grammar_completion <- function(ctx, prompt, grammar, grammar_root = "root",
+                                     n_predict = 512L, temperature = 0.3, top_p = 0.95) {
+  if (!is_valid_model(ctx)) {
+    stop("Invalid model context. Load a model first with edge_load_model()")
+  }
+  if (!is.character(prompt) || length(prompt) != 1L) {
+    stop("Prompt must be a single character string")
+  }
+  if (!is.character(grammar) || length(grammar) != 1L || nchar(grammar) == 0L) {
+    stop("grammar must be a non-empty character string containing a GBNF grammar")
+  }
+
+  n_predict <- max(1L, min(as.integer(n_predict), 4096L))
+  temperature <- max(0.0, min(temperature, 2.0))
+  top_p <- max(0.1, min(top_p, 1.0))
+
+  edge_completion_grammar_internal(
+    ctx, prompt, grammar, grammar_root,
+    as.integer(n_predict), as.numeric(temperature), as.numeric(top_p)
+  )
+}
+
+#' Generate a GBNF grammar for JSON output from a schema
+#'
+#' Converts a simple R list schema into a GBNF grammar string that constrains
+#' model output to valid JSON matching the schema.
+#'
+#' @param schema A named list where each element defines a field. Values can be:
+#'   \itemize{
+#'     \item \code{"string"} - any string value
+#'     \item \code{"number"} - a numeric value (integer or decimal)
+#'     \item \code{"integer"} - an integer value
+#'     \item \code{"boolean"} - true or false
+#'     \item A character vector - enum of allowed values (e.g., \code{c("positive", "negative")})
+#'   }
+#' @return A GBNF grammar string
+#'
+#' @examples
+#' \dontrun{
+#' # Schema with enum and free-text fields
+#' grammar <- edge_json_grammar(list(
+#'   sentiment = c("positive", "negative", "neutral"),
+#'   confidence = "number",
+#'   explanation = "string"
+#' ))
+#' cat(grammar)
+#'
+#' # Use with edge_grammar_completion
+#' ctx <- edge_load_model("model.gguf")
+#' result <- edge_grammar_completion(ctx,
+#'   "Analyze: 'Great product!'\nJSON:", grammar)
+#' parsed <- jsonlite::fromJSON(result)
+#' }
+#' @export
+edge_json_grammar <- function(schema) {
+  if (!is.list(schema) || is.null(names(schema))) {
+    stop("schema must be a named list")
+  }
+
+  ws <- 'ws ::= [ \\t\\n]*\n'
+  string_rule <- 'string ::= "\\"" [^"\\\\]* "\\""\n'
+  number_rule <- 'number ::= "-"? [0-9]+ ("." [0-9]+)?\n'
+  integer_rule <- 'integer ::= "-"? [0-9]+\n'
+  boolean_rule <- 'boolean ::= "true" | "false"\n'
+
+  field_rules <- character()
+  field_names_grammar <- character()
+  needed_rules <- character()
+
+  for (i in seq_along(schema)) {
+    field_name <- names(schema)[i]
+    field_spec <- schema[[i]]
+    rule_name <- paste0("field_", i)
+
+    if (is.character(field_spec) && length(field_spec) == 1L) {
+      # Type specifier
+      type <- tolower(field_spec)
+      if (type == "string") {
+        field_rules <- c(field_rules,
+          paste0(rule_name, ' ::= string'))
+        needed_rules <- c(needed_rules, "string")
+      } else if (type == "number") {
+        field_rules <- c(field_rules,
+          paste0(rule_name, ' ::= number'))
+        needed_rules <- c(needed_rules, "number")
+      } else if (type == "integer") {
+        field_rules <- c(field_rules,
+          paste0(rule_name, ' ::= integer'))
+        needed_rules <- c(needed_rules, "integer")
+      } else if (type == "boolean") {
+        field_rules <- c(field_rules,
+          paste0(rule_name, ' ::= boolean'))
+        needed_rules <- c(needed_rules, "boolean")
+      } else {
+        stop("Unknown type '", type, "' for field '", field_name,
+             "'. Use 'string', 'number', 'integer', 'boolean', or a character vector for enum.")
+      }
+    } else if (is.character(field_spec) && length(field_spec) > 1L) {
+      # Enum values
+      enum_options <- paste0('"\\\"', field_spec, '\\\""', collapse = " | ")
+      field_rules <- c(field_rules,
+        paste0(rule_name, ' ::= ', enum_options))
+    } else {
+      stop("Invalid schema for field '", field_name,
+           "'. Use a string type name or character vector for enum.")
+    }
+
+    # Build the field grammar entry: "key": value
+    field_entry <- paste0('"\\"', field_name, '\\"" ws ":" ws ', rule_name)
+    field_names_grammar <- c(field_names_grammar, field_entry)
+  }
+
+  # Build root rule with comma-separated fields
+  if (length(field_names_grammar) == 1L) {
+    fields_combined <- field_names_grammar
+  } else {
+    fields_combined <- paste(field_names_grammar, collapse = ' ws "," ws ')
+  }
+
+  root_rule <- paste0('root ::= "{" ws ', fields_combined, ' ws "}"\n')
+
+  # Assemble grammar
+  grammar_parts <- root_rule
+  grammar_parts <- c(grammar_parts, paste0(field_rules, "\n"))
+  grammar_parts <- c(grammar_parts, ws)
+  if ("string" %in% needed_rules) grammar_parts <- c(grammar_parts, string_rule)
+  if ("number" %in% needed_rules) grammar_parts <- c(grammar_parts, number_rule)
+  if ("integer" %in% needed_rules) grammar_parts <- c(grammar_parts, integer_rule)
+  if ("boolean" %in% needed_rules) grammar_parts <- c(grammar_parts, boolean_rule)
+
+  paste(grammar_parts, collapse = "")
+}
+
+#' Extract structured data from text using grammar-constrained generation
+#'
+#' High-level function that combines prompt construction with grammar-constrained
+#' generation to extract structured data from text. Returns a parsed R list.
+#'
+#' @param ctx Model context from edge_load_model()
+#' @param text The input text to analyze
+#' @param schema A named list defining the extraction schema (see \code{\link{edge_json_grammar}})
+#' @param instruction Optional instruction to guide extraction (default: auto-generated)
+#' @param n_predict Maximum tokens to generate (default: 512)
+#' @param temperature Sampling temperature (default: 0.2, very low for factual extraction)
+#' @return A named list with the extracted fields, or the raw JSON string if parsing fails
+#'
+#' @examples
+#' \dontrun{
+#' ctx <- edge_load_model("model.gguf")
+#'
+#' result <- edge_extract(ctx,
+#'   "I absolutely love this product! Best purchase ever.",
+#'   schema = list(
+#'     sentiment = c("positive", "negative", "neutral"),
+#'     confidence = "number"
+#'   ))
+#' # result$sentiment == "positive"
+#' # result$confidence == 0.95
+#'
+#' edge_free_model(ctx)
+#' }
+#' @export
+edge_extract <- function(ctx, text, schema, instruction = NULL, n_predict = 512L,
+                          temperature = 0.2) {
+  if (!is.character(text) || length(text) != 1L) {
+    stop("text must be a single character string")
+  }
+
+  grammar <- edge_json_grammar(schema)
+  field_descriptions <- vapply(seq_along(schema), function(i) {
+    nm <- names(schema)[i]
+    spec <- schema[[i]]
+    if (is.character(spec) && length(spec) > 1L) {
+      paste0(nm, " (one of: ", paste(spec, collapse = ", "), ")")
+    } else {
+      paste0(nm, " (", spec, ")")
+    }
+  }, character(1))
+
+  if (is.null(instruction)) {
+    instruction <- paste0(
+      "Extract the following fields from the text: ",
+      paste(field_descriptions, collapse = ", "), "."
+    )
+  }
+
+  prompt <- paste0(
+    "### Instruction\n", instruction,
+    "\n\n### Text\n", text,
+    "\n\n### Response\n"
+  )
+
+  raw_output <- edge_grammar_completion(ctx, prompt, grammar,
+                                         n_predict = n_predict,
+                                         temperature = temperature)
+
+  # Try to parse JSON
+  tryCatch({
+    # Find JSON object in output
+    json_start <- regexpr("\\{", raw_output)
+    if (json_start > 0) {
+      json_str <- substring(raw_output, json_start)
+      # Find matching closing brace
+      depth <- 0
+      for (i in seq_len(nchar(json_str))) {
+        ch <- substr(json_str, i, i)
+        if (ch == "{") depth <- depth + 1
+        else if (ch == "}") {
+          depth <- depth - 1
+          if (depth == 0) {
+            json_str <- substr(json_str, 1, i)
+            break
+          }
+        }
+      }
+
+      if (requireNamespace("jsonlite", quietly = TRUE)) {
+        return(jsonlite::fromJSON(json_str))
+      } else {
+        # Basic parsing fallback without jsonlite
+        return(json_str)
+      }
+    }
+    raw_output
+  }, error = function(e) {
+    warning("JSON parsing failed, returning raw output: ", e$message)
+    raw_output
+  })
+}
+
+#' Classify text into predefined categories
+#'
+#' Convenience function that uses grammar-constrained generation to classify
+#' text into one of the provided categories.
+#'
+#' @param ctx Model context from edge_load_model()
+#' @param text Text to classify (character string or vector for batch)
+#' @param categories Character vector of allowed categories
+#' @param instruction Optional classification instruction
+#' @param temperature Sampling temperature (default: 0.1)
+#' @return Character string (single text) or character vector (batch) with the predicted category
+#'
+#' @examples
+#' \dontrun{
+#' ctx <- edge_load_model("model.gguf")
+#'
+#' # Single classification
+#' result <- edge_classify(ctx,
+#'   "I love this product!",
+#'   categories = c("positive", "negative", "neutral"))
+#'
+#' # Batch classification
+#' texts <- c("Great product!", "Terrible experience", "It was okay")
+#' results <- edge_classify(ctx, texts,
+#'   categories = c("positive", "negative", "neutral"))
+#'
+#' edge_free_model(ctx)
+#' }
+#' @export
+edge_classify <- function(ctx, text, categories, instruction = NULL,
+                           temperature = 0.1) {
+  if (!is.character(categories) || length(categories) < 2L) {
+    stop("categories must be a character vector with at least 2 options")
+  }
+
+  # Build grammar that only allows one of the categories
+  enum_options <- paste0('"', categories, '"', collapse = " | ")
+  grammar <- paste0('root ::= ', enum_options, '\n')
+
+  if (is.null(instruction)) {
+    instruction <- paste0(
+      "Classify the following text into exactly one of these categories: ",
+      paste(categories, collapse = ", "), ".\n",
+      "Respond with only the category name, nothing else."
+    )
+  }
+
+  # Handle batch
+  classify_one <- function(single_text) {
+    prompt <- paste0(
+      "### Instruction\n", instruction,
+      "\n\n### Text\n", single_text,
+      "\n\n### Category\n"
+    )
+
+    result <- edge_grammar_completion(ctx, prompt, grammar,
+                                       n_predict = 50L,
+                                       temperature = temperature)
+    trimws(result)
+  }
+
+  if (length(text) == 1L) {
+    classify_one(text)
+  } else {
+    vapply(text, classify_one, character(1), USE.NAMES = FALSE)
+  }
+}
+
+
+# ============================================================================
+# Embeddings API
+# ============================================================================
+
+#' Extract text embeddings from a model
+#'
+#' Computes dense vector embeddings for one or more text inputs using the
+#' loaded model. These embeddings can be used for semantic search, clustering,
+#' similarity comparison, and as input to downstream models.
+#'
+#' @param ctx Model context from edge_load_model()
+#' @param texts Character vector of texts to embed
+#' @param normalize Whether to L2-normalize the embeddings (default: TRUE).
+#'   Normalized embeddings allow cosine similarity to be computed as a simple dot product.
+#' @return A numeric matrix with dimensions (n_texts x n_embd), where each row
+#'   is the embedding vector for the corresponding input text.
+#'
+#' @details
+#' For best results, use a model designed for embeddings (e.g., nomic-embed-text).
+#' However, generative models can also produce useful embeddings from their
+#' hidden states.
+#'
+#' The embedding dimension depends on the model architecture (e.g., 768 for
+#' small models, 4096+ for larger ones). Use \code{edge_model_n_embd()} to
+#' query the dimension.
+#'
+#' @examples
+#' \dontrun{
+#' ctx <- edge_load_model("nomic-embed-text.gguf")
+#'
+#' # Single embedding
+#' emb <- edge_embeddings(ctx, "The cat sat on the mat")
+#' dim(emb)  # 1 x n_embd
+#'
+#' # Multiple embeddings
+#' texts <- c("cats are great", "dogs are loyal", "the stock market crashed")
+#' embs <- edge_embeddings(ctx, texts)
+#' dim(embs)  # 3 x n_embd
+#'
+#' # Compute similarity
+#' edge_similarity(embs[1,], embs[2,])  # high (both about pets)
+#' edge_similarity(embs[1,], embs[3,])  # low (different topics)
+#'
+#' edge_free_model(ctx)
+#' }
+#' @export
+edge_embeddings <- function(ctx, texts, normalize = TRUE) {
+  if (!is_valid_model(ctx)) {
+    stop("Invalid model context. Load a model first with edge_load_model()")
+  }
+  if (!is.character(texts) || length(texts) == 0L) {
+    stop("texts must be a non-empty character vector")
+  }
+  if (any(is.na(texts))) {
+    stop("texts must not contain NA values")
+  }
+
+  edge_embeddings_internal(ctx, texts, as.logical(normalize))
+}
+
+#' Compute cosine similarity between two embedding vectors
+#'
+#' @param a Numeric vector (embedding)
+#' @param b Numeric vector (embedding)
+#' @return Cosine similarity score between -1 and 1
+#'
+#' @examples
+#' \dontrun{
+#' ctx <- edge_load_model("model.gguf")
+#' embs <- edge_embeddings(ctx, c("happy cat", "joyful kitten", "stock market"))
+#'
+#' edge_similarity(embs[1,], embs[2,])  # ~0.9 (similar meaning)
+#' edge_similarity(embs[1,], embs[3,])  # ~0.1 (different topics)
+#' }
+#' @export
+edge_similarity <- function(a, b) {
+  if (!is.numeric(a) || !is.numeric(b)) {
+    stop("Both a and b must be numeric vectors")
+  }
+  if (length(a) != length(b)) {
+    stop("Vectors must have the same length")
+  }
+  dot <- sum(a * b)
+  norm_a <- sqrt(sum(a * a))
+  norm_b <- sqrt(sum(b * b))
+  if (norm_a == 0 || norm_b == 0) return(0)
+  dot / (norm_a * norm_b)
+}
+
+#' Get the embedding dimension of a loaded model
+#'
+#' @param ctx Model context from edge_load_model()
+#' @return Integer giving the embedding vector dimension
+#'
+#' @examples
+#' \dontrun{
+#' ctx <- edge_load_model("model.gguf")
+#' edge_model_n_embd(ctx)  # e.g., 4096
+#' }
+#' @export
+edge_model_n_embd <- function(ctx) {
+  if (!is_valid_model(ctx)) {
+    stop("Invalid model context. Load a model first with edge_load_model()")
+  }
+  edge_model_n_embd_internal(ctx)
+}
+
+#' Compute a similarity matrix for a set of embeddings
+#'
+#' @param embeddings A numeric matrix where each row is an embedding vector
+#'   (as returned by \code{\link{edge_embeddings}})
+#' @return A symmetric numeric matrix of pairwise cosine similarities
+#'
+#' @examples
+#' \dontrun{
+#' ctx <- edge_load_model("model.gguf")
+#' embs <- edge_embeddings(ctx, c("cat", "kitten", "car", "automobile"))
+#' sim_mat <- edge_similarity_matrix(embs)
+#' # sim_mat[1,2] high (cat~kitten), sim_mat[1,3] low (cat~car)
+#' }
+#' @export
+edge_similarity_matrix <- function(embeddings) {
+  if (!is.matrix(embeddings) || !is.numeric(embeddings)) {
+    stop("embeddings must be a numeric matrix")
+  }
+  n <- nrow(embeddings)
+  # Normalize rows
+  norms <- sqrt(rowSums(embeddings^2))
+  norms[norms == 0] <- 1  # avoid division by zero
+  normed <- embeddings / norms
+  # Cosine similarity = dot product of normalized vectors
+  tcrossprod(normed)
+}

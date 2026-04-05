@@ -33,6 +33,18 @@ edge_completion_stream_internal <- function(model_ptr, prompt, callback, n_predi
     .Call(`_edgemodelr_edge_completion_stream_internal`, model_ptr, prompt, callback, n_predict, temperature, top_p)
 }
 
+edge_completion_grammar_internal <- function(model_ptr, prompt, grammar_str, grammar_root, n_predict = 512L, temperature = 0.3, top_p = 0.95) {
+    .Call(`_edgemodelr_edge_completion_grammar_internal`, model_ptr, prompt, grammar_str, grammar_root, n_predict, temperature, top_p)
+}
+
+edge_embeddings_internal <- function(model_ptr, texts, normalize = TRUE) {
+    .Call(`_edgemodelr_edge_embeddings_internal`, model_ptr, texts, normalize)
+}
+
+edge_model_n_embd_internal <- function(model_ptr) {
+    .Call(`_edgemodelr_edge_model_n_embd_internal`, model_ptr)
+}
+
 set_llama_logging <- function(enabled) {
     invisible(.Call(`_edgemodelr_set_llama_logging`, enabled))
 }

@@ -1,3 +1,48 @@
+# edgemodelr 0.4.0
+
+## Structured Output and Embeddings API
+
+### New Features
+
+* **Grammar-constrained generation** (`edge_grammar_completion()`): Force model
+  output to conform to a GBNF grammar specification. Ensures valid, parseable
+  structured output (JSON, enums, numbers, etc.) using llama.cpp's native
+  grammar sampler.
+
+* **JSON schema helper** (`edge_json_grammar()`): Convert a simple R list
+  schema into a GBNF grammar string. Supports string, number, integer,
+  boolean fields and enum (character vector) constraints.
+
+* **Structured data extraction** (`edge_extract()`): High-level function that
+  combines prompt construction with grammar-constrained generation to extract
+  structured data from text. Returns a parsed R list (requires `jsonlite`).
+
+* **Text classification** (`edge_classify()`): Classify text into predefined
+  categories using grammar constraints. Supports single text and batch
+  (vectorized) classification. Output is guaranteed to be one of the
+  specified categories.
+
+* **Text embeddings** (`edge_embeddings()`): Extract dense vector embeddings
+  from any loaded model. Returns a numeric matrix (n_texts x n_embd) suitable
+  for clustering, semantic search, similarity computation, and RAG pipelines.
+  Supports optional L2 normalization.
+
+* **Cosine similarity** (`edge_similarity()`, `edge_similarity_matrix()`):
+  Compute pairwise cosine similarity between embedding vectors. Matrix version
+  efficiently computes all-pairs similarity using normalized matrix multiply.
+
+* **Embedding dimension query** (`edge_model_n_embd()`): Query the embedding
+  dimension of a loaded model.
+
+### Use Cases Unlocked
+
+* **Sentiment analysis**: `edge_classify(ctx, text, c("positive", "negative", "neutral"))`
+* **Entity extraction**: `edge_extract(ctx, text, list(name = "string", role = "string"))`
+* **Data labeling**: Batch classify thousands of rows with guaranteed valid labels
+* **Semantic search**: Embed documents and queries, find nearest neighbors
+* **Document clustering**: Compute similarity matrices, feed to hclust/kmeans
+* **RAG foundations**: Embed corpus, retrieve relevant context for generation
+
 # edgemodelr 0.3.0
 
 ## CUDA GPU Support and Qwen3 Tokenizer Fix
