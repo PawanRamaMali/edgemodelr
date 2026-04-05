@@ -2741,3 +2741,532 @@ edge_similarity_matrix <- function(embeddings) {
   # Cosine similarity = dot product of normalized vectors
   tcrossprod(normed)
 }
+
+
+# ============================================================================
+# Batch Processing / Vectorized API
+# ============================================================================
+
+#' Apply a prompt template to a vector of texts
+#'
+#' Maps a prompt template over a character vector, generating completions for
+#' each element. This is the primary function for batch LLM operations on data
+#' frames. A progress indicator is printed to the console.
+#'
+#' @param ctx Model context from edge_load_model()
+#' @param texts Character vector of input texts
+#' @param prompt_template A string with \code{\{text\}} as a placeholder for each input,
+#'   or a function that takes a single text and returns a prompt string.
+#' @param n_predict Maximum tokens to generate per text (default: 128)
+#' @param temperature Sampling temperature (default: 0.7)
+#' @param top_p Nucleus sampling threshold (default: 0.95)
+#' @param grammar Optional GBNF grammar string to constrain output
+#' @param progress Show progress messages (default: TRUE)
+#' @return Character vector of completions, same length as \code{texts}
+#'
+#' @examples
+#' \dontrun{
+#' ctx <- edge_load_model("model.gguf")
+#'
+#' # Summarize a column
+#' df <- data.frame(review = c("Great product!", "Terrible, broke on day 1"))
+#' df$summary <- edge_map(ctx, df$review,
+#'   "Summarize in 5 words: {text}")
+#'
+#' # With a custom prompt function
+#' df$analysis <- edge_map(ctx, df$review, function(text) {
+#'   paste0("Product review: ", text, "\nOne-word sentiment:")
+#' })
+#'
+#' edge_free_model(ctx)
+#' }
+#' @export
+edge_map <- function(ctx, texts, prompt_template, n_predict = 128L,
+                      temperature = 0.7, top_p = 0.95, grammar = NULL,
+                      progress = TRUE) {
+  if (!is_valid_model(ctx)) {
+    stop("Invalid model context. Load a model first with edge_load_model()")
+  }
+  if (!is.character(texts) || length(texts) == 0L) {
+    stop("texts must be a non-empty character vector")
+  }
+
+  n <- length(texts)
+  results <- character(n)
+
+  build_prompt <- if (is.function(prompt_template)) {
+    prompt_template
+  } else if (is.character(prompt_template) && length(prompt_template) == 1L) {
+    function(text) gsub("{text}", text, prompt_template, fixed = TRUE)
+  } else {
+    stop("prompt_template must be a string with {text} placeholder or a function")
+  }
+
+  use_grammar <- !is.null(grammar) && nchar(grammar) > 0L
+
+  for (i in seq_len(n)) {
+    if (progress && n > 1L) {
+      message(sprintf("[%d/%d] Processing...", i, n))
+      flush.console()
+    }
+
+    prompt <- build_prompt(texts[i])
+
+    if (use_grammar) {
+      results[i] <- edge_grammar_completion(ctx, prompt, grammar,
+                                             n_predict = n_predict,
+                                             temperature = temperature,
+                                             top_p = top_p)
+    } else {
+      raw <- edge_completion_internal(ctx, prompt,
+                                       as.integer(n_predict),
+                                       as.numeric(temperature),
+                                       as.numeric(top_p))
+      # Strip the prompt prefix from the result
+      if (startsWith(raw, prompt)) {
+        results[i] <- substring(raw, nchar(prompt) + 1L)
+      } else {
+        results[i] <- raw
+      }
+    }
+  }
+
+  if (progress && n > 1L) message(sprintf("Done. Processed %d texts.", n))
+  results
+}
+
+#' Extract structured data from multiple texts
+#'
+#' Batch version of \code{\link{edge_extract}} that processes a vector of texts
+#' and returns a data frame.
+#'
+#' @param ctx Model context from edge_load_model()
+#' @param texts Character vector of texts to process
+#' @param schema A named list defining the extraction schema (see \code{\link{edge_json_grammar}})
+#' @param instruction Optional instruction to guide extraction
+#' @param n_predict Maximum tokens to generate per text (default: 512)
+#' @param temperature Sampling temperature (default: 0.2)
+#' @param progress Show progress messages (default: TRUE)
+#' @return A data frame with one row per text and columns for each schema field
+#'
+#' @examples
+#' \dontrun{
+#' ctx <- edge_load_model("model.gguf")
+#'
+#' reviews <- c("Love it!", "Worst purchase ever", "It's okay I guess")
+#' results <- edge_extract_batch(ctx, reviews,
+#'   schema = list(
+#'     sentiment = c("positive", "negative", "neutral"),
+#'     confidence = "number"
+#'   ))
+#' # results is a data frame:
+#' #   sentiment confidence
+#' # 1  positive       0.95
+#' # 2  negative       0.90
+#' # 3   neutral       0.60
+#'
+#' edge_free_model(ctx)
+#' }
+#' @export
+edge_extract_batch <- function(ctx, texts, schema, instruction = NULL,
+                                n_predict = 512L, temperature = 0.2,
+                                progress = TRUE) {
+  if (!is.character(texts) || length(texts) == 0L) {
+    stop("texts must be a non-empty character vector")
+  }
+
+  n <- length(texts)
+  results_list <- vector("list", n)
+
+  for (i in seq_len(n)) {
+    if (progress && n > 1L) {
+      message(sprintf("[%d/%d] Extracting...", i, n))
+      flush.console()
+    }
+
+    result <- tryCatch(
+      edge_extract(ctx, texts[i], schema,
+                    instruction = instruction,
+                    n_predict = n_predict,
+                    temperature = temperature),
+      error = function(e) {
+        warning("Extraction failed for text ", i, ": ", e$message)
+        # Return NA-filled row
+        stats::setNames(as.list(rep(NA, length(schema))), names(schema))
+      }
+    )
+
+    if (is.character(result) && length(result) == 1L) {
+      # JSON parsing failed, return NA row
+      results_list[[i]] <- stats::setNames(as.list(rep(NA, length(schema))), names(schema))
+    } else {
+      results_list[[i]] <- result
+    }
+  }
+
+  if (progress && n > 1L) message(sprintf("Done. Extracted from %d texts.", n))
+
+  # Combine into data frame
+  tryCatch(
+    do.call(rbind.data.frame, c(results_list, stringsAsFactors = FALSE)),
+    error = function(e) {
+      # Fallback: build data frame manually
+      df <- data.frame(matrix(NA, nrow = n, ncol = length(schema)))
+      names(df) <- names(schema)
+      for (i in seq_len(n)) {
+        row <- results_list[[i]]
+        if (is.list(row)) {
+          for (nm in names(schema)) {
+            if (nm %in% names(row)) df[i, nm] <- row[[nm]]
+          }
+        }
+      }
+      df
+    }
+  )
+}
+
+
+# ============================================================================
+# RAG (Retrieval-Augmented Generation) Pipeline
+# ============================================================================
+
+#' Build an embedding index from text documents
+#'
+#' Reads text files from a directory (or accepts text directly), computes
+#' embeddings for chunks, and returns an index object for retrieval.
+#'
+#' @param source Either a directory path containing text files, or a character
+#'   vector of text chunks to index directly.
+#' @param ctx Model context from edge_load_model() (used for embedding)
+#' @param chunk_size Approximate number of characters per chunk (default: 500).
+#'   Ignored when \code{source} is a character vector.
+#' @param chunk_overlap Number of characters of overlap between chunks (default: 50).
+#'   Ignored when \code{source} is a character vector.
+#' @param file_pattern Glob pattern for files to read (default: "*.txt").
+#'   Also supports "*.md", "*.csv", etc.
+#' @param normalize Normalize embeddings (default: TRUE)
+#' @param progress Show progress messages (default: TRUE)
+#' @return An \code{edge_index} object (a list) containing:
+#'   \itemize{
+#'     \item \code{chunks}: character vector of text chunks
+#'     \item \code{embeddings}: numeric matrix (n_chunks x n_embd)
+#'     \item \code{sources}: character vector of source file paths (or NA for direct text)
+#'     \item \code{n_chunks}: number of chunks
+#'     \item \code{n_embd}: embedding dimension
+#'   }
+#'
+#' @examples
+#' \dontrun{
+#' ctx <- edge_load_model("model.gguf")
+#'
+#' # Index a directory of text files
+#' index <- edge_index_documents("./reports/", ctx)
+#'
+#' # Or index text directly
+#' texts <- c("Revenue grew 15% in Q3", "New product launched in Asia")
+#' index <- edge_index_documents(texts, ctx)
+#'
+#' # Search the index
+#' results <- edge_search(index, ctx, "What happened with revenue?")
+#' }
+#' @export
+edge_index_documents <- function(source, ctx, chunk_size = 500L,
+                                  chunk_overlap = 50L,
+                                  file_pattern = "*.txt",
+                                  normalize = TRUE,
+                                  progress = TRUE) {
+  if (!is_valid_model(ctx)) {
+    stop("Invalid model context. Load a model first with edge_load_model()")
+  }
+
+  chunks <- character()
+  sources <- character()
+
+  if (length(source) == 1L && dir.exists(source)) {
+    # Read files from directory
+    files <- list.files(source, pattern = utils::glob2rx(file_pattern),
+                        full.names = TRUE, recursive = TRUE)
+    if (length(files) == 0L) {
+      stop("No files matching '", file_pattern, "' found in: ", source)
+    }
+
+    if (progress) message(sprintf("Reading %d files...", length(files)))
+
+    for (filepath in files) {
+      text <- tryCatch(
+        paste(readLines(filepath, warn = FALSE), collapse = "\n"),
+        error = function(e) {
+          warning("Could not read: ", filepath)
+          NULL
+        }
+      )
+      if (is.null(text) || nchar(text) == 0L) next
+
+      file_chunks <- .chunk_text(text, chunk_size, chunk_overlap)
+      chunks <- c(chunks, file_chunks)
+      sources <- c(sources, rep(filepath, length(file_chunks)))
+    }
+  } else if (is.character(source) && length(source) > 0L) {
+    # Direct text input - optionally chunk long texts
+    for (i in seq_along(source)) {
+      if (nchar(source[i]) > chunk_size * 2L) {
+        text_chunks <- .chunk_text(source[i], chunk_size, chunk_overlap)
+        chunks <- c(chunks, text_chunks)
+        sources <- c(sources, rep(NA_character_, length(text_chunks)))
+      } else {
+        chunks <- c(chunks, source[i])
+        sources <- c(sources, NA_character_)
+      }
+    }
+  } else {
+    stop("source must be a directory path or a character vector of texts")
+  }
+
+  if (length(chunks) == 0L) {
+    stop("No text content found to index")
+  }
+
+  if (progress) message(sprintf("Computing embeddings for %d chunks...", length(chunks)))
+
+  # Compute embeddings in batches to avoid memory issues
+  batch_size <- 32L
+  n_chunks <- length(chunks)
+  emb_list <- list()
+
+  for (start in seq(1L, n_chunks, by = batch_size)) {
+    end <- min(start + batch_size - 1L, n_chunks)
+    batch_chunks <- chunks[start:end]
+
+    if (progress && n_chunks > batch_size) {
+      message(sprintf("  Embedding batch %d-%d of %d...", start, end, n_chunks))
+    }
+
+    emb_list[[length(emb_list) + 1L]] <- edge_embeddings(ctx, batch_chunks,
+                                                          normalize = normalize)
+  }
+
+  embeddings <- do.call(rbind, emb_list)
+
+  if (progress) message(sprintf("Index built: %d chunks, %d-dim embeddings",
+                                 n_chunks, ncol(embeddings)))
+
+  structure(
+    list(
+      chunks = chunks,
+      embeddings = embeddings,
+      sources = sources,
+      n_chunks = n_chunks,
+      n_embd = ncol(embeddings)
+    ),
+    class = "edge_index"
+  )
+}
+
+#' Search an embedding index for relevant chunks
+#'
+#' Finds the most similar text chunks to a query using cosine similarity.
+#'
+#' @param index An \code{edge_index} object from \code{\link{edge_index_documents}}
+#' @param ctx Model context (same model used to build the index)
+#' @param query Query text string
+#' @param top_k Number of results to return (default: 5)
+#' @return A data frame with columns:
+#'   \itemize{
+#'     \item \code{chunk}: the text content
+#'     \item \code{score}: cosine similarity to the query
+#'     \item \code{source}: source file path (or NA)
+#'     \item \code{index}: position in the original index
+#'   }
+#'
+#' @examples
+#' \dontrun{
+#' ctx <- edge_load_model("model.gguf")
+#' index <- edge_index_documents("./docs/", ctx)
+#'
+#' results <- edge_search(index, ctx, "quarterly revenue growth")
+#' print(results)  # top 5 most relevant chunks
+#' }
+#' @export
+edge_search <- function(index, ctx, query, top_k = 5L) {
+  if (!inherits(index, "edge_index")) {
+    stop("index must be an edge_index object from edge_index_documents()")
+  }
+  if (!is_valid_model(ctx)) {
+    stop("Invalid model context")
+  }
+  if (!is.character(query) || length(query) != 1L) {
+    stop("query must be a single character string")
+  }
+
+  top_k <- min(as.integer(top_k), index$n_chunks)
+
+  # Embed the query
+  query_emb <- edge_embeddings(ctx, query, normalize = TRUE)
+
+  # Compute similarities: query_emb (1 x d) %*% t(index_emb) (d x n)
+  scores <- as.numeric(query_emb %*% t(index$embeddings))
+
+  # Get top-k indices
+  top_indices <- order(scores, decreasing = TRUE)[seq_len(top_k)]
+
+  data.frame(
+    chunk = index$chunks[top_indices],
+    score = scores[top_indices],
+    source = index$sources[top_indices],
+    index = top_indices,
+    stringsAsFactors = FALSE
+  )
+}
+
+#' Ask a question using retrieval-augmented generation
+#'
+#' Combines semantic search with text generation: retrieves relevant context
+#' from the index, then generates an answer grounded in that context.
+#'
+#' @param ctx Model context from edge_load_model()
+#' @param question The question to answer
+#' @param index An \code{edge_index} object from \code{\link{edge_index_documents}}
+#' @param top_k Number of context chunks to retrieve (default: 3)
+#' @param n_predict Maximum tokens for the answer (default: 256)
+#' @param temperature Sampling temperature (default: 0.3)
+#' @param system_prompt Optional system-level instruction for the model
+#' @param return_context If TRUE, return both answer and retrieved context (default: FALSE)
+#' @return If \code{return_context = FALSE}: a character string with the answer.
+#'   If \code{return_context = TRUE}: a list with \code{answer}, \code{context} (data frame
+#'   from \code{edge_search}), and \code{prompt} (the full constructed prompt).
+#'
+#' @examples
+#' \dontrun{
+#' ctx <- edge_load_model("model.gguf")
+#' index <- edge_index_documents("./reports/", ctx)
+#'
+#' # Simple Q&A
+#' answer <- edge_ask(ctx, "What were Q3 revenues?", index)
+#' cat(answer)
+#'
+#' # With context for debugging
+#' result <- edge_ask(ctx, "What were Q3 revenues?", index,
+#'                     return_context = TRUE)
+#' cat(result$answer)
+#' print(result$context)  # shows which chunks were used
+#' }
+#' @export
+edge_ask <- function(ctx, question, index, top_k = 3L, n_predict = 256L,
+                      temperature = 0.3, system_prompt = NULL,
+                      return_context = FALSE) {
+  if (!is_valid_model(ctx)) {
+    stop("Invalid model context. Load a model first with edge_load_model()")
+  }
+  if (!inherits(index, "edge_index")) {
+    stop("index must be an edge_index object from edge_index_documents()")
+  }
+  if (!is.character(question) || length(question) != 1L) {
+    stop("question must be a single character string")
+  }
+
+  # Retrieve relevant context
+  context_df <- edge_search(index, ctx, question, top_k = top_k)
+
+  # Build context string
+  context_texts <- context_df$chunk
+  context_block <- paste(
+    vapply(seq_along(context_texts), function(i) {
+      paste0("[", i, "] ", context_texts[i])
+    }, character(1)),
+    collapse = "\n\n"
+  )
+
+  # Build prompt
+  if (is.null(system_prompt)) {
+    system_prompt <- paste0(
+      "Answer the question based only on the provided context. ",
+      "If the context does not contain enough information, say so. ",
+      "Be concise and factual."
+    )
+  }
+
+  prompt <- paste0(
+    "### System\n", system_prompt,
+    "\n\n### Context\n", context_block,
+    "\n\n### Question\n", question,
+    "\n\n### Answer\n"
+  )
+
+  # Generate answer
+  raw <- edge_completion_internal(ctx, prompt,
+                                   as.integer(n_predict),
+                                   as.numeric(temperature),
+                                   0.95)
+
+  # Strip prompt
+  answer <- if (startsWith(raw, prompt)) {
+    substring(raw, nchar(prompt) + 1L)
+  } else {
+    raw
+  }
+  answer <- trimws(answer)
+
+  if (return_context) {
+    list(answer = answer, context = context_df, prompt = prompt)
+  } else {
+    answer
+  }
+}
+
+#' Print method for edge_index objects
+#'
+#' @param x An edge_index object
+#' @param ... Additional arguments (ignored)
+#' @return The object (invisibly)
+#' @export
+print.edge_index <- function(x, ...) {
+  cat(sprintf("edgemodelr RAG Index\n"))
+  cat(sprintf("  Chunks: %d\n", x$n_chunks))
+  cat(sprintf("  Embedding dim: %d\n", x$n_embd))
+
+  unique_sources <- unique(x$sources[!is.na(x$sources)])
+  if (length(unique_sources) > 0L) {
+    cat(sprintf("  Source files: %d\n", length(unique_sources)))
+    show_n <- min(5L, length(unique_sources))
+    for (s in unique_sources[seq_len(show_n)]) {
+      cat(sprintf("    - %s\n", basename(s)))
+    }
+    if (length(unique_sources) > show_n) {
+      cat(sprintf("    ... and %d more\n", length(unique_sources) - show_n))
+    }
+  } else {
+    cat("  Source: direct text input\n")
+  }
+
+  invisible(x)
+}
+
+
+# Internal helper: split text into overlapping chunks
+.chunk_text <- function(text, chunk_size = 500L, overlap = 50L) {
+  if (nchar(text) <= chunk_size) return(text)
+
+  chunks <- character()
+  pos <- 1L
+  text_len <- nchar(text)
+
+  while (pos <= text_len) {
+    end <- min(pos + chunk_size - 1L, text_len)
+
+    # Try to break at sentence boundary
+    if (end < text_len) {
+      chunk <- substr(text, pos, end)
+      # Look for last sentence-ending punctuation
+      breaks <- gregexpr("[.!?]\\s", chunk)[[1]]
+      if (breaks[1] > 0 && max(breaks) > chunk_size * 0.5) {
+        end <- pos + max(breaks)
+      }
+    }
+
+    chunks <- c(chunks, trimws(substr(text, pos, end)))
+    pos <- end + 1L - overlap
+  }
+
+  chunks[nchar(chunks) > 0L]
+}

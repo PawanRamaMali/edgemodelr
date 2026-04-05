@@ -34,6 +34,26 @@
 * **Embedding dimension query** (`edge_model_n_embd()`): Query the embedding
   dimension of a loaded model.
 
+* **Batch processing** (`edge_map()`): Apply a prompt template over a vector
+  of texts with progress reporting. Supports both string templates with
+  `{text}` placeholder and custom prompt functions. Optional grammar
+  constraint for structured batch output.
+
+* **Batch extraction** (`edge_extract_batch()`): Extract structured data from
+  multiple texts, returning a data frame with one row per input.
+
+* **RAG document indexing** (`edge_index_documents()`): Build a semantic
+  embedding index from a directory of text files or a character vector.
+  Automatic chunking with configurable size and overlap.
+
+* **RAG semantic search** (`edge_search()`): Find the most relevant text
+  chunks for a query using cosine similarity over the embedding index.
+
+* **RAG question answering** (`edge_ask()`): Retrieval-augmented generation
+  that retrieves relevant context from an index and generates a grounded
+  answer. Supports custom system prompts and optional context return for
+  debugging/transparency.
+
 ### Use Cases Unlocked
 
 * **Sentiment analysis**: `edge_classify(ctx, text, c("positive", "negative", "neutral"))`
