@@ -13,8 +13,8 @@ edge_cuda_backend_loaded_internal <- function() {
     .Call(`_edgemodelr_edge_cuda_backend_loaded_internal`)
 }
 
-edge_load_model_internal <- function(model_path, n_ctx = 2048L, n_gpu_layers = 0L, n_threads = 0L, flash_attn = TRUE) {
-    .Call(`_edgemodelr_edge_load_model_internal`, model_path, n_ctx, n_gpu_layers, n_threads, flash_attn)
+edge_load_model_internal <- function(model_path, n_ctx = 2048L, n_gpu_layers = 0L, n_threads = 0L, flash_attn = TRUE, embeddings = FALSE) {
+    .Call(`_edgemodelr_edge_load_model_internal`, model_path, n_ctx, n_gpu_layers, n_threads, flash_attn, embeddings)
 }
 
 edge_completion_internal <- function(model_ptr, prompt, n_predict = 128L, temperature = 0.8, top_p = 0.95) {
@@ -43,6 +43,14 @@ edge_embeddings_internal <- function(model_ptr, texts, normalize = TRUE) {
 
 edge_model_n_embd_internal <- function(model_ptr) {
     .Call(`_edgemodelr_edge_model_n_embd_internal`, model_ptr)
+}
+
+edge_chat_apply_template_internal <- function(model_ptr, messages, add_generation_prompt = TRUE) {
+    .Call(`_edgemodelr_edge_chat_apply_template_internal`, model_ptr, messages, add_generation_prompt)
+}
+
+edge_model_chat_template_internal <- function(model_ptr) {
+    .Call(`_edgemodelr_edge_model_chat_template_internal`, model_ptr)
 }
 
 set_llama_logging <- function(enabled) {

@@ -21,15 +21,16 @@ test_that("edge_chat_stream validates parameters", {
 test_that("build_chat_prompt formats correctly", {
   # Empty history
   expect_equal(build_chat_prompt(list()), "")
-  
-  # Single system message
+
+  # Single system message (ChatML format without model context)
   history1 <- list(
     list(role = "system", content = "You are helpful")
   )
   result1 <- build_chat_prompt(history1)
-  expect_true(grepl("System: You are helpful", result1))
-  expect_true(grepl("Assistant:$", result1))
-  
+  expect_true(grepl("system", result1))
+  expect_true(grepl("You are helpful", result1))
+  expect_true(grepl("assistant", result1))
+
   # Full conversation
   history2 <- list(
     list(role = "system", content = "You are helpful"),
@@ -37,10 +38,10 @@ test_that("build_chat_prompt formats correctly", {
     list(role = "assistant", content = "Hi there!")
   )
   result2 <- build_chat_prompt(history2)
-  expect_true(grepl("System: You are helpful", result2))
-  expect_true(grepl("Human: Hello", result2))
-  expect_true(grepl("Assistant: Hi there!", result2))
-  expect_true(grepl("Assistant:$", result2))
+  expect_true(grepl("You are helpful", result2))
+  expect_true(grepl("Hello", result2))
+  expect_true(grepl("Hi there!", result2))
+  expect_true(grepl("assistant", result2))
 })
 
 test_that("edge_stream_completion callback logic validation", {

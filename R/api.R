@@ -34,7 +34,7 @@
 #' }
 #' }
 #' @export
-edge_load_model <- function(model_path, n_ctx = 2048L, n_gpu_layers = 0L, n_threads = NULL, flash_attn = TRUE) {
+edge_load_model <- function(model_path, n_ctx = 2048L, n_gpu_layers = 0L, n_threads = NULL, flash_attn = TRUE, embeddings = FALSE) {
   if (!file.exists(model_path)) {
     stop("Model file does not exist: ", model_path, "\n",
          "Try these options:\n",
@@ -82,17 +82,8 @@ edge_load_model <- function(model_path, n_ctx = 2048L, n_gpu_layers = 0L, n_thre
     }
   }
 
-  # Auto-optimize context for small models (< 2GB)
-  if (model_size_mb < 2000 && n_ctx == 2048) {
-    # Small models work best with smaller contexts for faster inference
-    optimal_ctx <- if (model_size_mb < 1000) 1024 else 1536
-    n_ctx <- optimal_ctx
-    message("Optimized context size to ", n_ctx, " for small model (", round(model_size_mb, 1), "MB). ",
-            "Use n_ctx parameter to override.")
-  }
-
-  # Clamp to reasonable range
-  n_ctx <- max(512, min(n_ctx, 32768))
+  # Clamp to reasonable range (allow as low as 128 for short tasks)
+  n_ctx <- max(128, min(n_ctx, 32768))
 
   # Warn about large contexts
   if (n_ctx > 8192) {
@@ -108,7 +99,8 @@ edge_load_model <- function(model_path, n_ctx = 2048L, n_gpu_layers = 0L, n_thre
                              as.integer(n_ctx),
                              n_gpu_layers_actual,
                              as.integer(if (is.null(n_threads)) 0L else n_threads),
-                             as.logical(flash_attn))
+                             as.logical(flash_attn),
+                             as.logical(embeddings))
   }, error = function(e) {
     # Provide more context about what went wrong
     if (grepl("llama_load_model_from_file", e$message)) {
@@ -1377,7 +1369,7 @@ edge_chat_stream <- function(ctx, system_prompt = NULL, max_history = 10, n_pred
 #' @param history List of conversation turns with role and content
 #' @return Formatted prompt string
 #' @export
-build_chat_prompt <- function(history) {
+build_chat_prompt <- function(history, ctx = NULL) {
   if (length(history) == 0) {
     return("")
   }
@@ -1386,21 +1378,76 @@ build_chat_prompt <- function(history) {
     stop("history must be a list of turns each with $role and $content fields")
   }
 
-  prompt_parts <- c()
-
-  for (turn in history) {
-    if (turn$role == "system") {
-      prompt_parts <- c(prompt_parts, paste("System:", turn$content))
-    } else if (turn$role == "user") {
-      prompt_parts <- c(prompt_parts, paste("Human:", turn$content))
-    } else if (turn$role == "assistant") {
-      prompt_parts <- c(prompt_parts, paste("Assistant:", turn$content))
-    }
+  # If a model context is provided, use the model's native chat template
+  if (!is.null(ctx) && is_valid_model(ctx)) {
+    return(edge_chat_apply_template_internal(ctx, history, TRUE))
   }
-  
-  # Add the start of assistant response
-  prompt <- paste(c(prompt_parts, "Assistant:"), collapse = "\n")
+
+  # Fallback: generic ChatML format (works with most models)
+  prompt_parts <- character()
+  for (turn in history) {
+    prompt_parts <- c(prompt_parts,
+      paste0("<|im_start|>", turn$role, "\n", turn$content, "<|im_end|>"))
+  }
+  prompt <- paste(c(prompt_parts, "<|im_start|>assistant\n"), collapse = "\n")
   return(prompt)
+}
+
+#' Generate a chat completion using the model's native template
+#'
+#' Formats messages using the model's built-in chat template (read from GGUF
+#' metadata), generates a completion, and returns only the assistant's response.
+#' This is the recommended way to do multi-turn chat.
+#'
+#' @param ctx Model context from edge_load_model()
+#' @param messages A list of message objects, each with \code{role} ("system",
+#'   "user", or "assistant") and \code{content} (character string).
+#' @param n_predict Maximum tokens to generate (default: 256)
+#' @param temperature Sampling temperature (default: 0.7)
+#' @param top_p Nucleus sampling threshold (default: 0.95)
+#' @return Character string containing only the assistant's response text.
+#'
+#' @examples
+#' \dontrun{
+#' ctx <- edge_load_model("model.gguf")
+#'
+#' # Simple chat
+#' answer <- edge_chat_completion(ctx, list(
+#'   list(role = "user", content = "What is R?")
+#' ))
+#' cat(answer)
+#'
+#' # Multi-turn with system prompt
+#' answer <- edge_chat_completion(ctx, list(
+#'   list(role = "system", content = "You are a helpful R tutor."),
+#'   list(role = "user", content = "What is a data.frame?"),
+#'   list(role = "assistant", content = "A data.frame is a table..."),
+#'   list(role = "user", content = "How do I filter rows?")
+#' ))
+#'
+#' edge_free_model(ctx)
+#' }
+#' @export
+edge_chat_completion <- function(ctx, messages, n_predict = 256L,
+                                  temperature = 0.7, top_p = 0.95) {
+  if (!is_valid_model(ctx)) {
+    stop("Invalid model context. Load a model first with edge_load_model()")
+  }
+  if (!is.list(messages) || length(messages) == 0L) {
+    stop("messages must be a non-empty list of message objects with $role and $content")
+  }
+
+  # Format prompt using model's native chat template
+  prompt <- build_chat_prompt(messages, ctx = ctx)
+
+  n_predict <- max(1L, min(as.integer(n_predict), 4096L))
+  temperature <- max(0.0, min(temperature, 2.0))
+  top_p <- max(0.1, min(top_p, 1.0))
+
+  edge_completion_internal(ctx, prompt,
+                            as.integer(n_predict),
+                            as.numeric(temperature),
+                            as.numeric(top_p))
 }
 
 #' Clean up cache directory and manage storage
@@ -2594,10 +2641,30 @@ edge_classify <- function(ctx, text, categories, instruction = NULL,
       "\n\n### Category\n"
     )
 
-    result <- edge_grammar_completion(ctx, prompt, grammar,
-                                       n_predict = 50L,
-                                       temperature = temperature)
-    trimws(result)
+    # Try grammar-constrained first, fall back to free generation + matching
+    result <- tryCatch({
+      out <- edge_grammar_completion(ctx, prompt, grammar,
+                                      n_predict = 50L,
+                                      temperature = temperature)
+      trimws(out)
+    }, error = function(e) {
+      # Grammar sampler can fail on some models/tokenizers; fall back
+      raw <- edge_completion_internal(ctx, prompt, 50L, temperature, 0.95)
+      if (startsWith(raw, prompt)) raw <- substring(raw, nchar(prompt) + 1L)
+      raw <- trimws(raw)
+      # Match to closest category
+      raw_lower <- tolower(raw)
+      for (cat in categories) {
+        if (grepl(tolower(cat), raw_lower, fixed = TRUE)) return(cat)
+      }
+      # If no match, return first word and hope it matches
+      first_word <- sub("\\s.*", "", raw)
+      for (cat in categories) {
+        if (startsWith(tolower(cat), tolower(first_word))) return(cat)
+      }
+      categories[1]  # last resort
+    })
+    result
   }
 
   if (length(text) == 1L) {
@@ -2665,7 +2732,16 @@ edge_embeddings <- function(ctx, texts, normalize = TRUE) {
     stop("texts must not contain NA values")
   }
 
-  edge_embeddings_internal(ctx, texts, as.logical(normalize))
+  result <- edge_embeddings_internal(ctx, texts, as.logical(normalize))
+
+  # Check if we got all zeros (indicates model wasn't loaded with embeddings=TRUE)
+  if (all(result == 0)) {
+    warning("All embeddings are zero. The model must be loaded with embeddings=TRUE:\n",
+            "  ctx <- edge_load_model('model.gguf', embeddings = TRUE)\n",
+            "Returning zero matrix.")
+  }
+
+  result
 }
 
 #' Compute cosine similarity between two embedding vectors

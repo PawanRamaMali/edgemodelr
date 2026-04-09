@@ -54,6 +54,31 @@
   answer. Supports custom system prompts and optional context return for
   debugging/transparency.
 
+### Bug Fixes
+
+* **Fixed crash from silent context size override** (issue #40 item 11):
+  Removed the auto-reduction of `n_ctx` for small models that silently changed
+  the user's requested context size. This caused segfaults when prompts exceeded
+  the reduced context. Context is now used as-is. Minimum `n_ctx` lowered from
+  512 to 128 for short-task use cases.
+
+* **Fixed prompt echo in completion output** (issue #40 item 1):
+  `edge_completion()` previously returned `prompt + generated_text`. Now returns
+  only the generated text, matching user expectations.
+
+* **Added prompt length validation**: All completion functions now validate that
+  the tokenized prompt fits within the model's context window before calling
+  `llama_decode()`. Exceeding the context now raises a clear R error instead of
+  crashing the process.
+
+* **Model-native chat templates** (issue #40 item 7): New
+  `edge_chat_completion()` function reads the model's chat template from GGUF
+  metadata (via `llama_chat_apply_template`) and formats messages correctly for
+  each model architecture (ChatML, Llama, Gemma, etc.). `build_chat_prompt()`
+  updated to accept an optional `ctx` parameter for native template formatting,
+  with ChatML as the generic fallback (replacing the old `Human:/Assistant:`
+  format).
+
 ### Use Cases Unlocked
 
 * **Sentiment analysis**: `edge_classify(ctx, text, c("positive", "negative", "neutral"))`

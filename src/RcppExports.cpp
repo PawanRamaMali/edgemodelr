@@ -42,8 +42,8 @@ BEGIN_RCPP
 END_RCPP
 }
 // edge_load_model_internal
-SEXP edge_load_model_internal(std::string model_path, int n_ctx, int n_gpu_layers, int n_threads, bool flash_attn);
-RcppExport SEXP _edgemodelr_edge_load_model_internal(SEXP model_pathSEXP, SEXP n_ctxSEXP, SEXP n_gpu_layersSEXP, SEXP n_threadsSEXP, SEXP flash_attnSEXP) {
+SEXP edge_load_model_internal(std::string model_path, int n_ctx, int n_gpu_layers, int n_threads, bool flash_attn, bool embeddings);
+RcppExport SEXP _edgemodelr_edge_load_model_internal(SEXP model_pathSEXP, SEXP n_ctxSEXP, SEXP n_gpu_layersSEXP, SEXP n_threadsSEXP, SEXP flash_attnSEXP, SEXP embeddingsSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
@@ -52,7 +52,8 @@ BEGIN_RCPP
     Rcpp::traits::input_parameter< int >::type n_gpu_layers(n_gpu_layersSEXP);
     Rcpp::traits::input_parameter< int >::type n_threads(n_threadsSEXP);
     Rcpp::traits::input_parameter< bool >::type flash_attn(flash_attnSEXP);
-    rcpp_result_gen = Rcpp::wrap(edge_load_model_internal(model_path, n_ctx, n_gpu_layers, n_threads, flash_attn));
+    Rcpp::traits::input_parameter< bool >::type embeddings(embeddingsSEXP);
+    rcpp_result_gen = Rcpp::wrap(edge_load_model_internal(model_path, n_ctx, n_gpu_layers, n_threads, flash_attn, embeddings));
     return rcpp_result_gen;
 END_RCPP
 }
@@ -149,6 +150,30 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
+// edge_chat_apply_template_internal
+std::string edge_chat_apply_template_internal(SEXP model_ptr, List messages, bool add_generation_prompt);
+RcppExport SEXP _edgemodelr_edge_chat_apply_template_internal(SEXP model_ptrSEXP, SEXP messagesSEXP, SEXP add_generation_promptSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< SEXP >::type model_ptr(model_ptrSEXP);
+    Rcpp::traits::input_parameter< List >::type messages(messagesSEXP);
+    Rcpp::traits::input_parameter< bool >::type add_generation_prompt(add_generation_promptSEXP);
+    rcpp_result_gen = Rcpp::wrap(edge_chat_apply_template_internal(model_ptr, messages, add_generation_prompt));
+    return rcpp_result_gen;
+END_RCPP
+}
+// edge_model_chat_template_internal
+std::string edge_model_chat_template_internal(SEXP model_ptr);
+RcppExport SEXP _edgemodelr_edge_model_chat_template_internal(SEXP model_ptrSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< SEXP >::type model_ptr(model_ptrSEXP);
+    rcpp_result_gen = Rcpp::wrap(edge_model_chat_template_internal(model_ptr));
+    return rcpp_result_gen;
+END_RCPP
+}
 // set_llama_logging
 void set_llama_logging(bool enabled);
 RcppExport SEXP _edgemodelr_set_llama_logging(SEXP enabledSEXP) {
@@ -174,7 +199,7 @@ static const R_CallMethodDef CallEntries[] = {
     {"_edgemodelr_edge_use_cuda_backend_internal", (DL_FUNC) &_edgemodelr_edge_use_cuda_backend_internal, 1},
     {"_edgemodelr_edge_cuda_backend_path_internal", (DL_FUNC) &_edgemodelr_edge_cuda_backend_path_internal, 0},
     {"_edgemodelr_edge_cuda_backend_loaded_internal", (DL_FUNC) &_edgemodelr_edge_cuda_backend_loaded_internal, 0},
-    {"_edgemodelr_edge_load_model_internal", (DL_FUNC) &_edgemodelr_edge_load_model_internal, 5},
+    {"_edgemodelr_edge_load_model_internal", (DL_FUNC) &_edgemodelr_edge_load_model_internal, 6},
     {"_edgemodelr_edge_completion_internal", (DL_FUNC) &_edgemodelr_edge_completion_internal, 5},
     {"_edgemodelr_edge_free_model_internal", (DL_FUNC) &_edgemodelr_edge_free_model_internal, 1},
     {"_edgemodelr_is_valid_model_internal", (DL_FUNC) &_edgemodelr_is_valid_model_internal, 1},
@@ -182,6 +207,8 @@ static const R_CallMethodDef CallEntries[] = {
     {"_edgemodelr_edge_completion_grammar_internal", (DL_FUNC) &_edgemodelr_edge_completion_grammar_internal, 7},
     {"_edgemodelr_edge_embeddings_internal", (DL_FUNC) &_edgemodelr_edge_embeddings_internal, 3},
     {"_edgemodelr_edge_model_n_embd_internal", (DL_FUNC) &_edgemodelr_edge_model_n_embd_internal, 1},
+    {"_edgemodelr_edge_chat_apply_template_internal", (DL_FUNC) &_edgemodelr_edge_chat_apply_template_internal, 3},
+    {"_edgemodelr_edge_model_chat_template_internal", (DL_FUNC) &_edgemodelr_edge_model_chat_template_internal, 1},
     {"_edgemodelr_set_llama_logging", (DL_FUNC) &_edgemodelr_set_llama_logging, 1},
     {"_edgemodelr_edge_simd_info_internal", (DL_FUNC) &_edgemodelr_edge_simd_info_internal, 0},
     {NULL, NULL, 0}

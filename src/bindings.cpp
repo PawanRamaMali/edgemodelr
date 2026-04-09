@@ -138,7 +138,7 @@ struct EdgeModelContext {
 };
 
 // [[Rcpp::export]]
-SEXP edge_load_model_internal(std::string model_path, int n_ctx = 2048, int n_gpu_layers = 0, int n_threads = 0, bool flash_attn = true) {
+SEXP edge_load_model_internal(std::string model_path, int n_ctx = 2048, int n_gpu_layers = 0, int n_threads = 0, bool flash_attn = true, bool embeddings = false) {
   try {
     // Ensure llama is properly initialized
     ensure_llama_initialized();
@@ -201,6 +201,7 @@ SEXP edge_load_model_internal(std::string model_path, int n_ctx = 2048, int n_gp
     ctx_params.flash_attn_type = flash_attn
       ? LLAMA_FLASH_ATTN_TYPE_ENABLED
       : LLAMA_FLASH_ATTN_TYPE_DISABLED;
+    ctx_params.embeddings = embeddings;
     
     struct llama_context* ctx = llama_init_from_model(model, ctx_params);
     if (!ctx) {
@@ -263,17 +264,24 @@ std::string edge_completion_internal(SEXP model_ptr, std::string prompt, int n_p
     if (llama_tokenize(vocab, prompt.c_str(), (int32_t)prompt.size(), prompt_tokens.data(), (int32_t)prompt_tokens.size(), true, true) < 0) {
       stop("Failed to tokenize prompt");
     }
-    
+
+    // Validate prompt fits in context window
+    int n_ctx = llama_n_ctx(edge_ctx->ctx);
+    if (n_prompt_tokens >= n_ctx) {
+      stop("Prompt too long (" + std::to_string(n_prompt_tokens) + " tokens) for context size (" +
+           std::to_string(n_ctx) + "). Shorten the prompt or increase n_ctx in edge_load_model().");
+    }
+
     // Create initial batch for the prompt
     llama_batch batch = llama_batch_get_one(prompt_tokens.data(), (int32_t)prompt_tokens.size());
-    
+
     // Process the prompt
     if (llama_decode(edge_ctx->ctx, batch)) {
       stop("Failed to process prompt");
     }
-    
-    std::string result = prompt;  // Start with the original prompt
-    result.reserve(prompt.size() + n_predict * 8);  // Reserve more space to avoid reallocations
+
+    std::string result;  // Only collect generated text, not prompt
+    result.reserve(n_predict * 8);
     
     // Create a sampler chain for better token generation
     auto sampler_chain_params = llama_sampler_chain_default_params();
@@ -408,16 +416,23 @@ List edge_completion_stream_internal(SEXP model_ptr, std::string prompt, Functio
     if (llama_tokenize(vocab, prompt.c_str(), (int32_t)prompt.size(), prompt_tokens.data(), (int32_t)prompt_tokens.size(), true, true) < 0) {
       stop("Failed to tokenize prompt");
     }
-    
+
+    // Validate prompt fits in context window
+    int n_ctx = llama_n_ctx(edge_ctx->ctx);
+    if (n_prompt_tokens >= n_ctx) {
+      stop("Prompt too long (" + std::to_string(n_prompt_tokens) + " tokens) for context size (" +
+           std::to_string(n_ctx) + "). Shorten the prompt or increase n_ctx in edge_load_model().");
+    }
+
     // Create initial batch for the prompt
     llama_batch batch = llama_batch_get_one(prompt_tokens.data(), (int32_t)prompt_tokens.size());
-    
+
     // Process the prompt
     if (llama_decode(edge_ctx->ctx, batch)) {
       stop("Failed to process prompt");
     }
-    
-    std::string full_response = prompt;  // Track full response
+
+    std::string full_response;  // Track generated text only
     std::vector<std::string> tokens_generated;
     int tokens_count = 0;
     bool stopped_early = false;
@@ -565,6 +580,13 @@ std::string edge_completion_grammar_internal(SEXP model_ptr, std::string prompt,
       stop("Failed to tokenize prompt");
     }
 
+    // Validate prompt fits in context window
+    int n_ctx = llama_n_ctx(edge_ctx->ctx);
+    if (n_prompt_tokens >= n_ctx) {
+      stop("Prompt too long (" + std::to_string(n_prompt_tokens) + " tokens) for context size (" +
+           std::to_string(n_ctx) + "). Shorten the prompt or increase n_ctx in edge_load_model().");
+    }
+
     // Process prompt
     llama_batch batch = llama_batch_get_one(prompt_tokens.data(), (int32_t)prompt_tokens.size());
     if (llama_decode(edge_ctx->ctx, batch)) stop("Failed to process prompt");
@@ -645,9 +667,6 @@ NumericMatrix edge_embeddings_internal(SEXP model_ptr, std::vector<std::string> 
     const int n_embd = llama_model_n_embd(edge_ctx->model);
     if (n_embd <= 0) stop("Failed to get embedding dimension from model");
 
-    // Enable embeddings mode
-    llama_set_embeddings(edge_ctx->ctx, true);
-
     const int n_texts = static_cast<int>(texts.size());
     NumericMatrix result(n_texts, n_embd);
 
@@ -672,34 +691,50 @@ NumericMatrix edge_embeddings_internal(SEXP model_ptr, std::vector<std::string> 
         continue;
       }
 
-      // Create batch with all tokens requesting output
-      struct llama_batch batch = llama_batch_init(n_tokens, 0, 1);
-      batch.n_tokens = n_tokens;
-      for (int i = 0; i < n_tokens; ++i) {
+      // Check if context size is sufficient
+      int n_ctx = llama_n_ctx(edge_ctx->ctx);
+      int tokens_to_process = std::min(n_tokens, n_ctx);
+
+      // Create batch with tokens requesting output
+      struct llama_batch batch = llama_batch_init(tokens_to_process, 0, 1);
+      batch.n_tokens = tokens_to_process;
+      for (int i = 0; i < tokens_to_process; ++i) {
         batch.token[i] = tokens[i];
         batch.pos[i] = i;
         batch.n_seq_id[i] = 1;
         batch.seq_id[i][0] = 0;
-        batch.logits[i] = (i == n_tokens - 1) ? 1 : 0;  // only last token for pooling
+        batch.logits[i] = 1;  // request output for all tokens (needed for embeddings)
       }
 
-      // Encode (uses encoder path, no KV cache)
-      if (llama_encode(edge_ctx->ctx, batch) != 0) {
-        // Fallback to decode for generative models
-        if (llama_decode(edge_ctx->ctx, batch) != 0) {
-          llama_batch_free(batch);
-          warning("Failed to process text at index " + std::to_string(t + 1) + ", skipping");
-          continue;
-        }
+      // Use encode for encoder models, decode for decoder-only (generative) models
+      bool has_encoder = llama_model_has_encoder(edge_ctx->model);
+      int rc;
+      if (has_encoder) {
+        rc = llama_encode(edge_ctx->ctx, batch);
+      } else {
+        rc = llama_decode(edge_ctx->ctx, batch);
+      }
+      if (rc != 0) {
+        llama_batch_free(batch);
+        warning("Failed to process text at index " + std::to_string(t + 1) + ", skipping");
+        continue;
       }
 
-      // Get embeddings - try sequence-level pooling first, then per-token
-      const float* embd = llama_get_embeddings_seq(edge_ctx->ctx, 0);
-      if (!embd) {
-        embd = llama_get_embeddings_ith(edge_ctx->ctx, -1);  // last token
+      // Get embeddings - strategy depends on pooling type
+      const float* embd = nullptr;
+
+      enum llama_pooling_type pooling = llama_pooling_type(edge_ctx->ctx);
+      if (pooling != LLAMA_POOLING_TYPE_NONE) {
+        // Pooled models: get sequence-level embedding
+        embd = llama_get_embeddings_seq(edge_ctx->ctx, 0);
       }
       if (!embd) {
-        embd = llama_get_embeddings(edge_ctx->ctx);  // fallback to all embeddings
+        // Decoder-only / no pooling: get last token embedding
+        embd = llama_get_embeddings_ith(edge_ctx->ctx, tokens_to_process - 1);
+      }
+      if (!embd) {
+        // Final fallback: get all embeddings (first position)
+        embd = llama_get_embeddings(edge_ctx->ctx);
       }
 
       if (embd) {
@@ -731,19 +766,9 @@ NumericMatrix edge_embeddings_internal(SEXP model_ptr, std::vector<std::string> 
       llama_batch_free(batch);
     }
 
-    // Restore to generation mode
-    llama_set_embeddings(edge_ctx->ctx, false);
-
     return result;
 
   } catch (const std::exception& e) {
-    // Try to restore generation mode on error
-    try {
-      XPtr<EdgeModelContext> edge_ctx(model_ptr);
-      if (edge_ctx->is_valid()) {
-        llama_set_embeddings(edge_ctx->ctx, false);
-      }
-    } catch (...) {}
     stop("Error during embedding extraction: " + std::string(e.what()));
   }
 }
@@ -757,6 +782,74 @@ int edge_model_n_embd_internal(SEXP model_ptr) {
     return llama_model_n_embd(edge_ctx->model);
   } catch (const std::exception& e) {
     stop("Error getting embedding dimension: " + std::string(e.what()));
+  }
+}
+
+// [[Rcpp::export]]
+std::string edge_chat_apply_template_internal(SEXP model_ptr, List messages, bool add_generation_prompt = true) {
+  try {
+    if (TYPEOF(model_ptr) != EXTPTRSXP) {
+      stop("Invalid model context");
+    }
+    XPtr<EdgeModelContext> edge_ctx(model_ptr);
+    if (!edge_ctx->is_valid()) stop("Invalid model context");
+
+    // Get the model's chat template
+    const char* tmpl = llama_model_chat_template(edge_ctx->model, NULL);
+    std::string tmpl_str = tmpl ? std::string(tmpl) : "";
+
+    int n_msg = messages.size();
+    std::vector<llama_chat_message> chat(n_msg);
+    std::vector<std::string> roles(n_msg);
+    std::vector<std::string> contents(n_msg);
+
+    for (int i = 0; i < n_msg; ++i) {
+      List msg = messages[i];
+      roles[i] = as<std::string>(msg["role"]);
+      contents[i] = as<std::string>(msg["content"]);
+      chat[i].role = roles[i].c_str();
+      chat[i].content = contents[i].c_str();
+    }
+
+    // First call to get required buffer size
+    int32_t needed = llama_chat_apply_template(
+      tmpl_str.empty() ? NULL : tmpl_str.c_str(),
+      chat.data(), n_msg, add_generation_prompt, NULL, 0);
+
+    if (needed < 0) {
+      // Template not supported, fall back to generic ChatML format
+      std::string result;
+      for (int i = 0; i < n_msg; ++i) {
+        result += "<|im_start|>" + roles[i] + "\n" + contents[i] + "<|im_end|>\n";
+      }
+      if (add_generation_prompt) {
+        result += "<|im_start|>assistant\n";
+      }
+      return result;
+    }
+
+    std::vector<char> buf(needed + 1);
+    llama_chat_apply_template(
+      tmpl_str.empty() ? NULL : tmpl_str.c_str(),
+      chat.data(), n_msg, add_generation_prompt, buf.data(), buf.size());
+
+    return std::string(buf.data(), needed);
+  } catch (const std::exception& e) {
+    stop("Error applying chat template: " + std::string(e.what()));
+  }
+}
+
+// [[Rcpp::export]]
+std::string edge_model_chat_template_internal(SEXP model_ptr) {
+  try {
+    if (TYPEOF(model_ptr) != EXTPTRSXP) stop("Invalid model context");
+    XPtr<EdgeModelContext> edge_ctx(model_ptr);
+    if (!edge_ctx->is_valid()) stop("Invalid model context");
+
+    const char* tmpl = llama_model_chat_template(edge_ctx->model, NULL);
+    return tmpl ? std::string(tmpl) : "";
+  } catch (const std::exception& e) {
+    stop("Error getting chat template: " + std::string(e.what()));
   }
 }
 

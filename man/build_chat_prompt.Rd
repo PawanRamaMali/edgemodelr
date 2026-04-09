@@ -4,14 +4,20 @@
 \alias{build_chat_prompt}
 \title{Build chat prompt from conversation history}
 \usage{
-build_chat_prompt(history)
+build_chat_prompt(history, ctx = NULL)
 }
 \arguments{
-\item{history}{List of conversation turns with role and content}
+\item{history}{List of conversation turns, each with \code{$role} and \code{$content}}
+
+\item{ctx}{Optional model context from \code{edge_load_model()}. If provided,
+uses the model's native chat template from GGUF metadata. If NULL, uses
+generic ChatML format.}
 }
 \value{
-Formatted prompt string
+Formatted prompt string suitable for passing to \code{edge_completion()}
 }
 \description{
-Build chat prompt from conversation history
+Build a formatted chat prompt from conversation history. When a model context
+is provided, uses the model's native chat template (e.g., ChatML for Qwen,
+Llama format for Llama models) for best results.
 }

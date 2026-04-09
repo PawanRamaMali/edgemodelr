@@ -3,7 +3,7 @@
 \title{Load a local GGUF model for inference}
 \usage{
 edge_load_model(model_path, n_ctx = 2048L, n_gpu_layers = 0L,
-  n_threads = NULL, flash_attn = TRUE)
+  n_threads = NULL, flash_attn = TRUE, embeddings = FALSE)
 }
 \arguments{
 \item{model_path}{Path to a .gguf model file}
@@ -17,6 +17,11 @@ hardware threads). Set to a lower value to leave cores free for other tasks.}
 
 \item{flash_attn}{Enable flash attention for faster inference (default: TRUE).
 Reduces memory usage and improves speed. Set to FALSE for maximum compatibility.}
+
+\item{embeddings}{Enable embedding extraction mode (default: FALSE).
+Must be TRUE to use \code{\link{edge_embeddings}} with this context.
+A model loaded with \code{embeddings = TRUE} can still be used for
+text generation.}
 }
 \value{
 External pointer to the loaded model context
