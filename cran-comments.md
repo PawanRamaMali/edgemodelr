@@ -1,58 +1,55 @@
-## Submission - edgemodelr 0.3.0
+## Submission - edgemodelr 0.4.0
 
-### Changes in 0.3.0
+### Changes in 0.4.0
 
 #### New Features
-- Added `edge_install_cuda()` and `edge_install_cuda_toolkit()` for automatic
-  CUDA GPU setup on Windows (copies nvcudart from the Windows DriverStore,
-  downloads cublas from NVIDIA redistrib, extracts ggml-cuda backend from the
-  llama.cpp release archive).
-- Added `edge_reload_cuda()` and `edge_cuda_info()` for session-level CUDA
-  management without restarting R.
-- Updated bundled llama.cpp to build b8179 (GGML 0.9.7).
+- Grammar-constrained generation (`edge_grammar_completion()`) for structured
+  output using llama.cpp's native GBNF grammar sampler.
+- JSON schema helper (`edge_json_grammar()`) converts R list schemas to GBNF.
+- Structured data extraction (`edge_extract()`, `edge_extract_batch()`) with
+  automatic JSON parsing.
+- Text classification (`edge_classify()`) with grammar-constrained categories.
+- Text embeddings API (`edge_embeddings()`) returning numeric matrix, with
+  cosine similarity helpers (`edge_similarity()`, `edge_similarity_matrix()`).
+- Batch processing (`edge_map()`) for vectorized LLM operations on data frames.
+- RAG pipeline: `edge_index_documents()`, `edge_search()`, `edge_ask()` for
+  retrieval-augmented generation over local documents.
+- Chat completion with model-native templates (`edge_chat_completion()`) using
+  `llama_chat_apply_template()` from GGUF metadata.
 
 #### Bug Fixes
-- Fixed 40-minute load time for Qwen3 / QWEN2 models: added a hand-written
-  fast path `unicode_regex_split_custom_qwen2()` that avoids the degenerate
-  O(2^n) backtracking in GCC's std::regex for the QWEN2 tokenizer pattern.
-  Qwen3-14B now loads in 0.3 s (was 2422 s; 8000x speedup).
-
-#### CRAN Compliance
-- Removed `abort()` symbol from compiled objects (replaced with
-  `raise(SIGABRT)` / `std::terminate()` under `#ifdef USING_R`).
-- Guarded `fflush(stdout)`, `fprintf(stderr, ...)`, and `_Exit()` in
-  `ggml.c` error/backtrace paths with `#ifndef USING_R`.
-- Added `#define _GNU_SOURCE` to `ggml-cpu.c` (fixes `SCHED_BATCH` undeclared
-  on Linux).
-- Replaced explicit `printf()` calls in `ggml-quants.c` with `fprintf(stderr)`.
-- `CXX_STD = CXX17` replaces non-portable `-std=c++17` in `PKG_CXXFLAGS`.
-- `-fno-builtin-printf` suppresses `printf to puts` optimizations in ggml.
+- Fixed crash from silent `n_ctx` auto-reduction for small models. Removed the
+  auto-optimization that silently changed the user's context size, which caused
+  segfaults when prompts exceeded the reduced context.
+- Fixed `edge_completion()` echoing the prompt in the returned text. Now returns
+  only the generated response.
+- Added prompt length validation in all completion functions. Exceeding the
+  context window now raises a recoverable R error instead of a C++ abort.
+- Updated `build_chat_prompt()` to use ChatML as generic fallback (replacing
+  `Human:/Assistant:` format) and accept optional model context for native
+  template formatting.
+- Lowered minimum `n_ctx` from 512 to 128 for short-task use cases.
 
 ### Test environments
-* Local: Windows 11, R 4.5.2, Rtools45 / GCC 14.3.0
-* GitHub Actions:
-  - ubuntu-latest: R release, R devel, R oldrel-1
-  - macos-latest (ARM64): R release
-  - windows-latest: R release
+* Local: Windows 11, R 4.5.1, Rtools45 / GCC 14.3.0
+* R CMD check --as-cran (tarball)
 
-### R CMD check results (R CMD check --as-cran on tarball)
+### R CMD check results
 
-0 ERRORs. 0 WARNINGs. 2 NOTEs.
+0 ERRORs. 0 WARNINGs. 1 NOTE.
 
-NOTE 1: CRAN incoming feasibility — new version number, no conflict.
+NOTE: checking pragmas in C/C++ headers and code
+Files which contain pragma(s) suppressing diagnostics:
+  src/ggml/ggml-cpu/amx/mmq.cpp
+  src/ggml/ggml-cpu/arch/x86/repack.cpp
+  src/ggml/ggml-cpu/repack.cpp
+  src/llama/llama-sampler.cpp
 
-NOTE 2: checking compiled code (macOS only)
-Objects: ggml/ggml-quants.o, ggml/ggml-opt.o, llama/llama-grammar.o,
-         llama/llama-impl.o, llama/unicode.o, ggml/ggml-cpu/ggml-cpu-c.o,
-         ggml/ggml-cpu/unary-ops.o
-These references come from `fprintf(stderr, ...)` calls in the bundled
-llama.cpp and GGML upstream source (build b8179 / GGML 0.9.7). They appear
-in non-fatal diagnostic paths (data validation, quantization checks, NUMA
-warnings). The primary ggml.c has been patched to remove all stderr, stdout,
-and _Exit references from R builds; the remaining objects are deep in the
-upstream library and cannot be changed without forking the entire llama.cpp
-codebase. At runtime these calls are suppressed through ggml's log-callback
-API, which the R bindings replace with R's own output system.
+These pragmas are in the bundled llama.cpp upstream source (build b8179,
+GGML 0.9.7). They suppress compiler warnings for platform-specific SIMD
+intrinsics (AMX, AVX) where the compiler may warn about implicit conversions
+that are intentional and well-tested in the upstream project. These cannot be
+removed without forking the llama.cpp codebase.
 
 ### Third-party code
 All bundled code (llama.cpp build b8179, GGML 0.9.7) is credited in
