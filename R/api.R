@@ -259,7 +259,7 @@ is_valid_model <- function(ctx) {
 #' }
 #' }
 #' @export
-edge_download_model <- function(model_id, filename, cache_dir = NULL, force_download = FALSE,
+edge_download_model <- function(model_id, filename = NULL, cache_dir = NULL, force_download = FALSE,
                                 verify_checksum = TRUE, expected_sha256 = NULL,
                                 trust_first_use = FALSE, verbose = TRUE) {
   # Parameter validation
@@ -269,11 +269,26 @@ edge_download_model <- function(model_id, filename, cache_dir = NULL, force_down
   if (nchar(model_id) == 0) {
     stop("model_id cannot be empty")
   }
-  if (is.null(filename) || !is.character(filename) || length(filename) != 1) {
-    stop("filename must be a string")
+
+  # Check if model_id is a friendly name from edge_list_models()
+  resolved <- edge_resolve_model_name(model_id)
+  if (!is.na(resolved)) {
+    models <- edge_list_models()
+    row <- models[models$name == resolved, ]
+    if (verbose) message("Resolved '", model_id, "' to: ", resolved,
+                          " (", row$size, ")")
+    # Use the pre-configured URL and filename
+    if (is.null(filename)) filename <- row$filename
+    return(edge_download_url(row$download_url, filename = filename,
+                              cache_dir = cache_dir, force_download = force_download,
+                              verbose = verbose))
   }
-  if (nchar(filename) == 0) {
-    stop("filename cannot be empty")
+
+  # Standard HuggingFace repo_id/filename path
+  if (is.null(filename) || !is.character(filename) || length(filename) != 1 || nchar(filename) == 0) {
+    stop("filename is required when model_id is a HuggingFace repo ID.\n",
+         "Example: edge_download_model('unsloth/Qwen3-0.6B-GGUF', 'Qwen3-0.6B-Q4_K_M.gguf')\n",
+         "Or use a friendly name: edge_download_model('Qwen3-0.6B')")
   }
 
   # Set default cache directory using R_user_dir (CRAN compliant)
@@ -572,12 +587,41 @@ edge_download_model <- function(model_id, filename, cache_dir = NULL, force_down
     if (success) return(TRUE)
   }
 
+  # Try httr package if available (handles corporate proxies and SSL better)
+  if (requireNamespace("httr", quietly = TRUE)) {
+    if (verbose) message("Trying httr (handles corporate proxies/SSL)...")
+    success <- .download_with_httr(url, destfile, hf_token, verbose)
+    if (success) return(TRUE)
+  }
+
   # Try R's download.file with libcurl method as last resort
   if (verbose) message("Trying R download.file with libcurl...")
   success <- .download_with_r(url, destfile, hf_token, verbose, max_retries)
   if (success) return(TRUE)
 
   return(FALSE)
+}
+
+#' Download using httr package (best for corporate networks)
+#' @keywords internal
+.download_with_httr <- function(url, destfile, hf_token = "", verbose = TRUE) {
+  tryCatch({
+    headers <- list()
+    if (nchar(hf_token) > 0) {
+      headers[["Authorization"]] <- paste("Bearer", hf_token)
+    }
+    resp <- httr::GET(url,
+                       httr::write_disk(destfile, overwrite = TRUE),
+                       if (verbose) httr::progress("down") else NULL,
+                       do.call(httr::add_headers, headers),
+                       httr::config(followlocation = TRUE))
+    httr::status_code(resp) == 200 && file.exists(destfile) &&
+      file.info(destfile)$size > 1024
+  }, error = function(e) {
+    if (verbose) message("httr download failed: ", e$message)
+    if (file.exists(destfile)) try(file.remove(destfile), silent = TRUE)
+    FALSE
+  })
 }
 
 #' Download using curl command
@@ -776,7 +820,18 @@ edge_resolve_model_name <- function(model_name, models = NULL) {
     "orca-2" = "orca2-13b",
     "wizard" = "wizardlm-13b",
     "wizardlm" = "wizardlm-13b",
-    "hermes" = "hermes-13b"
+    "hermes" = "hermes-13b",
+    # Qwen3 aliases
+    "qwen3" = "Qwen3-0.6B",
+    "qwen3-0.6b" = "Qwen3-0.6B",
+    "qwen3-1.7b" = "Qwen3-1.7B",
+    "qwen3-4b" = "Qwen3-4B",
+    "qwen3-8b" = "Qwen3-8B",
+    "qwen-3" = "Qwen3-0.6B",
+    "qwen-3-0.6b" = "Qwen3-0.6B",
+    "qwen-3-1.7b" = "Qwen3-1.7B",
+    "qwen-3-4b" = "Qwen3-4B",
+    "qwen-3-8b" = "Qwen3-8B"
   )
   if (lower %in% names(aliases)) {
     canonical <- aliases[[lower]]
@@ -806,6 +861,8 @@ edge_list_models <- function() {
     name = c(
       # Small models (testing/mobile)
       "TinyLlama-1.1B", "TinyLlama-OpenOrca",
+      # Qwen3 models (new, excellent quality)
+      "Qwen3-0.6B", "Qwen3-1.7B", "Qwen3-4B", "Qwen3-8B",
       # Medium models (2-5GB)
       "llama3-8b", "mistral-7b", "llama3.2-3b", "phi3-mini",
       # Large models (7-10GB) - Direct download from GPT4All CDN
@@ -813,6 +870,7 @@ edge_list_models <- function() {
     ),
     size = c(
       "~700MB", "~700MB",
+      "~397MB", "~1.1GB", "~2.5GB", "~5.2GB",
       "~4.7GB", "~4.1GB", "~2GB", "~2.4GB",
       "~7.4GB", "~7.4GB", "~7.4GB", "~9GB"
     ),
@@ -820,6 +878,11 @@ edge_list_models <- function() {
       # HuggingFace models
       "https://huggingface.co/TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF/resolve/main/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf",
       "https://huggingface.co/TheBloke/TinyLlama-1.1B-1T-OpenOrca-GGUF/resolve/main/tinyllama-1.1b-1t-openorca.Q4_K_M.gguf",
+      # Qwen3 GGUF from unsloth (no auth required)
+      "https://huggingface.co/unsloth/Qwen3-0.6B-GGUF/resolve/main/Qwen3-0.6B-Q4_K_M.gguf",
+      "https://huggingface.co/unsloth/Qwen3-1.7B-GGUF/resolve/main/Qwen3-1.7B-Q4_K_M.gguf",
+      "https://huggingface.co/unsloth/Qwen3-4B-GGUF/resolve/main/Qwen3-4B-Q4_K_M.gguf",
+      "https://huggingface.co/unsloth/Qwen3-8B-GGUF/resolve/main/Qwen3-8B-Q4_K_M.gguf",
       # GPT4All CDN - direct download, no auth required
       "https://gpt4all.io/models/gguf/Meta-Llama-3-8B-Instruct.Q4_0.gguf",
       "https://gpt4all.io/models/gguf/mistral-7b-instruct-v0.1.Q4_0.gguf",
@@ -834,6 +897,10 @@ edge_list_models <- function() {
     filename = c(
       "tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf",
       "tinyllama-1.1b-1t-openorca.Q4_K_M.gguf",
+      "Qwen3-0.6B-Q4_K_M.gguf",
+      "Qwen3-1.7B-Q4_K_M.gguf",
+      "Qwen3-4B-Q4_K_M.gguf",
+      "Qwen3-8B-Q4_K_M.gguf",
       "Meta-Llama-3-8B-Instruct.Q4_0.gguf",
       "mistral-7b-instruct-v0.1.Q4_0.gguf",
       "Llama-3.2-3B-Instruct-Q4_K_M.gguf",
@@ -845,16 +912,19 @@ edge_list_models <- function() {
     ),
     use_case = c(
       "Testing", "Better Chat",
+      "Fast chat (0.6B)", "Balanced (1.7B)", "Quality chat (4B)", "Best quality (8B)",
       "General (8B)", "General (7B)", "Mobile (3B)", "Reasoning",
       "13B Chat", "13B Instruct", "13B Chat", "Code (15B)"
     ),
     source = c(
       "huggingface", "huggingface",
+      "huggingface", "huggingface", "huggingface", "huggingface",
       "gpt4all", "gpt4all", "huggingface", "huggingface",
       "gpt4all", "gpt4all", "gpt4all", "gpt4all"
     ),
     requires_auth = c(
       FALSE, FALSE,
+      FALSE, FALSE, FALSE, FALSE,
       FALSE, FALSE, FALSE, FALSE,
       FALSE, FALSE, FALSE, FALSE
     ),
@@ -3346,3 +3416,228 @@ print.edge_index <- function(x, ...) {
 
   chunks[nchar(chunks) > 0L]
 }
+
+
+# ============================================================================
+# Plumber API Wrapper (Model-as-a-Service)
+# ============================================================================
+
+#' Serve a model as a local OpenAI-compatible API
+#'
+#' Starts a local Plumber API server that exposes the loaded model through
+#' endpoints compatible with the OpenAI API format. This allows other
+#' applications (Python, JavaScript, curl) to use the model over HTTP.
+#'
+#' @param model_path Path to a .gguf model file
+#' @param host Host to bind to (default: "127.0.0.1" for local only)
+#' @param port Port number (default: 8080)
+#' @param n_ctx Context size (default: 2048)
+#' @param n_gpu_layers GPU layers (default: 0, use -1 for full GPU offload)
+#' @param embeddings Enable embeddings endpoint (default: FALSE)
+#' @param api_key Optional API key for authentication. If set, requests must
+#'   include \code{Authorization: Bearer <key>} header.
+#'
+#' @details
+#' Endpoints served:
+#' \itemize{
+#'   \item \code{POST /v1/completions} — Text completion
+#'   \item \code{POST /v1/chat/completions} — Chat completion (uses model's native template)
+#'   \item \code{POST /v1/embeddings} — Text embeddings (if \code{embeddings = TRUE})
+#'   \item \code{GET /v1/models} — List loaded model info
+#'   \item \code{GET /health} — Health check
+#' }
+#'
+#' The server runs in the foreground. Press Ctrl+C / Esc to stop.
+#'
+#' @examples
+#' \dontrun{
+#' # Serve a model locally
+#' edge_serve("model.gguf", port = 8080)
+#'
+#' # Then from another terminal or Python:
+#' # curl http://localhost:8080/v1/chat/completions \
+#' #   -H "Content-Type: application/json" \
+#' #   -d '{"messages": [{"role": "user", "content": "Hello!"}]}'
+#' }
+#' @export
+edge_serve <- function(model_path, host = "127.0.0.1", port = 8080L,
+                        n_ctx = 2048L, n_gpu_layers = 0L, embeddings = FALSE,
+                        api_key = NULL) {
+
+  if (!requireNamespace("plumber", quietly = TRUE)) {
+    stop("The 'plumber' package is required for edge_serve().\n",
+         "Install it with: install.packages('plumber')")
+  }
+
+  if (!file.exists(model_path)) {
+    stop("Model file not found: ", model_path)
+  }
+
+  message("Loading model: ", basename(model_path))
+  ctx <- edge_load_model(model_path, n_ctx = n_ctx,
+                          n_gpu_layers = n_gpu_layers,
+                          embeddings = embeddings)
+
+  model_name <- tools::file_path_sans_ext(basename(model_path))
+  n_embd <- if (embeddings) edge_model_n_embd(ctx) else 0L
+
+  # Build plumber API programmatically
+  pr <- plumber::pr()
+
+  # Auth filter
+  if (!is.null(api_key) && nchar(api_key) > 0) {
+    pr <- plumber::pr_filter(pr, "auth", function(req, res) {
+      auth <- req$HTTP_AUTHORIZATION
+      if (is.null(auth) || auth != paste("Bearer", api_key)) {
+        res$status <- 401L
+        return(list(error = list(message = "Invalid API key", type = "authentication_error")))
+      }
+      plumber::forward()
+    })
+  }
+
+  # CORS filter
+  pr <- plumber::pr_filter(pr, "cors", function(req, res) {
+    res$setHeader("Access-Control-Allow-Origin", "*")
+    res$setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+    res$setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization")
+    if (req$REQUEST_METHOD == "OPTIONS") {
+      res$status <- 200L
+      return(list())
+    }
+    plumber::forward()
+  })
+
+  # GET /health
+  pr <- plumber::pr_get(pr, "/health", function() {
+    list(status = "ok", model = model_name)
+  })
+
+  # GET /v1/models
+  pr <- plumber::pr_get(pr, "/v1/models", function() {
+    list(object = "list", data = list(
+      list(id = model_name, object = "model", owned_by = "local")
+    ))
+  })
+
+  # POST /v1/completions
+  pr <- plumber::pr_post(pr, "/v1/completions", function(req, res) {
+    body <- req$body
+    prompt <- body$prompt %||% ""
+    max_tokens <- body$max_tokens %||% 128L
+    temperature <- body$temperature %||% 0.7
+    top_p <- body$top_p %||% 0.95
+
+    tryCatch({
+      text <- edge_completion_internal(ctx, prompt,
+                                        as.integer(max_tokens),
+                                        as.numeric(temperature),
+                                        as.numeric(top_p))
+      list(
+        id = paste0("cmpl-", format(Sys.time(), "%Y%m%d%H%M%S")),
+        object = "text_completion",
+        model = model_name,
+        choices = list(list(text = text, index = 0L, finish_reason = "stop")),
+        usage = list(prompt_tokens = nchar(prompt) %/% 4L,
+                      completion_tokens = nchar(text) %/% 4L)
+      )
+    }, error = function(e) {
+      res$status <- 500L
+      list(error = list(message = e$message, type = "server_error"))
+    })
+  })
+
+  # POST /v1/chat/completions
+  pr <- plumber::pr_post(pr, "/v1/chat/completions", function(req, res) {
+    body <- req$body
+    messages <- body$messages
+    max_tokens <- body$max_tokens %||% 256L
+    temperature <- body$temperature %||% 0.7
+    top_p <- body$top_p %||% 0.95
+
+    if (is.null(messages) || length(messages) == 0) {
+      res$status <- 400L
+      return(list(error = list(message = "messages is required", type = "invalid_request")))
+    }
+
+    tryCatch({
+      text <- edge_chat_completion(ctx, messages,
+                                    n_predict = as.integer(max_tokens),
+                                    temperature = as.numeric(temperature),
+                                    top_p = as.numeric(top_p))
+      list(
+        id = paste0("chatcmpl-", format(Sys.time(), "%Y%m%d%H%M%S")),
+        object = "chat.completion",
+        model = model_name,
+        choices = list(list(
+          index = 0L,
+          message = list(role = "assistant", content = text),
+          finish_reason = "stop"
+        )),
+        usage = list(prompt_tokens = NA_integer_,
+                      completion_tokens = nchar(text) %/% 4L)
+      )
+    }, error = function(e) {
+      res$status <- 500L
+      list(error = list(message = e$message, type = "server_error"))
+    })
+  })
+
+  # POST /v1/embeddings (only if enabled)
+  if (embeddings) {
+    pr <- plumber::pr_post(pr, "/v1/embeddings", function(req, res) {
+      body <- req$body
+      input <- body$input
+      if (is.null(input)) {
+        res$status <- 400L
+        return(list(error = list(message = "input is required", type = "invalid_request")))
+      }
+      if (is.character(input) && length(input) == 1L) input <- list(input)
+
+      tryCatch({
+        texts <- as.character(unlist(input))
+        emb_matrix <- edge_embeddings(ctx, texts)
+
+        data_list <- lapply(seq_len(nrow(emb_matrix)), function(i) {
+          list(object = "embedding", embedding = as.numeric(emb_matrix[i, ]),
+               index = i - 1L)
+        })
+
+        list(
+          object = "list",
+          data = data_list,
+          model = model_name,
+          usage = list(prompt_tokens = sum(nchar(texts)) %/% 4L)
+        )
+      }, error = function(e) {
+        res$status <- 500L
+        list(error = list(message = e$message, type = "server_error"))
+      })
+    })
+  }
+
+  # Set serializer to JSON (unboxed for OpenAI compatibility)
+  pr <- plumber::pr_set_serializer(pr, plumber::serializer_unboxed_json())
+
+  message("\nedgemodelr API server starting")
+  message("  Model: ", model_name)
+  message("  Endpoints:")
+  message("    POST ", host, ":", port, "/v1/completions")
+  message("    POST ", host, ":", port, "/v1/chat/completions")
+  if (embeddings) message("    POST ", host, ":", port, "/v1/embeddings")
+  message("    GET  ", host, ":", port, "/v1/models")
+  message("    GET  ", host, ":", port, "/health")
+  if (!is.null(api_key)) message("  Auth: API key required")
+  message("\nPress Ctrl+C to stop.\n")
+
+  # Clean up model on exit
+  on.exit({
+    tryCatch(edge_free_model(ctx), error = function(e) NULL)
+    message("Model freed.")
+  })
+
+  plumber::pr_run(pr, host = host, port = as.integer(port))
+}
+
+# Null coalescing operator for plumber body parsing
+`%||%` <- function(x, y) if (is.null(x)) y else x

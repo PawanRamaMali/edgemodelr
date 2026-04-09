@@ -1,6 +1,6 @@
 # edgemodelr 0.4.0
 
-## Structured Output and Embeddings API
+## Structured Output, Embeddings, RAG, and API Server
 
 ### New Features
 
@@ -53,6 +53,26 @@
   that retrieves relevant context from an index and generates a grounded
   answer. Supports custom system prompts and optional context return for
   debugging/transparency.
+
+* **Plumber API server** (`edge_serve()`): Serve a model as a local
+  OpenAI-compatible REST API. Endpoints: `/v1/completions`,
+  `/v1/chat/completions`, `/v1/embeddings`, `/v1/models`, `/health`.
+  Supports optional API key authentication and CORS. Requires `plumber`.
+
+* **Qwen3 model family** in `edge_list_models()`: Added Qwen3-0.6B, 1.7B,
+  4B, and 8B pre-configured entries from the unsloth GGUF repository.
+
+* **Friendly names in `edge_download_model()`**: Now accepts model names from
+  `edge_list_models()` (e.g., `edge_download_model("Qwen3-0.6B")`) in addition
+  to HuggingFace repo IDs. Filename is auto-resolved from the model registry.
+
+* **httr download fallback**: `.robust_download()` now tries `httr::GET` before
+  R's `download.file`, improving reliability on corporate networks with custom
+  SSL certificates or proxy configurations.
+
+* **SIMD optimization warning**: On package load, warns if running without SIMD
+  (generic mode) and suggests reinstalling from source with
+  `EDGEMODELR_SIMD=NATIVE` for faster inference.
 
 ### Bug Fixes
 

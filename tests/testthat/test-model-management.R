@@ -14,12 +14,12 @@ test_that("edge_download_model parameter validation", {
   # Test with invalid filename
   expect_error(
     edge_download_model("test/model", ""),
-    "filename cannot be empty"
+    "filename"
   )
-  
+
   expect_error(
     edge_download_model("test/model", NULL),
-    "filename must be a string"
+    "filename"
   )
 })
 

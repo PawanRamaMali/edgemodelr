@@ -1,4 +1,25 @@
 .onAttach <- function(libname, pkgname) {
+  # Check SIMD optimization level and warn if running with generic (slow) code
+  tryCatch({
+    simd <- edge_simd_info()
+    if (is.list(simd) && !is.null(simd$level)) {
+      level <- toupper(simd$level)
+      # Warn only if running generic (no SIMD) on x86_64
+      if (level == "GENERIC" && .Platform$OS.type != "mac") {
+        packageStartupMessage(
+          "edgemodelr: Running without SIMD optimizations (generic mode). ",
+          "Inference will be slower than optimal.\n",
+          "For faster inference, reinstall from source with native optimizations:\n",
+          "  Sys.setenv(EDGEMODELR_SIMD = 'NATIVE')\n",
+          "  install.packages('edgemodelr', type = 'source')\n",
+          "See edge_simd_info() for current SIMD status."
+        )
+      }
+    }
+  }, error = function(e) {
+    # Silently ignore SIMD check errors
+  })
+
   # Cache size check and optional auto-cleanup
   tryCatch({
     cache_dir <- tools::R_user_dir("edgemodelr", "cache")

@@ -4,7 +4,7 @@
 \usage{
 edge_download_model(
   model_id,
-  filename,
+  filename = NULL,
   cache_dir = NULL,
   force_download = FALSE,
   verify_checksum = TRUE,
@@ -14,9 +14,10 @@ edge_download_model(
 )
 }
 \arguments{
-\item{model_id}{Hugging Face model identifier (e.g., "TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF")}
+\item{model_id}{Hugging Face model identifier (e.g., "TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF"),
+  or a friendly model name from \code{edge_list_models()} (e.g., "Qwen3-0.6B", "mistral-7b")}
 
-\item{filename}{Specific GGUF file to download}
+\item{filename}{Specific GGUF file to download. Optional when using a friendly model name.}
 
 \item{cache_dir}{Directory to store downloaded models (default: "~/.cache/edgemodelr")}
 
@@ -38,17 +39,14 @@ Download a GGUF model from Hugging Face
 }
 \examples{
 \dontrun{
-# Download TinyLlama model (large file, not run in checks)
+# Download using friendly name (recommended)
+model_path <- edge_download_model("Qwen3-0.6B")
+model_path <- edge_download_model("mistral-7b")
+
+# Download using HuggingFace repo ID
 model_path <- edge_download_model(
   model_id = "TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF",
   filename = "tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf"
 )
-
-# Use the downloaded model
-if (file.exists(model_path)) {
-  ctx <- edge_load_model(model_path)
-  response <- edge_completion(ctx, "Hello, how are you?")
-  edge_free_model(ctx)
-}
 }
 }
