@@ -1226,8 +1226,12 @@ std::vector<std::string> unicode_regex_split(const std::string & text, const std
                 bpe_offsets = unicode_regex_split_stl(wtext, wregex_expr, bpe_offsets);
             }
         } catch (std::regex_error & e) {
+#ifndef USING_R
             fprintf(stderr, "Failed to process regex: '%s'\n", regex_expr.c_str());
             fprintf(stderr, "Regex error: %s\n", e.what());
+#else
+            (void)e;  // error is raised as R exception via throw below
+#endif
             throw std::runtime_error("Failed to process regex");
         }
     }

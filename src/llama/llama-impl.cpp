@@ -62,8 +62,14 @@ void llama_log_internal(ggml_log_level level, const char * format, ...) {
 void llama_log_callback_default(ggml_log_level level, const char * text, void * user_data) {
     (void) level;
     (void) user_data;
+#ifdef USING_R
+    /* log output suppressed in R builds; R wrapper installs its own
+     * log callback via llama_log_set() */
+    (void) text;
+#else
     fputs(text, stderr);
     fflush(stderr);
+#endif
 }
 
 void replace_all(std::string & s, const std::string & search, const std::string & replace) {

@@ -1,7 +1,5 @@
-#if defined(__GNUC__)
-#pragma GCC diagnostic ignored "-Wpedantic"
-#pragma GCC diagnostic ignored "-Wunused-local-typedefs"
-#endif
+// Pragma-based warning suppressions removed for CRAN compliance.
+// If warnings appear, add -Wno-pedantic -Wno-unused-local-typedefs to GGML_CXXFLAGS.
 
 #include "amx.h"
 #include "mmq.h"

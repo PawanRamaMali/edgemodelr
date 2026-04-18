@@ -27,6 +27,7 @@ src/**/*.dll
 *.swp
 *.swo
 *~
+.claude/
 
 # OS generated files
 .DS_Store

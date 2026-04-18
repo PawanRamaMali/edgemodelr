@@ -13,6 +13,27 @@
 #include <stdlib.h> // for qsort
 #include <stdio.h>  // for GGML_ASSERT
 
+/* CRAN compliance: suppress stdio diagnostic output in R builds.
+ * These printf/fprintf calls are only hit in data-validation edge cases
+ * (invalid GGUF data, out-of-grid quantization points). They are
+ * informational and were silent at runtime even before this change.
+ * The macros discard both the stream argument and the format so that
+ * stderr/stdout symbols never reach the compiled object. */
+#ifdef USING_R
+#undef printf
+#undef fprintf
+#undef stderr
+#undef stdout
+#undef fputs
+#undef fflush
+#define printf(...) ((void)0)
+#define fprintf(f, ...) ((void)0)
+#define stderr ((FILE*)0)
+#define stdout ((FILE*)0)
+#define fputs(s, f) ((void)0)
+#define fflush(f) ((void)0)
+#endif
+
 #define GROUP_MAX_EPS 1e-15f
 #define GROUP_MAX_EPS_IQ3_XXS 1e-8f
 #define GROUP_MAX_EPS_IQ2_S 1e-8f

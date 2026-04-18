@@ -1,4 +1,13 @@
 #include "unary-ops.h"
+#include <cstdio>
+
+/* CRAN compliance: suppress fprintf/stderr diagnostic output in R builds. */
+#ifdef USING_R
+#undef fprintf
+#undef stderr
+#define fprintf(f, ...) ((void)0)
+#define stderr ((FILE*)0)
+#endif
 
 static inline float op_abs(float x) {
     return fabsf(x);

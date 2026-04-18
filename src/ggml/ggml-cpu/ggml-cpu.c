@@ -20,6 +20,25 @@
 #include "ops.h"
 #include "ggml.h"
 #include "common.h"
+#include <stdio.h>
+
+/* CRAN compliance: suppress fprintf/stderr/stdout diagnostic output in R
+ * builds. The macros discard both the stream argument (so stderr/stdout
+ * symbols never reach the compiled object) and the format. All calls are
+ * in non-fatal diagnostic paths; the R wrapper installs its own log
+ * callback. */
+#ifdef USING_R
+#undef fprintf
+#undef stderr
+#undef stdout
+#undef fputs
+#undef fflush
+#define fprintf(f, ...) ((void)0)
+#define stderr ((FILE*)0)
+#define stdout ((FILE*)0)
+#define fputs(s, f) ((void)0)
+#define fflush(f) ((void)0)
+#endif
 
 #if defined(_MSC_VER) || defined(__MINGW32__)
 #include <malloc.h> // using malloc.h with MSC/MINGW

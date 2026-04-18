@@ -215,11 +215,10 @@ static void llama_token_data_array_partial_sort_inplace(llama_token_data_array *
 }
 
 static int llama_sample_dist(llama_token_data_array * cur_p, std::mt19937 & rng) {
-    // iterator for the probabilities
-#ifdef __GNUC__
-    #pragma GCC diagnostic push
-    #pragma GCC diagnostic ignored "-Wunused-local-typedefs"
-#endif
+    // Pragma diagnostic suppression removed for CRAN compliance.
+    // The unused typedefs in probs_iterator are required by the
+    // std::input_iterator_tag interface and are safely suppressed
+    // at the build-system level via -Wno-unused-local-typedefs if needed.
 
     struct probs_iterator {
         typedef std::input_iterator_tag iterator_category;
@@ -236,10 +235,6 @@ static int llama_sample_dist(llama_token_data_array * cur_p, std::mt19937 & rng)
         probs_iterator & operator++() { ++data; return *this; }
         probs_iterator operator++(int) { probs_iterator tmp = *this; ++data; return tmp; }
     };
-
-#ifdef __GNUC__
-    #pragma GCC diagnostic pop
-#endif
 
     std::discrete_distribution<int> dist(probs_iterator{cur_p->data}, probs_iterator{cur_p->data + cur_p->size});
 

@@ -8,6 +8,20 @@
 #include <algorithm>
 #include <cstdint>
 #include <stdexcept>
+#include <cstdio>
+
+/* CRAN compliance: suppress fprintf/stderr diagnostic output in R builds.
+ * These only run via llama_grammar_print (a debug helper) which is not
+ * called by the R bindings. The macros discard both the stream argument
+ * and the format so stderr symbols never reach the compiled object. */
+#ifdef USING_R
+#undef fprintf
+#undef stderr
+#undef stdout
+#define fprintf(f, ...) ((void)0)
+#define stderr ((FILE*)0)
+#define stdout ((FILE*)0)
+#endif
 
 #define MAX_REPETITION_THRESHOLD 2000
 //

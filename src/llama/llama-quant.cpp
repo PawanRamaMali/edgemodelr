@@ -995,7 +995,9 @@ static void llama_model_quantize_impl(const std::string & fname_inp, const std::
                 }
 
                 LLAMA_LOG_INFO("converting to %s .. ", ggml_type_name(new_type));
+#ifndef USING_R
                 fflush(stdout);
+#endif
 
                 if (work.size() < (size_t)nelements * 4) {
                     work.resize(nelements * 4); // upper bound on size
