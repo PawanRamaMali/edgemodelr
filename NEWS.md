@@ -76,6 +76,15 @@
 
 ### Bug Fixes
 
+* **Fixed grammar-constrained generation failures** (issue #41):
+  `edge_grammar_completion()`, `edge_extract()`, and `edge_extract_batch()` were
+  unusable due to two bugs. First, `edge_json_grammar()` emitted rule names like
+  `field_1` containing underscores, which llama.cpp's grammar parser rejects
+  (only `[a-zA-Z0-9-]` is allowed in rule identifiers). Renamed to `field-1`.
+  Second, `llama_sampler_accept()` throws "Unexpected empty grammar stack" when
+  a token fully satisfies the grammar; the binding now catches this and
+  terminates cleanly, same as end-of-generation handling.
+
 * **Fixed crash from silent context size override** (issue #40 item 11):
   Removed the auto-reduction of `n_ctx` for small models that silently changed
   the user's requested context size. This caused segfaults when prompts exceeded

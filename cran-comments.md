@@ -26,6 +26,14 @@ callback. Now the symbols also never reach the compiled object files.
 
 **Spelling NOTE**: Rephrased DESCRIPTION to avoid the "embeddings" flag.
 
+**Grammar-constrained generation fix** (issue #41): Fixed two bugs that made
+`edge_grammar_completion()`, `edge_extract()`, and `edge_extract_batch()`
+unusable. (1) `edge_json_grammar()` emitted rule names with underscores that
+llama.cpp's grammar parser rejects (only `[a-zA-Z0-9-]` is allowed); renamed
+to use hyphens. (2) `llama_sampler_accept()` throws on grammar completion;
+the binding now catches the exception and terminates cleanly, mirroring the
+existing end-of-generation handling.
+
 ### R CMD check --as-cran results
 
 0 ERRORs. 0 WARNINGs. 0 NOTEs (informational "GNU make is a
