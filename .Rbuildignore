@@ -27,3 +27,5 @@
 ^err\.txt$
 ^out\.txt$
 ^update_llama\.py$
+^functional_test\.R$
+^.*\.log$
