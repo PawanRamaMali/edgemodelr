@@ -633,7 +633,13 @@ std::string edge_completion_grammar_internal(SEXP model_ptr, std::string prompt,
         result.append(piece.data(), n_chars);
       }
 
-      llama_sampler_accept(sampler, new_token);
+      try {
+        llama_sampler_accept(sampler, new_token);
+      } catch (const std::exception &) {
+        // Grammar fully satisfied by this token — no further tokens are allowed.
+        // The token's text is already in `result`; stop generating cleanly.
+        break;
+      }
       batch = llama_batch_get_one(&new_token, 1);
       if (llama_decode(edge_ctx->ctx, batch)) break;
     }

@@ -2498,7 +2498,7 @@ edge_json_grammar <- function(schema) {
   for (i in seq_along(schema)) {
     field_name <- names(schema)[i]
     field_spec <- schema[[i]]
-    rule_name <- paste0("field_", i)
+    rule_name <- paste0("field-", i)
 
     if (is.character(field_spec) && length(field_spec) == 1L) {
       # Type specifier
