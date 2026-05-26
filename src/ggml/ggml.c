@@ -52,6 +52,29 @@
 #include <windows.h>
 #endif
 
+/* CRAN compliance: suppress stdio diagnostic output in R builds.
+ * The fprintf/fputs/fflush calls in this file are diagnostic-only:
+ * the default log callback (overridden by the R bindings via
+ * llama_log_set), backtrace WARNING messages (unreachable in R
+ * because the abort callback longjmps first), and the optional
+ * ggml_graph_dump_dot debug helper (not exposed to R). The macros
+ * discard the stream arguments so that stderr/stdout symbols never
+ * reach the compiled object. */
+#ifdef USING_R
+#undef printf
+#undef fprintf
+#undef stderr
+#undef stdout
+#undef fputs
+#undef fflush
+#define printf(...) ((void)0)
+#define fprintf(f, ...) ((void)0)
+#define stderr ((FILE*)0)
+#define stdout ((FILE*)0)
+#define fputs(s, f) ((void)0)
+#define fflush(f) ((void)0)
+#endif
+
 #define UNUSED GGML_UNUSED
 
 // Needed for ggml_fp32_to_bf16_row()

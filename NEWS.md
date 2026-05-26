@@ -1,3 +1,16 @@
+# edgemodelr 0.4.1
+
+## CRAN Resubmission Fixes
+
+* **Stderr references in compiled objects** (CRAN auto-check NOTE on
+  Debian): the previous CRAN cleanup (commit d8870bd) added stdio
+  suppression to 7 upstream files but missed `ggml/ggml.c` and
+  `ggml/ggml-opt.cpp`. Both now include the same `#ifdef USING_R`
+  macro block that neutralizes `printf`, `fprintf`, `fputs`, `fflush`,
+  `stderr`, and `stdout`. These calls were diagnostic-only and were
+  already silent at runtime via the installed log callback; now the
+  symbols never reach the compiled object files either.
+
 # edgemodelr 0.4.0
 
 ## Structured Output, Embeddings, RAG, and API Server

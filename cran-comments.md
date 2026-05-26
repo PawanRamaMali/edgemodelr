@@ -1,67 +1,62 @@
-## Resubmission - edgemodelr 0.4.0
+## Resubmission - edgemodelr 0.4.1
 
-This resubmission addresses the NOTEs flagged by CRAN's automated pre-check
-on the initial submission.
+This resubmission addresses the compiled-code NOTE flagged by CRAN's
+automated pre-check on 0.4.0 (Debian flavor):
 
-### Fixes applied
+```
+File 'edgemodelr/libs/edgemodelr.so':
+  Found 'stderr', possibly from 'stderr' (C)
+    Objects: 'ggml/ggml.o', 'ggml/ggml-opt.o'
+```
 
-**Pragma NOTE**: Removed the `#pragma GCC diagnostic ignored` directives from
-the 4 flagged files (`src/ggml/ggml-cpu/amx/mmq.cpp`,
-`src/ggml/ggml-cpu/arch/x86/repack.cpp`, `src/ggml/ggml-cpu/repack.cpp`,
-`src/llama/llama-sampler.cpp`). The code compiles cleanly without them.
+### Fix applied
 
-**printf / stderr / stdout NOTE**: Added `#ifdef USING_R` guards in the 6
-flagged source files (`src/ggml/ggml-quants.c`, `src/llama/llama-quant.cpp`,
-`src/llama/llama-grammar.cpp`, `src/llama/llama-impl.cpp`,
-`src/llama/unicode.cpp`, `src/ggml/ggml-cpu/ggml-cpu.c`,
-`src/ggml/ggml-cpu/unary-ops.cpp`) that neutralize `printf`, `fprintf`,
-`fputs`, `fflush`, `stderr`, and `stdout` to no-ops during R builds. These
-upstream llama.cpp calls are diagnostic-only (data-validation edge cases,
-NUMA warnings, thread-affinity warnings) and were silent at runtime even
-before this change, as the R bindings install their own `llama_log_set`
-callback. Now the symbols also never reach the compiled object files.
+The previous CRAN cleanup (0.4.0) added an `#ifdef USING_R` macro block
+that neutralizes `printf`, `fprintf`, `fputs`, `fflush`, `stderr`, and
+`stdout` to seven upstream files, but missed two:
 
-**C++17 NOTE** (Debian): Removed `CXX_STD = CXX17` from `src/Makevars` and
-`src/Makevars.win`. R auto-detects C++17 from package code.
+* `src/ggml/ggml.c` — `ggml_log_callback_default()` (line 327) calls
+  `fputs(text, stderr); fflush(stderr);`. The R bindings install their
+  own log callback via `llama_log_set` before any logging happens, so
+  this default callback is never invoked at runtime. Backtrace and
+  diagnostic `fprintf(stderr, ...)` calls elsewhere in the file are
+  similarly dead code because the R abort callback does `longjmp` first.
 
-**Spelling NOTE**: Rephrased DESCRIPTION to avoid the "embeddings" flag.
+* `src/ggml/ggml-opt.cpp` — `ggml_opt_fit()` renders a training-progress
+  bar to stderr (16 calls between lines 933 and 1072). The optimizer is
+  not exposed through the R bindings; this code is dead in the package.
 
-**Grammar-constrained generation fix** (issue #41): Fixed two bugs that made
-`edge_grammar_completion()`, `edge_extract()`, and `edge_extract_batch()`
-unusable. (1) `edge_json_grammar()` emitted rule names with underscores that
-llama.cpp's grammar parser rejects (only `[a-zA-Z0-9-]` is allowed); renamed
-to use hyphens. (2) `llama_sampler_accept()` throws on grammar completion;
-the binding now catches the exception and terminates cleanly, mirroring the
-existing end-of-generation handling.
+Both files now include the same `#ifdef USING_R` block used in the
+seven files cleaned up in 0.4.0. The `stderr` symbol no longer appears
+in either compiled object.
 
 ### R CMD check --as-cran results
 
 0 ERRORs. 0 WARNINGs. 0 NOTEs (informational "GNU make is a
 SystemRequirements" is documented in DESCRIPTION).
 
-### Changes in 0.4.0
+### Carried over from 0.4.0
 
-#### New Features
-- Grammar-constrained generation for structured output (JSON, enums)
-- Text embeddings API with cosine similarity helpers
-- Batch processing for vectorized LLM operations on data frames
-- RAG pipeline: document indexing, semantic search, question answering
-- Chat completion with model-native templates from GGUF metadata
-- Plumber API server for OpenAI-compatible local inference
-- Qwen3 model family (0.6B, 1.7B, 4B, 8B) in model registry
-- Friendly model names in `edge_download_model()`
-- `httr` download fallback for corporate proxy environments
-- SIMD optimization warning on package load
+This release also includes the grammar-constrained-generation fixes
+that landed between submissions (issue #41):
 
-#### Bug Fixes
-- Fixed crash from silent `n_ctx` auto-reduction for small models
-- Fixed `edge_completion()` echoing prompt in returned text
-- Added prompt length validation to prevent C++ abort on context overflow
-- Updated `build_chat_prompt()` to use ChatML format
+* `edge_json_grammar()` previously emitted GBNF rule names containing
+  underscores, which llama.cpp's grammar parser rejects (only
+  `[a-zA-Z0-9-]` is allowed). Renamed to use hyphens.
+
+* `llama_sampler_accept()` throws "Unexpected empty grammar stack" when
+  a token completes the grammar. The binding now catches this and
+  terminates cleanly, same as end-of-generation handling.
 
 ### Test environments
-* Local: Windows 11, R 4.5.1, Rtools45 / GCC 14.3.0
+
+* Local: Windows 11, R 4.6.0, Rtools45 / GCC 14.3.0
+* GitHub Actions: ubuntu-latest (devel/release/oldrel-1),
+  windows-latest, macos-latest, macOS Strict (M1/ARM64), Sanitizers
+  (ASAN/UBSAN), CRAN-ubuntu/windows/macos — all green on the
+  submission commit.
 
 ### Third-party code
+
 All bundled code (llama.cpp build b8179, GGML 0.9.7) is credited in
 DESCRIPTION Authors@R and inst/COPYRIGHTS.

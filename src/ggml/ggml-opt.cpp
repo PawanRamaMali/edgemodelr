@@ -9,9 +9,31 @@
 #include <cmath>
 #include <cstdint>
 #include <cinttypes>
+#include <cstdio>
 #include <map>
 #include <random>
 #include <vector>
+
+/* CRAN compliance: suppress stdio diagnostic output in R builds.
+ * The fprintf/fflush calls in this file render a training-progress
+ * bar to stderr during ggml_opt_fit() — a feature used only by direct
+ * ggml training callers and not exposed through the R bindings.
+ * The macros discard the stream arguments so that stderr/stdout
+ * symbols never reach the compiled object. */
+#ifdef USING_R
+#undef printf
+#undef fprintf
+#undef stderr
+#undef stdout
+#undef fputs
+#undef fflush
+#define printf(...) ((void)0)
+#define fprintf(f, ...) ((void)0)
+#define stderr ((FILE*)0)
+#define stdout ((FILE*)0)
+#define fputs(s, f) ((void)0)
+#define fflush(f) ((void)0)
+#endif
 
 struct ggml_opt_dataset {
     struct ggml_context   * ctx    = nullptr;
