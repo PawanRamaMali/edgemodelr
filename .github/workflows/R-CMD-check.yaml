@@ -146,14 +146,11 @@ jobs:
             exit 1
           fi
 
-          # Check for WARNINGs, excluding known expected warnings:
-          # - "CRAN incoming feasibility": version already on CRAN (expected in CI)
-          # - "checking compiled code": embedded ggml/llama upstream C libraries
-          #   write to stderr for logging; this is a known limitation of bundling
-          #   large native inference libraries and is accepted by CRAN in practice.
+          # Check for WARNINGs, excluding only the network-dependent
+          # "CRAN incoming feasibility" check which can fail intermittently
+          # in CI for reasons unrelated to the package.
           REAL_WARNINGS=$(grep "WARNING" "$CHECK_DIR/00check.log" \
             | grep -v "checking CRAN incoming feasibility" \
-            | grep -v "checking compiled code" \
             | grep -v "^Status:" || true)
 
           if [ -n "$REAL_WARNINGS" ]; then
@@ -289,13 +286,11 @@ jobs:
             exit 1
           fi
 
-          # Check for WARNINGs, excluding known expected warnings:
-          # - "CRAN incoming feasibility": version already on CRAN (expected in CI)
-          # - "checking compiled code": embedded ggml/llama upstream libraries
-          #   use stderr for logging; unavoidable without rewriting upstream code.
+          # Check for WARNINGs, excluding only the network-dependent
+          # "CRAN incoming feasibility" check which can fail intermittently
+          # in CI for reasons unrelated to the package.
           REAL_WARNINGS=$(grep "WARNING" "$CHECK_DIR/00check.log" \
             | grep -v "checking CRAN incoming feasibility" \
-            | grep -v "checking compiled code" \
             | grep -v "^Status:" || true)
 
           if [ -n "$REAL_WARNINGS" ]; then
