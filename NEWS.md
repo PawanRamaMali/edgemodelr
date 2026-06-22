@@ -1,3 +1,15 @@
+# edgemodelr (development)
+
+## Grammar Sampler Fix
+
+* **`bindings.cpp`**: Removed a redundant manual `llama_sampler_accept()` call
+  from the three generation loops (plain completion, streaming completion,
+  grammar-constrained completion). `llama_sampler_sample()` already calls
+  `llama_sampler_accept()` internally; the double-accept was corrupting
+  grammar state on every token. Fixes `edge_grammar_completion()`,
+  `edge_extract()`, `edge_extract_batch()`, and `edge_classify()` on Windows,
+  where these previously returned only `"{"` or truncated structured output.
+
 # edgemodelr 0.4.1
 
 ## CRAN Resubmission Fixes
