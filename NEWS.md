@@ -1,3 +1,28 @@
+# edgemodelr (development)
+
+## New Helpers for Text-to-SQL, Data-to-Text, and Verification
+
+* **`edge_text_to_sql()`**: Generate a SQL query from a natural language
+  question against a supplied schema. Optionally executes the SQL against a
+  DBI connection and returns both the statement and its result. Output is
+  post-processed to a single, semicolon-terminated statement (code fences and
+  trailing chatter stripped).
+
+* **`edge_narrate()`**: Convert a named list, single-row, or multi-row
+  data.frame into one short English narrative per record. Linearises the input
+  as labelled `field: value` lines and prompts the model to describe the
+  record without inferring beyond the data.
+
+* **`edge_verify_narrative()`**: Numeric/categorical back-check for a
+  generated narrative. Re-extracts named fields with `edge_extract()` and
+  compares them to the source-of-truth values, with a numeric tolerance.
+  Designed to be the deterministic guardrail behind any pharma/regulated
+  data-to-text workflow.
+
+* New example scripts under `examples/`: a CDISC-style SQL + narrative demo
+  and a small benchmark harness comparing models on text-to-SQL and
+  data-to-text round-trip accuracy.
+
 # edgemodelr 0.4.1
 
 ## CRAN Resubmission Fixes
