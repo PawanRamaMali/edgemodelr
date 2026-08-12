@@ -1,60 +1,68 @@
-## Resubmission - edgemodelr 0.4.1
+## Submission - edgemodelr 0.4.2
 
-This resubmission addresses the compiled-code NOTE flagged by CRAN's
-automated pre-check on 0.4.0 (Debian flavor):
+This release fixes the installation failures reported on the CRAN check
+page for 0.4.1. Both are compiler portability problems in the bundled
+llama.cpp/GGML sources; there are no user-visible changes to the R API.
+
+### Fix 1: r-release-macos-x86_64 (ERROR: installation failed)
 
 ```
-File 'edgemodelr/libs/edgemodelr.so':
-  Found 'stderr', possibly from 'stderr' (C)
-    Objects: 'ggml/ggml.o', 'ggml/ggml-opt.o'
+ggml/ggml-backend-reg.cpp:125:29: error: no viable conversion from
+'basic_string<char, char_traits<char>, allocator<char>>' to
+'const basic_string<char8_t, char_traits<char8_t>, allocator<char8_t>>'
+        const std::u8string u8str = path.u8string();
 ```
 
-### Fix applied
+`path_str()` selected its conversion branch with
+`#if defined(__cpp_lib_char8_t)`. That macro is not a reliable proxy for
+the return type of `std::filesystem::path::u8string()`: the libc++
+shipped in MacOSX11.sdk defines it when compiling with `-std=gnu++20`
+while still returning `std::string` from `u8string()`, so the branch
+written for `std::u8string` did not compile.
 
-The previous CRAN cleanup (0.4.0) added an `#ifdef USING_R` macro block
-that neutralizes `printf`, `fprintf`, `fputs`, `fflush`, `stderr`, and
-`stdout` to seven upstream files, but missed two:
+The function now deduces the return type with `auto` and converts
+byte-wise via `reinterpret_cast<const char *>` on `data()`. This is
+valid whether the element type is `char` or `char8_t`, and removes the
+dependency on the feature-test macro entirely. The two code paths were
+verified by compiling the file under both `-std=gnu++17` (where
+`u8string()` returns `std::string`) and `-std=gnu++20` (where it returns
+`std::u8string`).
 
-* `src/ggml/ggml.c` — `ggml_log_callback_default()` (line 327) calls
-  `fputs(text, stderr); fflush(stderr);`. The R bindings install their
-  own log callback via `llama_log_set` before any logging happens, so
-  this default callback is never invoked at runtime. Backtrace and
-  diagnostic `fprintf(stderr, ...)` calls elsewhere in the file are
-  similarly dead code because the R abort callback does `longjmp` first.
+### Fix 2: clang 23 (ERROR: installation failed)
 
-* `src/ggml/ggml-opt.cpp` — `ggml_opt_fit()` renders a training-progress
-  bar to stderr (16 calls between lines 933 and 1072). The optimizer is
-  not exposed through the R bindings; this code is dead in the package.
+```
+ggml/gguf.cpp:847:94: error: use of undeclared identifier 'errno'
+llama/llama-graph.h:84:48: error: use of undeclared identifier 'getenv'
+llama/llama-graph.h:85:43: error: use of undeclared identifier 'atoi'
+llama/llama-context.cpp:165:50: error: use of undeclared identifier 'getenv'
+llama/llama-context.cpp:166:60: error: use of undeclared identifier 'atoi'
+```
 
-Both files now include the same `#ifdef USING_R` block used in the
-seven files cleaned up in 0.4.0. The `stderr` symbol no longer appears
-in either compiled object.
+Three translation units used symbols without including the header that
+declares them, relying on transitive includes that recent libc++
+releases no longer provide. `ggml/gguf.cpp` now includes `<cerrno>`;
+`llama/llama-graph.h` and `llama/llama-context.cpp` now include
+`<cstdlib>`.
 
 ### R CMD check --as-cran results
 
 0 ERRORs. 0 WARNINGs. 0 NOTEs (informational "GNU make is a
 SystemRequirements" is documented in DESCRIPTION).
 
-### Carried over from 0.4.0
-
-This release also includes the grammar-constrained-generation fixes
-that landed between submissions (issue #41):
-
-* `edge_json_grammar()` previously emitted GBNF rule names containing
-  underscores, which llama.cpp's grammar parser rejects (only
-  `[a-zA-Z0-9-]` is allowed). Renamed to use hyphens.
-
-* `llama_sampler_accept()` throws "Unexpected empty grammar stack" when
-  a token completes the grammar. The binding now catches this and
-  terminates cleanly, same as end-of-generation handling.
+The installed size INFO (9.8Mb, of which libs is 9.2Mb) is inherent to
+the bundled inference engine and unchanged from previous releases.
 
 ### Test environments
 
-* Local: Windows 11, R 4.6.0, Rtools45 / GCC 14.3.0
+* Local: Windows 11, R 4.5.1, Rtools45 / GCC 14.3.0
 * GitHub Actions: ubuntu-latest (devel/release/oldrel-1),
   windows-latest, macos-latest, macOS Strict (M1/ARM64), Sanitizers
-  (ASAN/UBSAN), CRAN-ubuntu/windows/macos — all green on the
-  submission commit.
+  (ASAN/UBSAN), CRAN-ubuntu/windows/macos
+
+Neither failing configuration is reproducible with GCC 14 / libstdc++,
+so the fixes were validated by compiling the affected files under both
+C++17 and C++20 and by confirming that the error mechanism in each case
+is addressed at its source.
 
 ### Third-party code
 

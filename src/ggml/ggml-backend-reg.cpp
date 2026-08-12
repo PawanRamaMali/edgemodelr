@@ -120,14 +120,13 @@ namespace fs = std::filesystem;
 
 static std::string path_str(const fs::path & path) {
     try {
-#if defined(__cpp_lib_char8_t)
-        // C++20 and later: u8string() returns std::u8string
-        const std::u8string u8str = path.u8string();
+        // u8string() returns std::string under C++17 and std::u8string under C++20,
+        // but the return type cannot be inferred from __cpp_lib_char8_t: some libc++
+        // versions (e.g. the one in MacOSX11.sdk) define that macro while still
+        // returning std::string. Deduce the type instead and convert byte-wise, which
+        // is valid for both char and char8_t element types.
+        const auto u8str = path.u8string();
         return std::string(reinterpret_cast<const char *>(u8str.data()), u8str.size());
-#else
-        // C++17: u8string() returns std::string
-        return path.u8string();
-#endif
     } catch (...) {
         return std::string();
     }
