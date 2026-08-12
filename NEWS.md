@@ -1,3 +1,24 @@
+# edgemodelr 0.4.2
+
+## Compiler Portability Fixes
+
+* **Installation failure on macOS x86_64** (CRAN r-release-macos-x86_64):
+  `path_str()` in `ggml/ggml-backend-reg.cpp` chose between two
+  conversion branches using `#if defined(__cpp_lib_char8_t)`. The libc++
+  shipped in MacOSX11.sdk defines that macro under `-std=gnu++20` but
+  its `std::filesystem::path::u8string()` still returns `std::string`,
+  so the branch guarded for `std::u8string` failed to compile. The
+  function now deduces the return type with `auto` and converts
+  byte-wise, which is correct whether the element type is `char` or
+  `char8_t`.
+
+* **Installation failure on clang 23**: three translation units used
+  symbols they never included a header for, relying on transitive
+  includes that newer libc++ releases no longer provide.
+  `ggml/gguf.cpp` calls `errno` without `<cerrno>`, and
+  `llama/llama-graph.h` and `llama/llama-context.cpp` call `getenv()`
+  and `atoi()` without `<cstdlib>`. Each file now includes what it uses.
+
 # edgemodelr 0.4.1
 
 ## CRAN Resubmission Fixes
