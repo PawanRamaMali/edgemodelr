@@ -12,6 +12,12 @@
   byte-wise, which is correct whether the element type is `char` or
   `char8_t`.
 
+* **C++ standard pinned to C++17** (`CXX_STD = CXX17` in `src/Makevars` and
+  `src/Makevars.win`): the bundled llama.cpp and GGML sources target C++17.
+  Without a pin, each platform applied its own default, so the same source
+  compiled as C++17 under R 4.5 and as C++20 under R 4.6 on macOS. Every
+  CRAN flavour now builds the dialect the vendored engine is written for.
+
 * **Installation failure on clang 23**: three translation units used
   symbols they never included a header for, relying on transitive
   includes that newer libc++ releases no longer provide.
