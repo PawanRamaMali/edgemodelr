@@ -28,7 +28,30 @@ verified by compiling the file under both `-std=gnu++17` (where
 `u8string()` returns `std::string`) and `-std=gnu++20` (where it returns
 `std::u8string`).
 
-### Fix 2: clang 23 (ERROR: installation failed)
+### Fix 2: C++ standard pinned to C++17
+
+Comparing the install logs across the macOS flavours isolates the
+trigger precisely. r-oldrel-macos-x86_64 and r-release-macos-x86_64 use
+the same compiler (Apple clang 14.0.3) and the same SDK
+(MacOSX11.3.1.sdk) and differ only in the language standard R selects:
+
+| Flavour                 | Standard    | 0.4.1 result |
+|-------------------------|-------------|--------------|
+| r-oldrel-macos-x86_64   | `gnu++17`   | OK           |
+| r-release-macos-x86_64  | `gnu++20`   | ERROR        |
+| r-release-macos-arm64   | `gnu++20`   | OK           |
+
+The bundled llama.cpp and GGML sources target C++17, which is the
+standard upstream builds and tests against. With no `CXX_STD` set, the
+package inherited whichever default each platform applied, so the same
+sources were compiled as C++17 under R 4.5 and as C++20 under R 4.6.
+
+`src/Makevars` and `src/Makevars.win` now set `CXX_STD = CXX17`. This
+puts r-release-macos-x86_64 on exactly the configuration under which
+r-oldrel-macos-x86_64 already installs cleanly, and keeps every other
+flavour on the dialect the vendored engine is written for.
+
+### Fix 3: clang 23 (ERROR: installation failed)
 
 ```
 ggml/gguf.cpp:847:94: error: use of undeclared identifier 'errno'
@@ -56,13 +79,22 @@ the bundled inference engine and unchanged from previous releases.
 
 * Local: Windows 11, R 4.5.1, Rtools45 / GCC 14.3.0
 * GitHub Actions: ubuntu-latest (devel/release/oldrel-1),
-  windows-latest, macos-latest, macOS Strict (M1/ARM64), Sanitizers
-  (ASAN/UBSAN), CRAN-ubuntu/windows/macos
+  windows-latest, macos-latest (ARM64), macos-15-intel (x86_64),
+  macOS Strict (M1/ARM64), Sanitizers (ASAN/UBSAN),
+  CRAN-ubuntu/windows/macos
 
-Neither failing configuration is reproducible with GCC 14 / libstdc++,
-so the fixes were validated by compiling the affected files under both
-C++17 and C++20 and by confirming that the error mechanism in each case
-is addressed at its source.
+An x86_64 macOS job was added to the CI matrix for this release, since
+the previous matrix covered only ARM64 on macOS. All 161 C++ translation
+units were additionally compiled under both `-std=gnu++17` and
+`-std=gnu++20` locally.
+
+The specific SDK that failed (MacOSX11.sdk) is not available on any
+hosted CI image, so the argument for Fix 1 rests on the mechanism rather
+than on a reproduction: the feature-test macro no longer gates anything,
+and the replacement expression is well formed for both possible return
+types. Fix 2 removes the exposure independently by keeping that
+configuration on C++17, which the CRAN check page already shows building
+cleanly on the identical compiler and SDK.
 
 ### Third-party code
 

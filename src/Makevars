@@ -1,3 +1,11 @@
+# The bundled llama.cpp and GGML sources target C++17, which is what upstream
+# builds and tests. Without this pin each platform applies its own default:
+# R 4.6 on macOS compiles with -std=gnu++20, and the libc++ in MacOSX11.sdk
+# changes the return type of std::filesystem::path::u8string() between the two
+# standards, which broke the r-release-macos-x86_64 install in 0.4.1. Fixing
+# the dialect keeps every platform on the standard the vendored code expects.
+CXX_STD = CXX17
+
 PKG_CPPFLAGS = -I../inst/include -I./llama -I./llama/models -I./ggml -I./ggml/ggml-cpu -DUSING_R=1 -DGGML_BUILD_FOR_R
 PKG_CXXFLAGS = -DNDEBUG -DGGML_USE_CPU
 PKG_CFLAGS = -DNDEBUG -DGGML_USE_CPU

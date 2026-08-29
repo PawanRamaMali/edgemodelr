@@ -18,6 +18,10 @@ jobs:
       matrix:
         config:
           - {os: macos-latest,   r: 'release'}
+          # Intel macOS. macos-latest is ARM64, so without this entry no job
+          # covers the x86_64 Apple toolchain, which is the flavour that broke
+          # the 0.4.1 install on CRAN.
+          - {os: macos-15-intel, r: 'release'}
           - {os: windows-latest, r: 'release'}
           - {os: ubuntu-latest,   r: 'devel', http-user-agent: 'release'}
           - {os: ubuntu-latest,   r: 'release'}
