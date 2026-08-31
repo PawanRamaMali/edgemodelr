@@ -10,9 +10,14 @@ PKG_CPPFLAGS = -I../inst/include -I./llama -I./llama/models -I./ggml -I./ggml/gg
 PKG_CXXFLAGS = -DNDEBUG -DGGML_USE_CPU
 PKG_CFLAGS = -DNDEBUG -DGGML_USE_CPU
 
-# Cross-platform configuration without OpenMP for stability.
-GGML_CXXFLAGS = $(PKG_CXXFLAGS) -fPIC -ftree-vectorize
-GGML_CFLAGS = $(PKG_CFLAGS) -DUSING_R=1 -fPIC -ftree-vectorize -fno-builtin-printf
+# Extra flags for the vendored engine. These are APPENDED to R's
+# $(ALL_CFLAGS)/$(ALL_CXXFLAGS) in every rule below, never used in place of
+# them, so that CFLAGS and CXXFLAGS set by the user or the site Makevars
+# reach the sources in ggml/ and llama/ as well as the top-level ones.
+# Optimisation, PIC and -DNDEBUG all arrive through $(ALL_*FLAGS); only
+# genuinely engine-specific additions belong here.
+GGML_EXTRA_CXXFLAGS = -ftree-vectorize
+GGML_EXTRA_CFLAGS = -ftree-vectorize -fno-builtin-printf
 PKG_LIBS = $(LAPACK_LIBS) $(BLAS_LIBS) $(FLIBS)
 
 # Model-specific objects (one file per model architecture, added in b8179)
@@ -47,36 +52,36 @@ CORE_OBJECTS = bindings.o RcppExports.o \
 # ============================================================================
 
 ifeq ($(EDGEMODELR_SIMD),GENERIC)
-  GGML_CXXFLAGS += -DGGML_CPU_GENERIC
-  GGML_CFLAGS += -DGGML_CPU_GENERIC
+  GGML_EXTRA_CXXFLAGS += -DGGML_CPU_GENERIC
+  GGML_EXTRA_CFLAGS += -DGGML_CPU_GENERIC
   ARCH_OBJECTS =
 else ifeq ($(EDGEMODELR_SIMD),NATIVE)
-  GGML_CXXFLAGS += -march=native
-  GGML_CFLAGS += -march=native
+  GGML_EXTRA_CXXFLAGS += -march=native
+  GGML_EXTRA_CFLAGS += -march=native
   ARCH_OBJECTS = ggml/ggml-cpu/arch/x86/quants.o ggml/ggml-cpu/arch/x86/repack.o ggml/ggml-cpu/arch/x86/cpu-feats.o
 else ifeq ($(EDGEMODELR_SIMD),AVX512)
-  GGML_CXXFLAGS += -mavx512f -mavx512bw -mavx512dq -mavx512vl -mavx2 -mfma -mf16c -DGGML_AVX512 -DGGML_AVX2 -DGGML_FMA -DGGML_F16C -DGGML_AVX -DGGML_SSE42
-  GGML_CFLAGS += -mavx512f -mavx512bw -mavx512dq -mavx512vl -mavx2 -mfma -mf16c -DGGML_AVX512 -DGGML_AVX2 -DGGML_FMA -DGGML_F16C -DGGML_AVX -DGGML_SSE42
+  GGML_EXTRA_CXXFLAGS += -mavx512f -mavx512bw -mavx512dq -mavx512vl -mavx2 -mfma -mf16c -DGGML_AVX512 -DGGML_AVX2 -DGGML_FMA -DGGML_F16C -DGGML_AVX -DGGML_SSE42
+  GGML_EXTRA_CFLAGS += -mavx512f -mavx512bw -mavx512dq -mavx512vl -mavx2 -mfma -mf16c -DGGML_AVX512 -DGGML_AVX2 -DGGML_FMA -DGGML_F16C -DGGML_AVX -DGGML_SSE42
   ARCH_OBJECTS = ggml/ggml-cpu/arch/x86/quants.o ggml/ggml-cpu/arch/x86/repack.o ggml/ggml-cpu/arch/x86/cpu-feats.o
 else ifeq ($(EDGEMODELR_SIMD),AVX2)
-  GGML_CXXFLAGS += -mavx2 -mfma -mf16c -DGGML_AVX2 -DGGML_FMA -DGGML_F16C -DGGML_AVX -DGGML_SSE42
-  GGML_CFLAGS += -mavx2 -mfma -mf16c -DGGML_AVX2 -DGGML_FMA -DGGML_F16C -DGGML_AVX -DGGML_SSE42
+  GGML_EXTRA_CXXFLAGS += -mavx2 -mfma -mf16c -DGGML_AVX2 -DGGML_FMA -DGGML_F16C -DGGML_AVX -DGGML_SSE42
+  GGML_EXTRA_CFLAGS += -mavx2 -mfma -mf16c -DGGML_AVX2 -DGGML_FMA -DGGML_F16C -DGGML_AVX -DGGML_SSE42
   ARCH_OBJECTS = ggml/ggml-cpu/arch/x86/quants.o ggml/ggml-cpu/arch/x86/repack.o ggml/ggml-cpu/arch/x86/cpu-feats.o
 else ifeq ($(EDGEMODELR_SIMD),AVX)
-  GGML_CXXFLAGS += -mavx -mf16c -DGGML_AVX -DGGML_F16C -DGGML_SSE42
-  GGML_CFLAGS += -mavx -mf16c -DGGML_AVX -DGGML_F16C -DGGML_SSE42
+  GGML_EXTRA_CXXFLAGS += -mavx -mf16c -DGGML_AVX -DGGML_F16C -DGGML_SSE42
+  GGML_EXTRA_CFLAGS += -mavx -mf16c -DGGML_AVX -DGGML_F16C -DGGML_SSE42
   ARCH_OBJECTS = ggml/ggml-cpu/arch/x86/quants.o ggml/ggml-cpu/arch/x86/repack.o ggml/ggml-cpu/arch/x86/cpu-feats.o
 else ifeq ($(EDGEMODELR_SIMD),SSE42)
-  GGML_CXXFLAGS += -msse4.2 -DGGML_SSE42
-  GGML_CFLAGS += -msse4.2 -DGGML_SSE42
+  GGML_EXTRA_CXXFLAGS += -msse4.2 -DGGML_SSE42
+  GGML_EXTRA_CFLAGS += -msse4.2 -DGGML_SSE42
   ARCH_OBJECTS = ggml/ggml-cpu/arch/x86/quants.o ggml/ggml-cpu/arch/x86/repack.o ggml/ggml-cpu/arch/x86/cpu-feats.o
 else
   # Default: portable generic build (no arch-specific flags).
   # CRAN policy prohibits non-portable compiler flags (-msse4.2, -mavx, etc.)
   # in the default install path. Users who want SIMD acceleration should set
   # EDGEMODELR_SIMD=SSE42 (or AVX2/AVX512/NATIVE) at install time.
-  GGML_CXXFLAGS += -DGGML_CPU_GENERIC
-  GGML_CFLAGS += -DGGML_CPU_GENERIC
+  GGML_EXTRA_CXXFLAGS += -DGGML_CPU_GENERIC
+  GGML_EXTRA_CFLAGS += -DGGML_CPU_GENERIC
   ARCH_OBJECTS =
 endif
 
@@ -90,10 +95,10 @@ clean:
 
 # Special rules for conflicting ggml-cpu files
 ggml/ggml-cpu/ggml-cpu-c.o: ggml/ggml-cpu/ggml-cpu.c
-	$(CC) $(ALL_CPPFLAGS) $(GGML_CFLAGS) -c $< -o $@
+	$(CC) $(ALL_CPPFLAGS) $(ALL_CFLAGS) $(GGML_EXTRA_CFLAGS) -c $< -o $@
 
 ggml/ggml-cpu/ggml-cpu-cpp.o: ggml/ggml-cpu/ggml-cpu.cpp
-	$(CXX) $(ALL_CPPFLAGS) $(GGML_CXXFLAGS) -c $< -o $@
+	$(CXX) $(ALL_CPPFLAGS) $(ALL_CXXFLAGS) $(GGML_EXTRA_CXXFLAGS) -c $< -o $@
 
 # Standard compilation rules for main source files
 bindings.o: bindings.cpp
@@ -114,43 +119,43 @@ RcppExports.o: RcppExports.cpp
 #     ggml_gemv_q4_0_8x8_q8_0_generic are emitted with their true _generic names,
 #     which arch/x86/repack.o and arch/x86/quants.o reference as external symbols.
 ifeq ($(ARCH_OBJECTS),)
-GENERIC_CFLAGS   = $(PKG_CFLAGS)   -DUSING_R=1 -fPIC -ftree-vectorize -DGGML_CPU_GENERIC
-GENERIC_CXXFLAGS = $(PKG_CXXFLAGS) -fPIC -ftree-vectorize -DGGML_CPU_GENERIC
+GENERIC_EXTRA_CFLAGS   = -ftree-vectorize -DGGML_CPU_GENERIC
+GENERIC_EXTRA_CXXFLAGS = -ftree-vectorize -DGGML_CPU_GENERIC
 else
-GENERIC_CFLAGS   = $(PKG_CFLAGS)   -DUSING_R=1 -fPIC -ftree-vectorize
-GENERIC_CXXFLAGS = $(PKG_CXXFLAGS) -fPIC -ftree-vectorize
+GENERIC_EXTRA_CFLAGS   = -ftree-vectorize
+GENERIC_EXTRA_CXXFLAGS = -ftree-vectorize
 endif
 
 ggml/ggml-cpu/quants.o: ggml/ggml-cpu/quants.c
-	$(CC) $(ALL_CPPFLAGS) $(GENERIC_CFLAGS) -c $< -o $@
+	$(CC) $(ALL_CPPFLAGS) $(ALL_CFLAGS) $(GENERIC_EXTRA_CFLAGS) -c $< -o $@
 
 ggml/ggml-cpu/repack.o: ggml/ggml-cpu/repack.cpp
-	$(CXX) $(ALL_CPPFLAGS) $(GENERIC_CXXFLAGS) -c $< -o $@
+	$(CXX) $(ALL_CPPFLAGS) $(ALL_CXXFLAGS) $(GENERIC_EXTRA_CXXFLAGS) -c $< -o $@
 
 # Special rules for GGML/LLAMA files
 ggml/%.o: ggml/%.c
-	$(CC) $(ALL_CPPFLAGS) $(GGML_CFLAGS) -c $< -o $@
+	$(CC) $(ALL_CPPFLAGS) $(ALL_CFLAGS) $(GGML_EXTRA_CFLAGS) -c $< -o $@
 
 ggml/%.o: ggml/%.cpp
-	$(CXX) $(ALL_CPPFLAGS) $(GGML_CXXFLAGS) -c $< -o $@
+	$(CXX) $(ALL_CPPFLAGS) $(ALL_CXXFLAGS) $(GGML_EXTRA_CXXFLAGS) -c $< -o $@
 
 llama/%.o: llama/%.cpp
-	$(CXX) $(ALL_CPPFLAGS) $(GGML_CXXFLAGS) -c $< -o $@
+	$(CXX) $(ALL_CPPFLAGS) $(ALL_CXXFLAGS) $(GGML_EXTRA_CXXFLAGS) -c $< -o $@
 
 # SIMD info reporting (compiled with GGML flags to detect SIMD features)
 simd_info.o: simd_info.cpp
-	$(CXX) $(ALL_CPPFLAGS) $(GGML_CXXFLAGS) -c $< -o $@
+	$(CXX) $(ALL_CPPFLAGS) $(ALL_CXXFLAGS) $(GGML_EXTRA_CXXFLAGS) -c $< -o $@
 
 # Model-specific compilation rule
 llama/models/%.o: llama/models/%.cpp
-	$(CXX) $(ALL_CPPFLAGS) $(GGML_CXXFLAGS) -c $< -o $@
+	$(CXX) $(ALL_CPPFLAGS) $(ALL_CXXFLAGS) $(GGML_EXTRA_CXXFLAGS) -c $< -o $@
 
 # Architecture-specific rules
 ggml/ggml-cpu/arch/x86/%.o: ggml/ggml-cpu/arch/x86/%.c
-	$(CC) $(ALL_CPPFLAGS) $(GGML_CFLAGS) -c $< -o $@
+	$(CC) $(ALL_CPPFLAGS) $(ALL_CFLAGS) $(GGML_EXTRA_CFLAGS) -c $< -o $@
 
 ggml/ggml-cpu/arch/x86/%.o: ggml/ggml-cpu/arch/x86/%.cpp
-	$(CXX) $(ALL_CPPFLAGS) $(GGML_CXXFLAGS) -c $< -o $@
+	$(CXX) $(ALL_CPPFLAGS) $(ALL_CXXFLAGS) $(GGML_EXTRA_CXXFLAGS) -c $< -o $@
 
 # Standard fallback rules
 %.o: %.c

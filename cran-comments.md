@@ -1,79 +1,87 @@
-## Submission - edgemodelr 0.4.2
+## Resubmission - edgemodelr 0.4.3
 
-This release fixes the installation failures reported on the CRAN check
-page for 0.4.1. Both are compiler portability problems in the bundled
-llama.cpp/GGML sources; there are no user-visible changes to the R API.
+This addresses both points raised by Uwe Ligges on the 0.4.2 submission.
+There are no user-visible changes to the R API.
 
-### Fix 1: r-release-macos-x86_64 (ERROR: installation failed)
+### 1. Missing `<cstdlib>` in four translation units
 
-```
-ggml/ggml-backend-reg.cpp:125:29: error: no viable conversion from
-'basic_string<char, char_traits<char>, allocator<char>>' to
-'const basic_string<char8_t, char_traits<char8_t>, allocator<char8_t>>'
-        const std::u8string u8str = path.u8string();
-```
-
-`path_str()` selected its conversion branch with
-`#if defined(__cpp_lib_char8_t)`. That macro is not a reliable proxy for
-the return type of `std::filesystem::path::u8string()`: the libc++
-shipped in MacOSX11.sdk defines it when compiling with `-std=gnu++20`
-while still returning `std::string` from `u8string()`, so the branch
-written for `std::u8string` did not compile.
-
-The function now deduces the return type with `auto` and converts
-byte-wise via `reinterpret_cast<const char *>` on `data()`. This is
-valid whether the element type is `char` or `char8_t`, and removes the
-dependency on the feature-test macro entirely. The two code paths were
-verified by compiling the file under both `-std=gnu++17` (where
-`u8string()` returns `std::string`) and `-std=gnu++20` (where it returns
-`std::u8string`).
-
-### Fix 2: C++ standard pinned to C++17
-
-Comparing the install logs across the macOS flavours isolates the
-trigger precisely. r-oldrel-macos-x86_64 and r-release-macos-x86_64 use
-the same compiler (Apple clang 14.0.3) and the same SDK
-(MacOSX11.3.1.sdk) and differ only in the language standard R selects:
-
-| Flavour                 | Standard    | 0.4.1 result |
-|-------------------------|-------------|--------------|
-| r-oldrel-macos-x86_64   | `gnu++17`   | OK           |
-| r-release-macos-x86_64  | `gnu++20`   | ERROR        |
-| r-release-macos-arm64   | `gnu++20`   | OK           |
-
-The bundled llama.cpp and GGML sources target C++17, which is the
-standard upstream builds and tests against. With no `CXX_STD` set, the
-package inherited whichever default each platform applied, so the same
-sources were compiled as C++17 under R 4.5 and as C++20 under R 4.6.
-
-`src/Makevars` and `src/Makevars.win` now set `CXX_STD = CXX17`. This
-puts r-release-macos-x86_64 on exactly the configuration under which
-r-oldrel-macos-x86_64 already installs cleanly, and keeps every other
-flavour on the dialect the vendored engine is written for.
-
-### Fix 3: clang 23 (ERROR: installation failed)
+The reported errors were:
 
 ```
-ggml/gguf.cpp:847:94: error: use of undeclared identifier 'errno'
-llama/llama-graph.h:84:48: error: use of undeclared identifier 'getenv'
-llama/llama-graph.h:85:43: error: use of undeclared identifier 'atoi'
-llama/llama-context.cpp:165:50: error: use of undeclared identifier 'getenv'
-llama/llama-context.cpp:166:60: error: use of undeclared identifier 'atoi'
+llama/llama-mmap.cpp:303:19: error: use of undeclared identifier 'posix_memalign'
+llama/llama-mmap.cpp:309:47: error: use of undeclared identifier 'free'
+llama/llama-model-loader.cpp:512:9: error: use of undeclared identifier 'getenv'
+llama/llama-vocab.cpp:2732:20: error: use of undeclared identifier 'strtol'
 ```
 
-Three translation units used symbols without including the header that
-declares them, relying on transitive includes that recent libc++
-releases no longer provide. `ggml/gguf.cpp` now includes `<cerrno>`;
-`llama/llama-graph.h` and `llama/llama-context.cpp` now include
-`<cstdlib>`.
+All three files now include `<cstdlib>`.
+
+Rather than patch only the reported lines, every file in `src/` was
+audited for the same defect: for each translation unit and header, the
+set of standard headers reachable through its own includes and through
+the package's local headers was computed, and the file body was scanned
+for C library symbols that set does not cover.
+
+That audit found a fourth file, `llama/llama-batch.cpp`, which calls
+`getenv`, `atoi`, `malloc` and `free` with no `<cstdlib>` in scope. It
+did not appear in the compiler report because the build stopped at
+`llama-mmap.cpp` before reaching it. It would have failed this
+resubmission had it not been fixed.
+
+The audit reports five remaining hits, all verified by hand to be false
+positives rather than defects:
+
+* `ggml-backend-impl.h`, `ggml-backend.h`, `llama.h`: `free` appears as a
+  struct member name and as a parameter name, never as a call.
+* `ggml.h`: `abort()` appears inside `GGML_UNREACHABLE()`, which is
+  defined only under `#ifndef NDEBUG`; the package always compiles with
+  `-DNDEBUG`.
+* `unicode.cpp`: `fprintf` appears inside `#ifndef USING_R`; the package
+  always compiles with `-DUSING_R=1`.
+
+### 2. CFLAGS and CXXFLAGS in subdirectory compilations
+
+This was a real defect and is now fixed. The pattern rules for `ggml/`
+and `llama/` invoked the compiler as
+
+```make
+	$(CXX) $(ALL_CPPFLAGS) $(GGML_CXXFLAGS) -c $< -o $@
+```
+
+where `GGML_CXXFLAGS` held only package-local flags. `$(ALL_CXXFLAGS)`,
+which is where `CXXFLAGS` from the user or the site `Makevars` arrives,
+was absent. Flags were therefore honoured for 6 of the 161 source files
+and silently dropped for the other 155.
+
+Every rule in `src/Makevars` and `src/Makevars.win` now reads
+
+```make
+	$(CXX) $(ALL_CPPFLAGS) $(ALL_CXXFLAGS) $(GGML_EXTRA_CXXFLAGS) -c $< -o $@
+```
+
+The engine-specific variables were renamed from `GGML_CXXFLAGS` to
+`GGML_EXTRA_CXXFLAGS` (and likewise for the C and generic variants) so
+that their role as additions rather than replacements is explicit at
+every use site. Redundant `-fPIC` and `-DNDEBUG` entries were dropped
+from them, since both now arrive through `$(ALL_*FLAGS)`.
+
+Verified after the change: all 161 compile commands in the install log
+carry `$(ALL_CFLAGS)` or `$(ALL_CXXFLAGS)`.
+
+### C++ standard
+
+`CXX_STD = CXX17` was added in 0.4.2 and is retained. The bundled
+llama.cpp and GGML sources target C++17. This also resolved the
+r-release-macos-x86_64 install failure, where `-std=gnu++20` combined
+with the libc++ in MacOSX11.sdk broke `std::filesystem::path::u8string()`
+handling in `ggml-backend-reg.cpp`.
 
 ### R CMD check --as-cran results
 
-0 ERRORs. 0 WARNINGs. 0 NOTEs (informational "GNU make is a
-SystemRequirements" is documented in DESCRIPTION).
+0 ERRORs. 0 WARNINGs. 0 NOTEs.
 
-The installed size INFO (9.8Mb, of which libs is 9.2Mb) is inherent to
-the bundled inference engine and unchanged from previous releases.
+The installed size INFO and the "GNU make is a SystemRequirements" INFO
+are unchanged and both are inherent to the bundled inference engine.
 
 ### Test environments
 
@@ -83,18 +91,14 @@ the bundled inference engine and unchanged from previous releases.
   macOS Strict (M1/ARM64), Sanitizers (ASAN/UBSAN),
   CRAN-ubuntu/windows/macos
 
-An x86_64 macOS job was added to the CI matrix for this release, since
-the previous matrix covered only ARM64 on macOS. All 161 C++ translation
-units were additionally compiled under both `-std=gnu++17` and
-`-std=gnu++20` locally.
+All 161 C++ and 6 C translation units were additionally compiled under
+both `-std=gnu++17` and `-std=gnu++20`.
 
-The specific SDK that failed (MacOSX11.sdk) is not available on any
-hosted CI image, so the argument for Fix 1 rests on the mechanism rather
-than on a reproduction: the feature-test macro no longer gates anything,
-and the replacement expression is well formed for both possible return
-types. Fix 2 removes the exposure independently by keeping that
-configuration on C++17, which the CRAN check page already shows building
-cleanly on the identical compiler and SDK.
+No hosted CI image provides clang 23 or MacOSX11.sdk, so neither
+reported configuration can be reproduced directly. The missing includes
+were instead found and confirmed absent by the tree-wide audit described
+above, which is repeatable and covers every file rather than only those
+a build happened to reach before stopping.
 
 ### Third-party code
 
