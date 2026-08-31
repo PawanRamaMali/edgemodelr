@@ -847,7 +847,11 @@ static void llama_grammar_advance_stack(
               llama_grammar_stacks & new_stacks) {
     if (stack.empty()) {
         if (std::find(new_stacks.begin(), new_stacks.end(), stack) == new_stacks.end()) {
-            new_stacks.emplace_back(stack);
+            // stack is known to be empty here, so default-construct rather than
+            // copy it. Copying a provably empty vector makes GCC 12 and later
+            // report a false -Warray-bounds against a zero-length array, which
+            // R CMD check treats as a significant warning.
+            new_stacks.emplace_back();
         }
         return;
     }

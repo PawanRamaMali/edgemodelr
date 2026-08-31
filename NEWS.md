@@ -12,6 +12,14 @@
   stopped before reaching it; it was found by auditing every file in
   `src/` for this defect rather than by patching the reported lines.
 
+* **False `-Warray-bounds` in `llama-grammar.cpp`**: with optimisation and
+  `-Wall` now applied to the vendored sources, GCC 12 and later reported a
+  false positive against a zero-length array when
+  `llama_grammar_advance_stack()` copied a vector it had already proven
+  empty. R CMD check treats that warning as significant. The branch now
+  default-constructs the empty stack instead of copying it, which is
+  equivalent and does not trip the warning.
+
 * **`CFLAGS` and `CXXFLAGS` now reach the whole package**: the pattern
   rules for `ggml/` and `llama/` passed only package-local flags to the
   compiler, so flags set by the user or the site `Makevars` were applied
