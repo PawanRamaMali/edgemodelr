@@ -33,6 +33,7 @@
 namespace fs = std::filesystem;
 #else
 #    include <string>
+#include <memory>
 // Minimal path shim for older macOS
 namespace fs {
     struct path {

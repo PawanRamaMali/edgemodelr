@@ -1,4 +1,6 @@
 #include "models.h"
+#include <algorithm>
+#include <iterator>
 
 llm_build_qwen3vlmoe::llm_build_qwen3vlmoe(const llama_model & model, const llm_graph_params & params) : llm_graph_context(params) {
     const size_t n_deepstack_layers = hparams.n_deepstack_layers;

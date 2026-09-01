@@ -1,4 +1,6 @@
 #include "models.h"
+#include <algorithm>
+#include <iterator>
 
 llm_build_glm4_moe::llm_build_glm4_moe(const llama_model & model, const llm_graph_params & params) : llm_graph_context(params) {
     const int64_t n_embd_head = hparams.n_embd_head_v;

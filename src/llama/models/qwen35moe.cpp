@@ -1,6 +1,8 @@
 #include "models.h"
 
 #include "llama-memory-recurrent.h"
+#include <algorithm>
+#include <iterator>
 
 llm_build_qwen35moe::llm_build_qwen35moe(const llama_model & model, const llm_graph_params & params) :
     llm_build_delta_net_base(params), model(model) {
