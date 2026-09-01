@@ -5,6 +5,7 @@
 #include "llama-memory.h"
 
 #include <cassert>
+#include <cstdlib>
 #include <cstring>
 #include <algorithm>
 #include <sstream>

@@ -13,6 +13,7 @@
 #include <cfloat>
 #include <cmath>
 #include <cstdarg>
+#include <cstdlib>
 #include <cstring>
 #include <forward_list>
 #include <limits>

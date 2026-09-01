@@ -6,6 +6,7 @@
 #include <array>
 #include <cinttypes>
 #include <cstring>
+#include <cstdlib>
 #include <future>
 
 static const size_t kiB = 1024;

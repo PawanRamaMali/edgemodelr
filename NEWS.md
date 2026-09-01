@@ -1,3 +1,34 @@
+# edgemodelr 0.4.3
+
+## CRAN Feedback Fixes
+
+* **Missing `<cstdlib>` in four more translation units**: `llama-mmap.cpp`
+  (`posix_memalign`, `free`), `llama-model-loader.cpp` (`getenv`, `atoi`),
+  `llama-vocab.cpp` (`strtol`) and `llama-batch.cpp` (`getenv`, `atoi`,
+  `malloc`, `free`) used C library functions without including the header
+  that declares them. Recent libc++ releases no longer supply these
+  through transitive includes, so clang 23 and fedora-clang rejected them.
+  `llama-batch.cpp` was not in the compiler report, because the build
+  stopped before reaching it; it was found by auditing every file in
+  `src/` for this defect rather than by patching the reported lines.
+
+* **False `-Warray-bounds` in `llama-grammar.cpp`**: with optimisation and
+  `-Wall` now applied to the vendored sources, GCC 12 and later reported a
+  false positive against a zero-length array when
+  `llama_grammar_advance_stack()` copied a vector it had already proven
+  empty. R CMD check treats that warning as significant. The branch now
+  default-constructs the empty stack instead of copying it, which is
+  equivalent and does not trip the warning.
+
+* **`CFLAGS` and `CXXFLAGS` now reach the whole package**: the pattern
+  rules for `ggml/` and `llama/` passed only package-local flags to the
+  compiler, so flags set by the user or the site `Makevars` were applied
+  to 6 of 161 source files and silently dropped for the other 155.
+  Every rule in `src/Makevars` and `src/Makevars.win` now appends its
+  engine-specific additions to `$(ALL_CFLAGS)` or `$(ALL_CXXFLAGS)`
+  instead of replacing them. The variables were renamed to
+  `GGML_EXTRA_*` and `GENERIC_EXTRA_*` to make that contract explicit.
+
 # edgemodelr 0.4.2
 
 ## Compiler Portability Fixes
