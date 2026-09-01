@@ -1,4 +1,6 @@
 #include "models.h"
+#include <algorithm>
+#include <iterator>
 
 llm_build_paddleocr::llm_build_paddleocr(const llama_model & model, const llm_graph_params & params) :
     llm_graph_context(params) {

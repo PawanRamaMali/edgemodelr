@@ -8,6 +8,8 @@
 #include <cassert>
 #include <sstream>
 #include <stdexcept>
+#include <algorithm>
+#include <iterator>
 
 // vec
 
