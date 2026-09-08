@@ -14,15 +14,35 @@
   it came from. It re-extracts the named fields from the text and compares
   them to the source of truth, with a tolerance for numeric fields.
 
+All three need a capable model. Small general purpose models produce valid
+SQL that answers a different question, and narratives that restate the input
+rather than summarise it. The reference pages say so.
+
 ## Bug fixes
 
-* Grammar constrained generation was corrupting sampler state on every
-  token. `llama_sampler_sample()` already calls `llama_sampler_accept()`
-  internally, and all three generation loops in `bindings.cpp` were calling
-  it a second time. This left the grammar stack inconsistent, so
-  `edge_grammar_completion()`, `edge_extract()`, `edge_extract_batch()` and
-  `edge_classify()` returned only an opening brace or truncated output,
-  mainly on Windows. The redundant calls are gone.
+* **Loading a file that is not GGUF crashed the R session.** The bundled
+  loader is not hardened against arbitrary input: on clang 23 a plain text
+  file made it read unmapped memory rather than return null, taking the
+  session down. `edge_load_model()` now checks for the GGUF magic header
+  before calling the loader and raises a normal R error instead. The crash
+  was reachable in every earlier release.
+
+* **Grammar constrained generation corrupted sampler state on every token.**
+  `llama_sampler_sample()` already calls `llama_sampler_accept()` internally,
+  and all three generation loops in `bindings.cpp` called it a second time.
+  That left the grammar stack inconsistent, so `edge_grammar_completion()`,
+  `edge_extract()`, `edge_extract_batch()` and `edge_classify()` returned
+  only an opening brace or truncated output, mainly on Windows.
+
+* **`-Wkeyword-macro` in `ggml/ggml-common.h`.** C23 made `static_assert` a
+  keyword and the header defined a macro over it. Valid C, but clang 23 warns
+  and R CMD check counts that as a significant warning. The macro is now
+  skipped on C23 and later compilers.
+
+* **Missing standard library includes.** Twenty three C library headers were
+  used but not included, in files that only compiled because another header
+  happened to pull them in. Two headers shared between C and C++ used the
+  C++ spelling.
 
 ## Docker
 

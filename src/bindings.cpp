@@ -147,6 +147,25 @@ SEXP edge_load_model_internal(std::string model_path, int n_ctx = 2048, int n_gp
     llama_model_params model_params = llama_model_default_params();
     model_params.n_gpu_layers = n_gpu_layers;
 
+    // Reject anything that is not a GGUF file before handing it to the loader.
+    // The loader is not hardened against arbitrary input: on clang 23 a plain
+    // text file makes it read unmapped memory and take the R session down with
+    // it, rather than returning null. Checking the magic here keeps a bad path
+    // from ever reaching that code.
+    {
+      std::ifstream probe(model_path, std::ios::binary);
+      if (!probe.good()) {
+        stop("Model file does not exist or is not readable: " + model_path);
+      }
+      char magic[4] = {0, 0, 0, 0};
+      probe.read(magic, 4);
+      if (probe.gcount() != 4 || std::string(magic, 4) != "GGUF") {
+        stop("Not a GGUF file: " + model_path +
+             "\nThe file does not start with the GGUF magic header. "
+             "If this came from Ollama, pass the blob file rather than the manifest.");
+      }
+    }
+
     struct llama_model* model = llama_model_load_from_file(model_path.c_str(), model_params);
     if (!model) {
       // Check if file exists
