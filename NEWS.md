@@ -1,3 +1,35 @@
+# edgemodelr 0.5.0
+
+## New features
+
+* `edge_text_to_sql()` turns a natural language question plus a CREATE TABLE
+  schema into SQL. Pass a DBI connection to `con` and it executes the query
+  and returns the rows, otherwise it returns the statement.
+
+* `edge_narrate()` writes a short English summary of a record. Accepts a
+  named list, a single row, or a multi-row data frame, and returns one
+  narrative per record.
+
+* `edge_verify_narrative()` checks a generated narrative against the values
+  it came from. It re-extracts the named fields from the text and compares
+  them to the source of truth, with a tolerance for numeric fields.
+
+## Bug fixes
+
+* Grammar constrained generation was corrupting sampler state on every
+  token. `llama_sampler_sample()` already calls `llama_sampler_accept()`
+  internally, and all three generation loops in `bindings.cpp` were calling
+  it a second time. This left the grammar stack inconsistent, so
+  `edge_grammar_completion()`, `edge_extract()`, `edge_extract_batch()` and
+  `edge_classify()` returned only an opening brace or truncated output,
+  mainly on Windows. The redundant calls are gone.
+
+## Docker
+
+* Added `docker/` with a base image, a variant with TinyLlama baked in, and
+  a compose file. The base image declares the model cache as a volume so a
+  host cache can be mounted for offline use.
+
 # edgemodelr 0.4.3
 
 ## CRAN Feedback Fixes
