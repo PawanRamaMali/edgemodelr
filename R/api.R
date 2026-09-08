@@ -3074,6 +3074,388 @@ edge_extract_batch <- function(ctx, texts, schema, instruction = NULL,
 
 
 # ============================================================================
+# Text-to-SQL, narration, and numeric back-verification
+# ============================================================================
+
+#' Generate a SQL query from a natural language question
+#'
+#' Convenience wrapper that constructs a text-to-SQL prompt with the supplied
+#' schema, queries the model, and post-processes the output into a single
+#' executable SQL statement. Optionally executes the query in a DBI connection
+#' and returns both the SQL and its result.
+#'
+#' @param ctx Model context from edge_load_model()
+#' @param question Natural language question (single character string)
+#' @param schema One or more CREATE TABLE statements describing the relevant
+#'   tables. Pass a single string or a character vector — vectors are
+#'   concatenated with newlines. Pre-filter the schema to only the tables that
+#'   are likely relevant to the question; large schemas degrade accuracy.
+#' @param dialect SQL dialect label inserted into the prompt (default "sqlite").
+#'   Examples: "sqlite", "postgresql", "snowflake".
+#' @param examples Optional named list of question -> SQL pairs used as
+#'   few-shot examples (e.g. \code{list("How many subjects?" = "SELECT COUNT(*) FROM ADSL;")}).
+#' @param con Optional DBI connection. When non-NULL the generated SQL is
+#'   executed in a read-only sense using \code{DBI::dbGetQuery}; failures are
+#'   captured rather than re-thrown.
+#' @param n_predict Maximum tokens to generate (default: 256)
+#' @param temperature Sampling temperature (default: 0.1, low for SQL)
+#' @return If \code{con} is NULL, a single character string containing the SQL.
+#'   If \code{con} is supplied, a list with elements \code{sql}, \code{result},
+#'   and \code{error} (NA on success).
+#'
+#' @details
+#' This is a drafting helper, not a sandbox. Always review generated SQL before
+#' executing it against any system of record. Pair this function with a
+#' read-only connection and dedicated validation logic for production use.
+#'
+#' @examples
+#' \dontrun{
+#' ctx <- edge_load_model("sqlcoder-7b-2.Q4_K_M.gguf", n_ctx = 4096L)
+#'
+#' schema <- "
+#' CREATE TABLE ADSL (USUBJID TEXT, AGE INTEGER, SEX TEXT, TRT01A TEXT, SAFFL TEXT);
+#' CREATE TABLE ADAE (USUBJID TEXT, AETERM TEXT, AESER TEXT, AEREL TEXT);
+#' "
+#'
+#' sql <- edge_text_to_sql(ctx,
+#'   "How many subjects on active arm had at least one serious related AE?",
+#'   schema = schema, dialect = "sqlite")
+#' cat(sql)
+#'
+#' # With execution
+#' con <- DBI::dbConnect(RSQLite::SQLite(), "study.db")
+#' out <- edge_text_to_sql(ctx, "Count safety analysis subjects per arm",
+#'                          schema = schema, con = con)
+#' out$sql
+#' out$result
+#' DBI::dbDisconnect(con)
+#' }
+#' @export
+edge_text_to_sql <- function(ctx, question, schema, dialect = "sqlite",
+                              examples = NULL, con = NULL,
+                              n_predict = 256L, temperature = 0.1) {
+  if (!is_valid_model(ctx)) {
+    stop("Invalid model context. Load a model first with edge_load_model()")
+  }
+  if (!is.character(question) || length(question) != 1L || nchar(question) == 0L) {
+    stop("question must be a non-empty single character string")
+  }
+  if (!is.character(schema) || length(schema) == 0L) {
+    stop("schema must be a character vector of one or more CREATE TABLE statements")
+  }
+  if (!is.character(dialect) || length(dialect) != 1L) {
+    stop("dialect must be a single character string")
+  }
+
+  schema_block <- paste(schema, collapse = "\n")
+
+  example_block <- ""
+  if (!is.null(examples)) {
+    if (!is.list(examples) || is.null(names(examples))) {
+      stop("examples must be a named list of question -> SQL pairs")
+    }
+    parts <- character()
+    for (i in seq_along(examples)) {
+      parts <- c(parts,
+        paste0("### Question\n", names(examples)[i],
+               "\n\n### SQL\n", examples[[i]]))
+    }
+    example_block <- paste0(paste(parts, collapse = "\n\n"), "\n\n")
+  }
+
+  prompt <- paste0(
+    "### Task\n",
+    "Generate a ", dialect, " SQL query that answers the question below. ",
+    "Use only the tables and columns defined in the schema. ",
+    "Return a single statement ending with a semicolon.\n\n",
+    "### Database Schema\n", schema_block, "\n\n",
+    example_block,
+    "### Question\n", question, "\n\n",
+    "### SQL\n"
+  )
+
+  raw <- edge_completion(ctx, prompt,
+                          n_predict = n_predict,
+                          temperature = temperature,
+                          top_p = 0.95)
+  sql <- .clean_sql_output(raw)
+
+  if (is.null(con)) {
+    return(sql)
+  }
+
+  if (!requireNamespace("DBI", quietly = TRUE)) {
+    stop("Package 'DBI' is required when 'con' is supplied. Install with install.packages('DBI').")
+  }
+
+  result <- NULL
+  err <- NA_character_
+  tryCatch({
+    result <- DBI::dbGetQuery(con, sql)
+  }, error = function(e) {
+    err <<- conditionMessage(e)
+  })
+
+  list(sql = sql, result = result, error = err)
+}
+
+#' Clean raw model output into an executable SQL statement
+#' @keywords internal
+.clean_sql_output <- function(raw) {
+  if (!is.character(raw) || length(raw) != 1L) return(NA_character_)
+  s <- raw
+  # Strip common ```sql ... ``` fences
+  s <- sub("(?s)^.*?```(?:sql)?\\s*", "", s, perl = TRUE)
+  s <- sub("(?s)```.*$", "", s, perl = TRUE)
+  # Strip trailing model chatter after the first semicolon
+  semi <- regexpr(";", s, fixed = TRUE)
+  if (semi > 0) {
+    s <- substr(s, 1L, semi)
+  } else {
+    # No semicolon: cut at any "### " section header the model echoed
+    s <- sub("\\s*###.*$", "", s)
+    s <- sub("\\s*Explanation.*$", "", s, ignore.case = TRUE)
+    s <- sub("\\s*Note:.*$", "", s, ignore.case = TRUE)
+  }
+  # Drop leading "SQL:" labels the model sometimes emits
+  s <- sub("^\\s*(SQL|Query)\\s*:\\s*", "", s, ignore.case = TRUE)
+  trimws(s)
+}
+
+#' Generate an English narrative from structured data
+#'
+#' Turns a named list, single-row data.frame, or multi-row data.frame into one
+#' or more short English sentences describing the data. The function linearises
+#' the input as labelled "field: value" lines and asks the model to narrate
+#' them without inferring anything that is not in the input.
+#'
+#' @param ctx Model context from edge_load_model()
+#' @param data A named list, a data.frame, or a character vector of pre-formatted
+#'   "field: value" blocks. Multi-row data.frames are processed row-by-row and
+#'   the function returns a character vector of the same length.
+#' @param instruction Optional instruction overriding the default
+#'   ("Write a single short paragraph describing this record. Use only the data
+#'   provided. Do not infer causality or add information.")
+#' @param max_words Soft limit communicated in the prompt (default: 60). Not
+#'   enforced; the model is asked to stay under this.
+#' @param n_predict Maximum tokens to generate per record (default: 200)
+#' @param temperature Sampling temperature (default: 0.3)
+#' @param progress Show progress messages for multi-row inputs (default: TRUE)
+#' @return Character vector of narratives, one per input record.
+#'
+#' @details
+#' This is a drafting helper. For regulated outputs (CSR, ICSR, PV) always run
+#' \code{\link{edge_verify_narrative}} or an equivalent back-check before
+#' surfacing the text to a human reviewer.
+#'
+#' @examples
+#' \dontrun{
+#' ctx <- edge_load_model("Qwen3-1.7B-Q4_K_M.gguf", n_ctx = 2048L)
+#'
+#' lab <- list(
+#'   USUBJID = "ABC-001-042", LBTESTCD = "ALT",
+#'   LBORRES = 285, LBORNRHI = 55,
+#'   LBDY = 28, VISIT = "Week 4", LBNRIND = "HIGH"
+#' )
+#' edge_narrate(ctx, lab)
+#'
+#' # Multi-row data.frame
+#' df <- data.frame(
+#'   subject = c("S001", "S002"),
+#'   alt = c(285, 47),
+#'   uln = c(55, 55),
+#'   flag = c("HIGH", "NORMAL")
+#' )
+#' edge_narrate(ctx, df)
+#' }
+#' @export
+edge_narrate <- function(ctx, data, instruction = NULL, max_words = 60L,
+                          n_predict = 200L, temperature = 0.3,
+                          progress = TRUE) {
+  if (!is_valid_model(ctx)) {
+    stop("Invalid model context. Load a model first with edge_load_model()")
+  }
+  if (is.null(instruction)) {
+    instruction <- paste0(
+      "Write a single short paragraph describing this record. ",
+      "Use only the data provided. Do not infer causality or add information. ",
+      "Stay under ", as.integer(max_words), " words."
+    )
+  }
+
+  records <- .linearise_records(data)
+
+  n <- length(records)
+  out <- character(n)
+  for (i in seq_len(n)) {
+    if (progress && n > 1L) {
+      message(sprintf("[%d/%d] Narrating...", i, n))
+      flush.console()
+    }
+    prompt <- paste0(
+      "### Instruction\n", instruction,
+      "\n\n### Data\n", records[i],
+      "\n\n### Narrative\n"
+    )
+    raw <- edge_completion(ctx, prompt,
+                            n_predict = n_predict,
+                            temperature = temperature,
+                            top_p = 0.95)
+    out[i] <- trimws(raw)
+  }
+  out
+}
+
+#' Linearise a record into a "field: value" block
+#' @keywords internal
+.linearise_records <- function(data) {
+  if (is.character(data)) {
+    return(data)
+  }
+  if (is.data.frame(data)) {
+    out <- character(nrow(data))
+    for (i in seq_len(nrow(data))) {
+      row <- as.list(data[i, , drop = FALSE])
+      out[i] <- .linearise_one(row)
+    }
+    return(out)
+  }
+  if (is.list(data) && !is.null(names(data))) {
+    return(.linearise_one(data))
+  }
+  stop("data must be a named list, a data.frame, or a character vector")
+}
+
+.linearise_one <- function(rec) {
+  nm <- names(rec)
+  vals <- vapply(rec, function(v) {
+    if (is.null(v) || length(v) == 0L) return("(missing)")
+    if (is.na(v[1])) return("(missing)")
+    as.character(v[1])
+  }, character(1))
+  paste(sprintf("- %s: %s", nm, vals), collapse = "\n")
+}
+
+#' Verify a generated narrative against source values
+#'
+#' Numeric and categorical back-check: re-extracts named fields from a
+#' generated narrative using \code{\link{edge_extract}} and compares them to
+#' the source record. Numeric mismatches use a tolerance; text fields are
+#' compared case-insensitively after trimming.
+#'
+#' @param ctx Model context from edge_load_model()
+#' @param narrative Character string produced by \code{\link{edge_narrate}} or
+#'   any other generator.
+#' @param expected Named list of source field values. The names define which
+#'   fields to re-extract from the narrative. Values define the source-of-truth.
+#' @param schema Optional named list overriding the schema passed to
+#'   \code{edge_extract}. If NULL, types are inferred from \code{expected}
+#'   (numeric -> "number", integer -> "integer", logical -> "boolean",
+#'   character -> "string").
+#' @param tolerance Numeric tolerance for number fields (default: 1e-6).
+#'   Values within \code{tolerance} are considered equal.
+#' @param temperature Sampling temperature for re-extraction (default: 0.1)
+#' @return A list with:
+#'   \itemize{
+#'     \item \code{ok}: TRUE if every expected field matches.
+#'     \item \code{extracted}: the parsed extraction (as returned by
+#'           \code{edge_extract}).
+#'     \item \code{expected}: the supplied expected values.
+#'     \item \code{mismatches}: data.frame with one row per failing field.
+#'   }
+#'
+#' @examples
+#' \dontrun{
+#' ctx <- edge_load_model("Qwen3-1.7B-Q4_K_M.gguf", n_ctx = 2048L)
+#'
+#' rec <- list(subject = "S001", alt = 285, uln = 55, study_day = 28)
+#' narrative <- edge_narrate(ctx, rec)
+#' check <- edge_verify_narrative(ctx, narrative, expected = rec)
+#' if (!check$ok) print(check$mismatches)
+#' }
+#' @export
+edge_verify_narrative <- function(ctx, narrative, expected, schema = NULL,
+                                   tolerance = 1e-6, temperature = 0.1) {
+  if (!is_valid_model(ctx)) {
+    stop("Invalid model context. Load a model first with edge_load_model()")
+  }
+  if (!is.character(narrative) || length(narrative) != 1L) {
+    stop("narrative must be a single character string")
+  }
+  if (!is.list(expected) || is.null(names(expected)) || length(expected) == 0L) {
+    stop("expected must be a non-empty named list")
+  }
+
+  if (is.null(schema)) {
+    schema <- lapply(expected, function(v) {
+      if (is.logical(v)) "boolean"
+      else if (is.integer(v)) "integer"
+      else if (is.numeric(v)) "number"
+      else "string"
+    })
+    names(schema) <- names(expected)
+  }
+
+  extracted <- edge_extract(ctx, narrative, schema,
+                             instruction = paste0(
+                               "Re-extract the following fields from the narrative. ",
+                               "Return only values that appear explicitly in the text. ",
+                               "If a field is not present, leave it as a best guess based on the wording."
+                             ),
+                             temperature = temperature)
+
+  mismatches <- list()
+  for (nm in names(expected)) {
+    got <- if (is.list(extracted) && nm %in% names(extracted)) extracted[[nm]] else NA
+    exp <- expected[[nm]]
+    eq <- .field_equal(got, exp, tolerance)
+    if (!isTRUE(eq)) {
+      mismatches[[length(mismatches) + 1L]] <- data.frame(
+        field = nm,
+        expected = .as_display(exp),
+        got = .as_display(got),
+        stringsAsFactors = FALSE
+      )
+    }
+  }
+
+  mismatch_df <- if (length(mismatches) > 0L) {
+    do.call(rbind, mismatches)
+  } else {
+    data.frame(field = character(), expected = character(),
+               got = character(), stringsAsFactors = FALSE)
+  }
+
+  list(
+    ok = nrow(mismatch_df) == 0L,
+    extracted = extracted,
+    expected = expected,
+    mismatches = mismatch_df
+  )
+}
+
+.field_equal <- function(got, exp, tolerance) {
+  if (length(got) == 0L || (length(got) == 1L && is.na(got))) return(FALSE)
+  if (is.logical(exp)) {
+    return(isTRUE(as.logical(got) == exp))
+  }
+  if (is.numeric(exp)) {
+    g <- suppressWarnings(as.numeric(got))
+    if (is.na(g)) return(FALSE)
+    return(abs(g - exp) <= tolerance)
+  }
+  identical(tolower(trimws(as.character(got))),
+            tolower(trimws(as.character(exp))))
+}
+
+.as_display <- function(v) {
+  if (length(v) == 0L) return("(empty)")
+  if (is.na(v[1])) return("(NA)")
+  as.character(v[1])
+}
+
+
+# ============================================================================
 # RAG (Retrieval-Augmented Generation) Pipeline
 # ============================================================================
 
