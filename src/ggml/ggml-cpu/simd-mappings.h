@@ -16,7 +16,7 @@
 
 #if defined(__riscv_v_intrinsic)
 #include <riscv_vector.h>
-#include <cstring>
+#include <string.h>
 #endif
 
 #ifdef __cplusplus

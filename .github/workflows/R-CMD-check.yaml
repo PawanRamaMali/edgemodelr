@@ -262,7 +262,19 @@ jobs:
           find . -name '*.cpp'             | grep -vE 'bindings\.cpp|RcppExports\.cpp|simd_info\.cpp'             | sort > /tmp/units
           echo "translation units: $(wc -l < /tmp/units)"
 
+          # The C sources matter here too. A C++ header such as <cstring>
+          # included from a .c file is accepted by MinGW gcc and rejected by
+          # clang, so a Windows build cannot catch that mismatch at all.
+          find . -name '*.c' | sort > /tmp/cunits
+          echo "C translation units: $(wc -l < /tmp/cunits)"
+          : > /tmp/cerr
+          xargs -P 4 -I@ sh -c             "clang -std=gnu11 -O2 -Wall $CPPF -fno-builtin-printf -fsyntax-only @ 2>&1"             < /tmp/cunits > /tmp/cerr 2>&1 || true
+          cn=$(grep -c 'error:' /tmp/cerr || true)
+          echo "C errors: $cn"
+          if [ "$cn" != "0" ]; then grep 'error:' /tmp/cerr | head -20; fi
+
           fail=0
+          if [ "$cn" != "0" ]; then fail=1; fi
           for std in gnu++17 gnu++20; do
             echo "=== -std=$std ==="
             : > /tmp/err
