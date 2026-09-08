@@ -1,0 +1,33 @@
+# Large build artifacts
+*.Rcheck/
+*.tar.gz
+**/*.o
+**/*.dll
+**/*.so
+**/*.dylib
+
+# Model cache (never bake host models into image accidentally)
+inst/cache/
+~/.cache/
+
+# Dev/test files
+test_*.R
+.Rhistory
+.RData
+.Ruserdata
+err.txt
+out.txt
+_backup/
+
+# IDE / editor
+.Rproj.user/
+*.Rproj
+.claude/
+
+# Git
+.git/
+.github/
+
+# Python
+__pycache__/
+*.py

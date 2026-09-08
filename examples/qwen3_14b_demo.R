@@ -180,7 +180,7 @@ cat("\n\n")
 # =============================================================================
 section("Step 6: Benchmark (128 tokens)")
 
-bm <- edge_benchmark(ctx, n_tokens = 128L)
+bm <- edge_benchmark(ctx, n_predict = 128L)
 cat(sprintf("Prompt eval : %.1f tok/s\n", bm$prompt_tps))
 cat(sprintf("Generation  : %.1f tok/s\n", bm$gen_tps))
 

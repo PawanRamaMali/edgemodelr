@@ -1,0 +1,54 @@
+# =============================================================================
+# edgemodelr — TinyLlama-1.1B preloaded image
+#
+# Extends the base image with TinyLlama-1.1B-Chat Q4_K_M (~700 MB) baked in.
+# Pull and run immediately — no separate model download required.
+#
+# Total image size: ~1.5 GB
+#
+# Build:
+#   docker build -f docker/Dockerfile.tinyllama -t edgemodelr-tinyllama .
+#
+# Run interactive R (model already in cache):
+#   docker run --rm -it edgemodelr-tinyllama
+#
+# Quick one-liner inference:
+#   docker run --rm edgemodelr-tinyllama Rscript -e "
+#     library(edgemodelr)
+#     ctx <- edge_quick_setup('TinyLlama-1.1B')\$context
+#     cat(edge_completion(ctx, 'The capital of France is', n_predict = 10L))
+#   "
+# =============================================================================
+
+FROM edgemodelr
+
+LABEL org.opencontainers.image.title="edgemodelr-tinyllama"
+LABEL org.opencontainers.image.description="Local LLM inference in R — TinyLlama-1.1B-Chat preloaded"
+
+# ── Download TinyLlama at build time ─────────────────────────────────────────
+# Model is stored in /root/.cache/R/edgemodelr/ inside the image.
+# The VOLUME declaration in the base image is intentionally NOT inherited here
+# so the baked-in model is available without a mount.
+RUN Rscript -e "\
+  library(edgemodelr); \
+  message('Downloading TinyLlama-1.1B-Chat Q4_K_M (~700 MB)...'); \
+  path <- edge_download_model( \
+    model_id = 'TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF', \
+    filename = 'tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf' \
+  ); \
+  message('Model saved to: ', path)"
+
+# ── Smoke test — load and free (verifies the model file is intact) ────────────
+RUN Rscript -e "\
+  library(edgemodelr); \
+  ctx <- edge_load_model( \
+    list.files(tools::R_user_dir('edgemodelr', 'cache'), \
+               pattern = 'tinyllama.*\\\\.gguf', full.names = TRUE)[1] \
+  ); \
+  stopifnot(is_valid_model(ctx)); \
+  edge_free_model(ctx); \
+  message('Smoke test passed.')"
+
+WORKDIR /workspace
+
+CMD ["R"]
