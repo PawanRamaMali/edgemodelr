@@ -14,7 +14,7 @@ llama/llama-model-loader.cpp:512:9: error: use of undeclared identifier 'getenv'
 llama/llama-vocab.cpp:2732:20: error: use of undeclared identifier 'strtol'
 ```
 
-All three files now include `<cstdlib>`.
+These files now include `<cstdlib>`.
 
 Rather than patch only the reported lines, every file in `src/` was
 audited for the same defect: for each translation unit and header, the
@@ -112,11 +112,16 @@ are unchanged and both are inherent to the bundled inference engine.
 All 161 C++ and 6 C translation units were additionally compiled under
 both `-std=gnu++17` and `-std=gnu++20`.
 
-No hosted CI image provides clang 23 or MacOSX11.sdk, so neither
-reported configuration can be reproduced directly. The missing includes
-were instead found and confirmed absent by the tree-wide audit described
-above, which is repeatable and covers every file rather than only those
-a build happened to reach before stopping.
+The whole package was additionally compiled against libc++ using clang
+22.1.8 in a container, under both `-std=gnu++17` and `-std=gnu++20`:
+161 of 161 translation units, no errors. libc++ is the standard library
+whose removal of transitive includes produced the reported failures, and
+it is not available in any hosted CI image, so this was the only way to
+test rather than infer. It is now the check we run before any
+resubmission or upstream resync.
+
+MacOSX11.sdk remains unavailable anywhere, so the C++ standard pin
+described above is what covers that configuration.
 
 ### Third-party code
 
