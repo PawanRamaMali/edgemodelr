@@ -325,8 +325,7 @@ std::string edge_completion_internal(SEXP model_ptr, std::string prompt, int n_p
         continue;
       }
       
-      // Accept the token for sampling history
-      llama_sampler_accept(sampler, new_token);
+      // llama_sampler_sample already called accept — do not call it again.
 
       // Prepare next batch with the new token
       batch = llama_batch_get_one(&new_token, 1);
@@ -507,8 +506,7 @@ List edge_completion_stream_internal(SEXP model_ptr, std::string prompt, Functio
         continue;
       }
 
-      // Accept the token for sampling history
-      llama_sampler_accept(sampler, new_token);
+      // llama_sampler_sample already called accept — do not call it again.
 
       // Prepare next batch with the new token
       batch = llama_batch_get_one(&new_token, 1);
@@ -519,7 +517,7 @@ List edge_completion_stream_internal(SEXP model_ptr, std::string prompt, Functio
         break;
       }
     }
-    
+
     // Send final callback
     try {
       List final_callback_data = List::create(
@@ -620,6 +618,8 @@ std::string edge_completion_grammar_internal(SEXP model_ptr, std::string prompt,
     result.reserve(n_predict * 8);
 
     for (int i = 0; i < n_predict; ++i) {
+      // llama_sampler_sample applies constraints, selects a token, AND calls
+      // llama_sampler_accept internally — do NOT call accept again afterward.
       llama_token new_token = llama_sampler_sample(sampler, edge_ctx->ctx, -1);
 
       if (llama_vocab_is_eog(vocab, new_token)) break;
@@ -634,13 +634,6 @@ std::string edge_completion_grammar_internal(SEXP model_ptr, std::string prompt,
         result.append(piece.data(), n_chars);
       }
 
-      try {
-        llama_sampler_accept(sampler, new_token);
-      } catch (const std::exception &) {
-        // Grammar fully satisfied by this token — no further tokens are allowed.
-        // The token's text is already in `result`; stop generating cleanly.
-        break;
-      }
       batch = llama_batch_get_one(&new_token, 1);
       if (llama_decode(edge_ctx->ctx, batch)) break;
     }
