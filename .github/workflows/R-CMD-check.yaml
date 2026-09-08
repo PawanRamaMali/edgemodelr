@@ -233,6 +233,49 @@ jobs:
             *.Rcheck
             *.log
 
+  libcxx:
+    runs-on: ubuntu-latest
+
+    name: libc++ (clang)
+
+    # The bundled llama.cpp and GGML sources are compiled against libc++
+    # rather than libstdc++. libc++ does not provide the transitive includes
+    # that libstdc++ does, so a header a file uses but never includes is an
+    # error here and silently fine everywhere else in this matrix. Two CRAN
+    # rejections came from exactly that, on clang and on fedora-clang, and no
+    # other job in this workflow can catch it.
+    container: silkeh/clang:latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compile every translation unit against libc++
+        run: |
+          set -e
+          cd src
+          CPPF="-I../inst/include -I./llama -I./llama/models -I./ggml -I./ggml/ggml-cpu"
+          CPPF="$CPPF -DUSING_R=1 -DGGML_BUILD_FOR_R -DNDEBUG -DGGML_USE_CPU -DGGML_CPU_GENERIC"
+
+          # bindings.cpp, RcppExports.cpp and simd_info.cpp need R and Rcpp
+          # headers, which are not in this image. They are covered by every
+          # other job in the matrix.
+          find . -name '*.cpp'             | grep -vE 'bindings\.cpp|RcppExports\.cpp|simd_info\.cpp'             | sort > /tmp/units
+          echo "translation units: $(wc -l < /tmp/units)"
+
+          fail=0
+          for std in gnu++17 gnu++20; do
+            echo "=== -std=$std ==="
+            : > /tmp/err
+            xargs -P 4 -I@ sh -c               "clang++ -stdlib=libc++ -std=$std -O2 -Wall $CPPF -fsyntax-only @ 2>&1"               < /tmp/units > /tmp/err 2>&1 || true
+            n=$(grep -c 'error:' /tmp/err || true)
+            echo "errors: $n"
+            if [ "$n" != "0" ]; then
+              grep 'error:' /tmp/err | head -40
+              fail=1
+            fi
+          done
+          exit $fail
+
   CRAN-strict-macos:
     needs: R-CMD-check
     runs-on: macos-latest
