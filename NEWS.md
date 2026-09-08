@@ -1,3 +1,20 @@
+# edgemodelr 0.4.4
+
+## CRAN clang23 fixes
+
+* **Loading a file that is not GGUF crashed the R session.** The bundled
+  loader is not hardened against arbitrary input, and on clang 23 a plain
+  text file made it read unmapped memory rather than return null, taking
+  the session down. `edge_load_model()` now checks for the GGUF magic
+  header before calling the loader and raises a normal R error instead.
+  The crash was reachable in every earlier release; it only surfaced now
+  because 0.4.1 failed to install on clang 23, so its tests never ran.
+
+* **`-Wkeyword-macro` in `ggml/ggml-common.h`.** C23 made `static_assert`
+  a keyword, and the header defined a macro over it. Valid C, but clang 23
+  warns and R CMD check counts that as a significant warning. The macro is
+  now skipped when the compiler is C23 or later.
+
 # edgemodelr 0.4.3
 
 ## CRAN Feedback Fixes
