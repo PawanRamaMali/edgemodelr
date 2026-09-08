@@ -233,6 +233,80 @@ jobs:
             *.Rcheck
             *.log
 
+  libcxx:
+    runs-on: ubuntu-latest
+
+    name: libc++ (clang)
+
+    # The bundled llama.cpp and GGML sources are compiled against libc++
+    # rather than libstdc++. libc++ does not provide the transitive includes
+    # that libstdc++ does, so a header a file uses but never includes is an
+    # error here and silently fine everywhere else in this matrix. Two CRAN
+    # rejections came from exactly that, on clang and on fedora-clang, and no
+    # other job in this workflow can catch it.
+    container: silkeh/clang:latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compile every translation unit against libc++
+        run: |
+          set -e
+          cd src
+          CPPF="-I../inst/include -I./llama -I./llama/models -I./ggml -I./ggml/ggml-cpu"
+          CPPF="$CPPF -DUSING_R=1 -DGGML_BUILD_FOR_R -DNDEBUG -DGGML_USE_CPU -DGGML_CPU_GENERIC"
+
+          # bindings.cpp, RcppExports.cpp and simd_info.cpp need R and Rcpp
+          # headers, which are not in this image. They are covered by every
+          # other job in the matrix.
+          find . -name '*.cpp'             | grep -vE 'bindings\.cpp|RcppExports\.cpp|simd_info\.cpp'             | sort > /tmp/units
+          echo "translation units: $(wc -l < /tmp/units)"
+
+          # The C sources matter here too. A C++ header such as <cstring>
+          # included from a .c file is accepted by MinGW gcc and rejected by
+          # clang, so a Windows build cannot catch that mismatch at all.
+          find . -name '*.c' | sort > /tmp/cunits
+          echo "C translation units: $(wc -l < /tmp/cunits)"
+          # CRAN's clang23 machine builds the C sources with -std=gnu23, where
+          # static_assert is a keyword rather than a macro. Checking only an
+          # older dialect hides that whole class, so cover both, and treat
+          # warnings as failures since R CMD check promotes some of them to
+          # significant warnings, which is a rejection.
+          cn=0
+          for cstd in gnu17 gnu23; do
+            echo "=== C, -std=$cstd ==="
+            : > /tmp/cerr
+            xargs -P 4 -I@ sh -c               "clang -std=$cstd -O2 -Wall $CPPF -fno-builtin-printf -fsyntax-only @ 2>&1"               < /tmp/cunits > /tmp/cerr 2>&1 || true
+            e=$(grep -c 'error:' /tmp/cerr || true)
+            w=$(grep -c 'warning:' /tmp/cerr || true)
+            # Only some warning classes are promoted to significant warnings by
+            # R CMD check, and those are the ones that get a release rejected.
+            # -Wunused-function and friends are noise from the vendored engine.
+            sig=$(grep -cE '\[-W(keyword-macro|array-bounds|stringop-overflow|stringop-truncation|uninitialized|maybe-uninitialized|format|return-type|restrict|nonnull|use-after-free|dangling|implicit-function-declaration|incompatible-pointer-types|int-conversion|sizeof-array-argument|memset-transposed-args)' /tmp/cerr || true)
+            echo "errors: $e  warnings: $w  significant: $sig"
+            if [ "$e" != "0" ]; then grep 'error:' /tmp/cerr | head -20; cn=1; fi
+            if [ "$sig" != "0" ]; then
+              echo "significant warnings:"
+              grep -E '\[-W(keyword-macro|array-bounds|stringop-overflow|uninitialized|format|return-type|restrict|nonnull|use-after-free|dangling|implicit-function-declaration)' /tmp/cerr | head -20
+              cn=1
+            fi
+          done
+
+          fail=0
+          if [ "$cn" != "0" ]; then fail=1; fi
+          for std in gnu++17 gnu++20; do
+            echo "=== -std=$std ==="
+            : > /tmp/err
+            xargs -P 4 -I@ sh -c               "clang++ -stdlib=libc++ -std=$std -O2 -Wall $CPPF -fsyntax-only @ 2>&1"               < /tmp/units > /tmp/err 2>&1 || true
+            n=$(grep -c 'error:' /tmp/err || true)
+            echo "errors: $n"
+            if [ "$n" != "0" ]; then
+              grep 'error:' /tmp/err | head -40
+              fail=1
+            fi
+          done
+          exit $fail
+
   CRAN-strict-macos:
     needs: R-CMD-check
     runs-on: macos-latest

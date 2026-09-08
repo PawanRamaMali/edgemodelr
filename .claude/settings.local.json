@@ -1,0 +1,23 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:cran.r-project.org)",
+      "Bash(R CMD build:*)",
+      "Bash(R CMD check:*)",
+      "Bash(cat:*)",
+      "WebFetch(domain:www.stats.ox.ac.uk)",
+      "Bash(R CMD INSTALL:*)",
+      "Bash(tee:*)",
+      "WebFetch(domain:win-builder.r-project.org)",
+      "Bash(tar:*)",
+      "Bash(make:*)",
+      "Bash(git restore:*)",
+      "WebFetch(domain:github.com)",
+      "Bash(gh run view:*)",
+      "Bash(gh run list:*)",
+      "Bash(curl -s \"https://api.github.com/repos/PawanRamaMali/edgemodelr/actions/runs/18200247923/jobs\")"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
