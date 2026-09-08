@@ -113,41 +113,92 @@ if (length(models_info$models) > 0) {
 
 ## 📚 Core API Reference
 
-### Model Management
+### Model management
 
 | Function | Description |
 |----------|-------------|
-| `edge_load_model(path, n_ctx, n_gpu_layers)` | Load a GGUF model for inference |
+| `edge_load_model(path, n_ctx, n_gpu_layers, n_threads, flash_attn, embeddings)` | Load a GGUF model |
 | `edge_free_model(ctx)` | Release model memory |
-| `is_valid_model(ctx)` | Check if model context is valid |
-| `edge_quick_setup(model_name)` | One-line model download and setup |
-| `edge_cache_info()` | View cache size and file count |
-| `edge_clean_cache()` | Clean old/large cached model files |
+| `is_valid_model(ctx)` | Check whether a context is still usable |
+| `edge_quick_setup(model_name)` | Download and load in one call |
+| `edge_cache_info()` | Cache size and file count |
+| `edge_clean_cache()` | Remove old or oversized cached models |
 
-### Text Generation
+### Text generation
 
 | Function | Description |
 |----------|-------------|
-| `edge_completion(ctx, prompt, n_predict, temperature, top_p)` | Generate text completion |
-| `edge_stream_completion(ctx, prompt, callback, ...)` | Stream tokens in real-time |
+| `edge_completion(ctx, prompt, n_predict, temperature, top_p)` | Generate a completion |
+| `edge_stream_completion(ctx, prompt, callback, ...)` | Stream tokens as they arrive |
+| `edge_chat_completion(ctx, messages, ...)` | Chat using the model's own template |
 | `edge_chat_stream(ctx, system_prompt, max_history, ...)` | Interactive chat session |
+| `build_chat_prompt(messages, ctx)` | Render messages with the model template |
 
-### Model Discovery & Download
+### Structured output
 
-| Function | Description |
-|----------|-------------|
-| `edge_find_gguf_models(source_dirs, model_pattern, ...)` | Find existing GGUF models |
-| `edge_list_models()` | List pre-configured popular models |
-| `edge_download_model(model_id, filename)` | Download from HuggingFace |
-| `edge_download_url(url, filename)` | Download from any direct URL (GPT4All, etc.) |
-
-### Performance Optimization
+Grammar constrained decoding, so the model cannot emit anything outside the
+shape you asked for.
 
 | Function | Description |
 |----------|-------------|
-| `edge_small_model_config(model_size_mb, available_ram_gb, target)` | Get optimized settings for small models |
-| `edge_benchmark(ctx, prompt, n_predict, iterations)` | Benchmark model performance |
-| `edge_set_verbose(enabled)` | Control logging verbosity |
+| `edge_grammar_completion(ctx, prompt, grammar, n_predict)` | Generate under a GBNF grammar |
+| `edge_json_grammar(schema)` | Build a GBNF grammar from a field schema |
+| `edge_extract(ctx, text, schema)` | Pull named fields out of text as a list |
+| `edge_extract_batch(ctx, texts, schema)` | The same over a vector, returning a data frame |
+| `edge_classify(ctx, text, categories)` | Label text with one of a fixed set |
+| `edge_map(ctx, x, prompt_template, ...)` | Apply a prompt across a vector |
+
+### Embeddings and retrieval
+
+| Function | Description |
+|----------|-------------|
+| `edge_embeddings(ctx, texts)` | Embedding matrix, needs a model loaded with `embeddings = TRUE` |
+| `edge_model_n_embd(ctx)` | Embedding dimension |
+| `edge_similarity(a, b)` | Cosine similarity between two vectors |
+| `edge_similarity_matrix(m)` | Pairwise similarity across rows |
+| `edge_index_documents(ctx, docs, chunk_size, overlap, normalize)` | Chunk and embed a corpus |
+| `edge_search(index, ctx, query, top_k)` | Retrieve the closest chunks |
+| `edge_ask(index, ctx, question, top_k, ...)` | Retrieve then answer, a small RAG loop |
+
+### Tabular and narrative helpers
+
+These need a capable model. Small general purpose models will produce valid
+SQL that answers a different question, and narratives that restate the input
+instead of summarising it.
+
+| Function | Description |
+|----------|-------------|
+| `edge_text_to_sql(ctx, question, schema, dialect, con, ...)` | Question plus schema to SQL, optionally executed through a DBI connection |
+| `edge_narrate(ctx, data, instruction, max_words, ...)` | Short English summary of a record, a row, or a data frame |
+| `edge_verify_narrative(ctx, narrative, expected, ...)` | Re-extract fields from a narrative and compare them to the source values |
+
+### Serving
+
+| Function | Description |
+|----------|-------------|
+| `edge_serve(ctx, port, host, ...)` | OpenAI shaped local endpoint via plumber |
+
+### Model discovery and download
+
+| Function | Description |
+|----------|-------------|
+| `edge_find_gguf_models(source_dirs, model_pattern, ...)` | Find GGUF files already on disk |
+| `edge_find_ollama_models()` | List models in an Ollama install |
+| `edge_load_ollama_model(name, ...)` | Load an Ollama blob directly |
+| `edge_list_models()` | Pre-configured model aliases |
+| `edge_download_model(model_id, filename)` | Download from Hugging Face |
+| `edge_download_url(url, filename)` | Download from any direct URL |
+
+### Performance and hardware
+
+| Function | Description |
+|----------|-------------|
+| `edge_small_model_config(model_size_mb, available_ram_gb, target)` | Suggested settings for a small model |
+| `edge_benchmark(ctx, prompt, n_predict, iterations)` | Time generation |
+| `edge_simd_info()` | Which SIMD path the installed build uses |
+| `edge_set_verbose(enabled)` | Control engine logging |
+| `edge_cuda_info()` | CUDA runtime status, Windows |
+| `edge_install_cuda()`, `edge_install_cuda_toolkit()`, `edge_reload_cuda()` | CUDA setup helpers, Windows |
 
 Cache options:
 
@@ -268,7 +319,7 @@ print(sentiment_results)
 library(edgemodelr)
 
 # R programming helper
-setup <- edge_quick_setup("CodeLlama-7B")
+setup <- edge_quick_setup("starcoder")
 ctx <- setup$context
 
 code_prompt <- "Create an R function to calculate correlation matrix with p-values:"
