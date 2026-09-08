@@ -11,6 +11,8 @@
 #include <algorithm>
 #include <cfloat>
 #include <cmath>
+#include <cassert>
+#include <cstring>
 
 // ggml_compute_forward_dup
 

@@ -10,6 +10,7 @@
 #include <vector>
 #include <sstream>
 #include <utility>
+#include <cstdio>
 
 struct llama_logger_state {
     ggml_log_callback log_callback = llama_log_callback_default;

@@ -17,6 +17,7 @@
 #include <sstream>
 #include <unordered_set>
 #include <algorithm>
+#include <cstdlib>
 
 // dedup helpers
 

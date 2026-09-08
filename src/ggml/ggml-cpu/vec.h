@@ -9,6 +9,7 @@
 
 #if defined(GGML_USE_ACCELERATE)
 #include <Accelerate/Accelerate.h>
+#include <cstring>
 #endif
 
 // floating point type used to accumulate sums

@@ -11,6 +11,7 @@
 #include <bitset>
 #include <array>
 #include <string>
+#include <cstdio>
 
 // ref: https://cdrdv2-public.intel.com/782156/325383-sdm-vol-2abcd.pdf
 struct cpuid_x86 {
