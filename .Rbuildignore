@@ -27,9 +27,7 @@
 ^err\.txt$
 ^out\.txt$
 ^update_llama\.py$
-<<<<<<< HEAD
 ^functional_test\.R$
 ^.*\.log$
-=======
 ^docker$
->>>>>>> origin/feature/docker-preloaded-models
+^\.dockerignore$
