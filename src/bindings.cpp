@@ -7,6 +7,7 @@
 #include <thread>
 #include <cstdio>
 #include <fstream>
+#include <algorithm>
 
 #include "llama.h"
 #include "ggml-backend.h"

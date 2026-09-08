@@ -8,6 +8,7 @@
 #include "llama-vocab.h"
 
 #include <string>
+#include <type_traits>
 
 llama_model_saver::llama_model_saver(const struct llama_model & model) : model(model), llm_kv(model.arch) {
     gguf_ctx = gguf_init_empty();

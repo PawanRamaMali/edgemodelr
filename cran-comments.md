@@ -20,7 +20,22 @@ Rather than patch only the reported lines, every file in `src/` was
 audited for the same defect: for each translation unit and header, the
 set of standard headers reachable through its own includes and through
 the package's local headers was computed, and the file body was scanned
-for C library symbols that set does not cover.
+for symbols that set does not cover.
+
+The audit was run twice. The first pass covered the C headers and found
+the files above. The second pass covered the C++ standard library, on
+the grounds that the libc++ change behind these failures removes
+transitive includes of C++ headers as well, and found 38 further
+omissions across 26 files: `std::min`, `std::max` and `std::copy`
+without `<algorithm>`; `std::advance`, `std::distance` and `std::begin`
+without `<iterator>`; `std::is_same` and `std::enable_if` without
+`<type_traits>`; `std::move` and `std::pair` without `<utility>`; plus
+`std::unique_ptr`, `std::out_of_range`, `std::array`, and
+`isspace`/`toupper` without `<memory>`, `<stdexcept>`, `<array>` and
+`<cctype>` respectively. Each was checked against the source line to
+confirm it is a genuine use. All build under libstdc++, which supplies
+these declarations transitively, and so would not have been caught by
+any test environment available here.
 
 That audit found a fourth file, `llama/llama-batch.cpp`, which calls
 `getenv`, `atoi`, `malloc` and `free` with no `<cstdlib>` in scope. It
@@ -28,7 +43,7 @@ did not appear in the compiler report because the build stopped at
 `llama-mmap.cpp` before reaching it. It would have failed this
 resubmission had it not been fixed.
 
-The audit reports five remaining hits, all verified by hand to be false
+The audit reports seven remaining hits, all verified by hand to be false
 positives rather than defects:
 
 * `ggml-backend-impl.h`, `ggml-backend.h`, `llama.h`: `free` appears as a
@@ -38,6 +53,9 @@ positives rather than defects:
   `-DNDEBUG`.
 * `unicode.cpp`: `fprintf` appears inside `#ifndef USING_R`; the package
   always compiles with `-DUSING_R=1`.
+* `RcppExports.cpp`: `std::string` and `std::vector` come from `<Rcpp.h>`,
+  which the audit does not traverse. The file is generated and is left
+  exactly as `Rcpp::compileAttributes()` writes it.
 
 ### 2. CFLAGS and CXXFLAGS in subdirectory compilations
 

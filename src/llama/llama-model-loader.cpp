@@ -8,6 +8,7 @@
 #include <cstring>
 #include <cstdlib>
 #include <future>
+#include <type_traits>
 
 static const size_t kiB = 1024;
 static const size_t MiB = 1024*kiB;

@@ -21,6 +21,7 @@
 #include <queue>
 #include <set>
 #include <unordered_map>
+#include <iterator>
 
 //
 // helpers

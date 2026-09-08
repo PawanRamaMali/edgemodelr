@@ -19,6 +19,7 @@
 #include <random>
 #include <unordered_map>
 #include <stdexcept>
+#include <iterator>
 
 // the ring buffer works similarly to std::deque, but with a fixed capacity
 template<typename T>

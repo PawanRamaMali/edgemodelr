@@ -1,4 +1,6 @@
 #include "models.h"
+#include <algorithm>
+#include <iterator>
 
 
 

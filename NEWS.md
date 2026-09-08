@@ -12,6 +12,17 @@
   stopped before reaching it; it was found by auditing every file in
   `src/` for this defect rather than by patching the reported lines.
 
+* **38 further missing standard includes across 26 files**: the first audit
+  covered only the C headers (`<cstdlib>`, `<cstring>` and so on), but the
+  libc++ change behind the clang 23 failures removes transitive includes of
+  C++ headers too. A second audit covering the C++ standard library found
+  `std::min`, `std::copy`, `std::advance`, `std::distance`, `std::unique_ptr`,
+  `std::is_same`, `std::out_of_range`, `std::array`, `std::pair`, `std::move`
+  and `isspace`/`toupper` used in files that never included `<algorithm>`,
+  `<iterator>`, `<memory>`, `<type_traits>`, `<stdexcept>`, `<array>`,
+  `<utility>` or `<cctype>`. These build under libstdc++, which supplies the
+  declarations transitively, and would have failed under libc++.
+
 * **False `-Warray-bounds` in `llama-grammar.cpp`**: with optimisation and
   `-Wall` now applied to the vendored sources, GCC 12 and later reported a
   false positive against a zero-length array when
