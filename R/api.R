@@ -2193,10 +2193,10 @@ edge_install_cuda <- function(cuda_version = "13.1",
 #' The CUDA backend (`ggml-cuda-XX.dll`) requires two sets of runtime DLLs
 #' that are **not** included with the NVIDIA display driver:
 #' \itemize{
-#'   \item \strong{nvcudart_hybrid64.dll} — CUDA hybrid runtime, already
+#'   \item \strong{nvcudart_hybrid64.dll}: CUDA hybrid runtime, already
 #'         present on your system in the Windows DriverStore (installed with
 #'         the GPU driver). This function copies it to the edgemodelr cache.
-#'   \item \strong{cublas64_13.dll / cublasLt64_13.dll} — cuBLAS linear-algebra
+#'   \item \strong{cublas64_13.dll / cublasLt64_13.dll}: cuBLAS linear-algebra
 #'         library (~400 MB download from NVIDIA's official redistrib server).
 #' }
 #'
@@ -3087,7 +3087,7 @@ edge_extract_batch <- function(ctx, texts, schema, instruction = NULL,
 #' @param ctx Model context from edge_load_model()
 #' @param question Natural language question (single character string)
 #' @param schema One or more CREATE TABLE statements describing the relevant
-#'   tables. Pass a single string or a character vector — vectors are
+#'   tables. Pass a single string or a character vector: vectors are
 #'   concatenated with newlines. Pre-filter the schema to only the tables that
 #'   are likely relevant to the question; large schemas degrade accuracy.
 #' @param dialect SQL dialect label inserted into the prompt (default "sqlite").
@@ -3107,6 +3107,11 @@ edge_extract_batch <- function(ctx, texts, schema, instruction = NULL,
 #' This is a drafting helper, not a sandbox. Always review generated SQL before
 #' executing it against any system of record. Pair this function with a
 #' read-only connection and dedicated validation logic for production use.
+#'
+#' Output quality depends heavily on the model. Small general purpose models
+#' often produce syntactically valid SQL that answers a different question than
+#' the one asked. Use a model fine tuned for SQL, or a general model of at least
+#' 7B parameters, and review every statement before running it.
 #'
 #' @examples
 #' \dontrun{
@@ -3248,6 +3253,10 @@ edge_text_to_sql <- function(ctx, question, schema, dialect = "sqlite",
 #' \code{\link{edge_verify_narrative}} or an equivalent back-check before
 #' surfacing the text to a human reviewer.
 #'
+#' Output quality depends heavily on the model. Small models tend to restate the
+#' input fields rather than summarise them. A model of at least 7B parameters
+#' gives noticeably better narratives.
+#'
 #' @examples
 #' \dontrun{
 #' ctx <- edge_load_model("Qwen3-1.7B-Q4_K_M.gguf", n_ctx = 2048L)
@@ -3363,6 +3372,12 @@ edge_narrate <- function(ctx, data, instruction = NULL, max_words = 60L,
 #'     \item \code{expected}: the supplied expected values.
 #'     \item \code{mismatches}: data.frame with one row per failing field.
 #'   }
+#'
+#' @details
+#' This check re-extracts the fields with the model, so it inherits the model's
+#' limitations. A small model can miss a field that is present and report a
+#' mismatch that is not real. Treat a failed check as a reason to look rather
+#' than as proof of an error, and use a capable model where the result matters.
 #'
 #' @examples
 #' \dontrun{
@@ -3822,11 +3837,11 @@ print.edge_index <- function(x, ...) {
 #' @details
 #' Endpoints served:
 #' \itemize{
-#'   \item \code{POST /v1/completions} — Text completion
-#'   \item \code{POST /v1/chat/completions} — Chat completion (uses model's native template)
-#'   \item \code{POST /v1/embeddings} — Text embeddings (if \code{embeddings = TRUE})
-#'   \item \code{GET /v1/models} — List loaded model info
-#'   \item \code{GET /health} — Health check
+#'   \item \code{POST /v1/completions}: Text completion
+#'   \item \code{POST /v1/chat/completions}: Chat completion (uses model's native template)
+#'   \item \code{POST /v1/embeddings}: Text embeddings (if \code{embeddings = TRUE})
+#'   \item \code{GET /v1/models}: List loaded model info
+#'   \item \code{GET /health}: Health check
 #' }
 #'
 #' The server runs in the foreground. Press Ctrl+C / Esc to stop.

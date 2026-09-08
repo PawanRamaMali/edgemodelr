@@ -21,7 +21,7 @@ edge_text_to_sql(
 \item{question}{Natural language question (single character string)}
 
 \item{schema}{One or more CREATE TABLE statements describing the relevant
-tables. Pass a single string or a character vector — vectors are
+tables. Pass a single string or a character vector: vectors are
 concatenated with newlines. Pre-filter the schema to only the tables that
 are likely relevant to the question; large schemas degrade accuracy.}
 
@@ -54,6 +54,11 @@ and returns both the SQL and its result.
 This is a drafting helper, not a sandbox. Always review generated SQL before
 executing it against any system of record. Pair this function with a
 read-only connection and dedicated validation logic for production use.
+
+Output quality depends heavily on the model. Small general purpose models
+often produce syntactically valid SQL that answers a different question than
+the one asked. Use a model fine tuned for SQL, or a general model of at least
+7B parameters, and review every statement before running it.
 }
 \examples{
 \dontrun{

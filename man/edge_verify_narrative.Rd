@@ -48,6 +48,12 @@ generated narrative using \code{\link{edge_extract}} and compares them to
 the source record. Numeric mismatches use a tolerance; text fields are
 compared case-insensitively after trimming.
 }
+\details{
+This check re-extracts the fields with the model, so it inherits the model's
+limitations. A small model can miss a field that is present and report a
+mismatch that is not real. Treat a failed check as a reason to look rather
+than as proof of an error, and use a capable model where the result matters.
+}
 \examples{
 \dontrun{
 ctx <- edge_load_model("Qwen3-1.7B-Q4_K_M.gguf", n_ctx = 2048L)

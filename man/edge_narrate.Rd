@@ -47,6 +47,10 @@ them without inferring anything that is not in the input.
 This is a drafting helper. For regulated outputs (CSR, ICSR, PV) always run
 \code{\link{edge_verify_narrative}} or an equivalent back-check before
 surfacing the text to a human reviewer.
+
+Output quality depends heavily on the model. Small models tend to restate the
+input fields rather than summarise them. A model of at least 7B parameters
+gives noticeably better narratives.
 }
 \examples{
 \dontrun{
