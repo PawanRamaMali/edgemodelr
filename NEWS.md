@@ -27,6 +27,19 @@ rather than summarise it. The reference pages say so.
   before calling the loader and raises a normal R error instead. The crash
   was reachable in every earlier release.
 
+* **Every completion was conditioned on the previous ones.** The three
+  generation loops build the prompt batch with `llama_batch_get_one()`, which
+  leaves the positions unset, so the allocator continued numbering from where
+  the last call stopped. Nothing cleared the cache in between, so an answer
+  depended on every earlier prompt in the session and repeated calls filled
+  the context until decoding failed with a misleading "Failed to process
+  prompt". Asked to name a fruit after two other questions, the model replied
+  "fresh. Name a location: Paihia", continuing the earlier prompts instead of
+  answering. This affected `edge_map()`, `edge_classify()`,
+  `edge_extract_batch()` and `edge_narrate()`, which all issue one completion
+  per element against a single context. Each loop now clears the cache before
+  decoding its prompt.
+
 * **Grammar constrained generation corrupted sampler state on every token.**
   `llama_sampler_sample()` already calls `llama_sampler_accept()` internally,
   and all three generation loops in `bindings.cpp` called it a second time.

@@ -293,6 +293,17 @@ std::string edge_completion_internal(SEXP model_ptr, std::string prompt, int n_p
     }
 
     // Create initial batch for the prompt
+    // Start every completion from an empty cache. llama_batch_get_one leaves
+    // the batch positions unset, so the allocator continues numbering from
+    // seq_pos_max + 1. Without this the prompt is appended to whatever the
+    // previous call left behind: each answer is conditioned on every earlier
+    // prompt in the session, and repeated calls fill the context until decode
+    // fails with a misleading "Failed to process prompt".
+    llama_memory_t mem = llama_get_memory(edge_ctx->ctx);
+    if (mem) {
+      llama_memory_clear(mem, true);
+    }
+
     llama_batch batch = llama_batch_get_one(prompt_tokens.data(), (int32_t)prompt_tokens.size());
 
     // Process the prompt
@@ -444,6 +455,17 @@ List edge_completion_stream_internal(SEXP model_ptr, std::string prompt, Functio
     }
 
     // Create initial batch for the prompt
+    // Start every completion from an empty cache. llama_batch_get_one leaves
+    // the batch positions unset, so the allocator continues numbering from
+    // seq_pos_max + 1. Without this the prompt is appended to whatever the
+    // previous call left behind: each answer is conditioned on every earlier
+    // prompt in the session, and repeated calls fill the context until decode
+    // fails with a misleading "Failed to process prompt".
+    llama_memory_t mem = llama_get_memory(edge_ctx->ctx);
+    if (mem) {
+      llama_memory_clear(mem, true);
+    }
+
     llama_batch batch = llama_batch_get_one(prompt_tokens.data(), (int32_t)prompt_tokens.size());
 
     // Process the prompt
@@ -606,6 +628,17 @@ std::string edge_completion_grammar_internal(SEXP model_ptr, std::string prompt,
     }
 
     // Process prompt
+    // Start every completion from an empty cache. llama_batch_get_one leaves
+    // the batch positions unset, so the allocator continues numbering from
+    // seq_pos_max + 1. Without this the prompt is appended to whatever the
+    // previous call left behind: each answer is conditioned on every earlier
+    // prompt in the session, and repeated calls fill the context until decode
+    // fails with a misleading "Failed to process prompt".
+    llama_memory_t mem = llama_get_memory(edge_ctx->ctx);
+    if (mem) {
+      llama_memory_clear(mem, true);
+    }
+
     llama_batch batch = llama_batch_get_one(prompt_tokens.data(), (int32_t)prompt_tokens.size());
     if (llama_decode(edge_ctx->ctx, batch)) stop("Failed to process prompt");
 
