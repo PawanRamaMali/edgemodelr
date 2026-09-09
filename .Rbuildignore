@@ -29,3 +29,5 @@
 ^update_llama\.py$
 ^functional_test\.R$
 ^.*\.log$
+^docker$
+^\.dockerignore$

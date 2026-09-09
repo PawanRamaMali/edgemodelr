@@ -15,6 +15,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <memory>
+#include <cstdio>
 
 #if defined(__AMX_INT8__) && defined(__AVX512VNNI__)
 

@@ -7,6 +7,7 @@
 
 #include <unordered_map>
 #include <vector>
+#include <cassert>
 
 struct llama_cparams;
 struct llama_hparams;

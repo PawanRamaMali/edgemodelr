@@ -57,6 +57,7 @@
 #else
 #    include <dlfcn.h>
 #    include <unistd.h>
+#include <cstdlib>
 #endif
 
 // Backend registry

@@ -10,6 +10,7 @@
 #include <stdexcept>
 #include <algorithm>
 #include <iterator>
+#include <cstdio>
 
 // vec
 

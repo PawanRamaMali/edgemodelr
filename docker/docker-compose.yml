@@ -1,0 +1,61 @@
+# =============================================================================
+# edgemodelr — Docker Compose
+#
+# Provides two service profiles:
+#
+#   base          R + edgemodelr, no model pre-downloaded.
+#                 Mounts ~/.cache/R/edgemodelr from the host so any models
+#                 you have already downloaded are available immediately.
+#
+#   tinyllama     Self-contained image with TinyLlama-1.1B-Chat baked in.
+#                 No volume mount required — works offline after first pull.
+#
+# Usage:
+#   # Interactive R with your local model cache:
+#   docker compose run base
+#
+#   # One-shot script with your local model cache:
+#   docker compose run base Rscript /scripts/qwen3_14b_demo.R
+#
+#   # Self-contained TinyLlama (no local models needed):
+#   docker compose run tinyllama
+#
+# Build images first:
+#   docker compose build
+# =============================================================================
+
+services:
+
+  # ── Base image — mounts host model cache ─────────────────────────────────
+  base:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: edgemodelr:latest
+    stdin_open: true
+    tty: true
+    volumes:
+      # Reuse models already on your host — avoids re-downloading
+      - type: bind
+        source: ${EDGEMODELR_CACHE:-~/.cache/R/edgemodelr}
+        target: /root/.cache/R/edgemodelr
+      # Optionally mount a scripts directory
+      - type: bind
+        source: ${SCRIPTS_DIR:-../examples}
+        target: /scripts
+    environment:
+      # Optional: raise the cache size limit (bytes)
+      - EDGEMODELR_CACHE_MAX_MB=${EDGEMODELR_CACHE_MAX_MB:-20000}
+    working_dir: /workspace
+    command: R
+
+  # ── TinyLlama preloaded — fully self-contained ────────────────────────────
+  tinyllama:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.tinyllama
+    image: edgemodelr-tinyllama:latest
+    stdin_open: true
+    tty: true
+    working_dir: /workspace
+    command: R

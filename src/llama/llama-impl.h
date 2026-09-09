@@ -4,6 +4,7 @@
 
 #include <string>
 #include <vector>
+#include <cstdio>
 
 #ifdef __GNUC__
 #    if defined(__MINGW32__) && !defined(__clang__)

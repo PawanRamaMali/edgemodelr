@@ -1,19 +1,67 @@
-# edgemodelr 0.4.4
+# edgemodelr 0.5.0
 
-## CRAN clang23 fixes
+## New features
+
+* `edge_text_to_sql()` turns a natural language question plus a CREATE TABLE
+  schema into SQL. Pass a DBI connection to `con` and it executes the query
+  and returns the rows, otherwise it returns the statement.
+
+* `edge_narrate()` writes a short English summary of a record. Accepts a
+  named list, a single row, or a multi-row data frame, and returns one
+  narrative per record.
+
+* `edge_verify_narrative()` checks a generated narrative against the values
+  it came from. It re-extracts the named fields from the text and compares
+  them to the source of truth, with a tolerance for numeric fields.
+
+All three need a capable model. Small general purpose models produce valid
+SQL that answers a different question, and narratives that restate the input
+rather than summarise it. The reference pages say so.
+
+## Bug fixes
 
 * **Loading a file that is not GGUF crashed the R session.** The bundled
-  loader is not hardened against arbitrary input, and on clang 23 a plain
-  text file made it read unmapped memory rather than return null, taking
-  the session down. `edge_load_model()` now checks for the GGUF magic
-  header before calling the loader and raises a normal R error instead.
-  The crash was reachable in every earlier release; it only surfaced now
-  because 0.4.1 failed to install on clang 23, so its tests never ran.
+  loader is not hardened against arbitrary input: on clang 23 a plain text
+  file made it read unmapped memory rather than return null, taking the
+  session down. `edge_load_model()` now checks for the GGUF magic header
+  before calling the loader and raises a normal R error instead. The crash
+  was reachable in every earlier release.
 
-* **`-Wkeyword-macro` in `ggml/ggml-common.h`.** C23 made `static_assert`
-  a keyword, and the header defined a macro over it. Valid C, but clang 23
-  warns and R CMD check counts that as a significant warning. The macro is
-  now skipped when the compiler is C23 or later.
+* **Every completion was conditioned on the previous ones.** The three
+  generation loops build the prompt batch with `llama_batch_get_one()`, which
+  leaves the positions unset, so the allocator continued numbering from where
+  the last call stopped. Nothing cleared the cache in between, so an answer
+  depended on every earlier prompt in the session and repeated calls filled
+  the context until decoding failed with a misleading "Failed to process
+  prompt". Asked to name a fruit after two other questions, the model replied
+  "fresh. Name a location: Paihia", continuing the earlier prompts instead of
+  answering. This affected `edge_map()`, `edge_classify()`,
+  `edge_extract_batch()` and `edge_narrate()`, which all issue one completion
+  per element against a single context. Each loop now clears the cache before
+  decoding its prompt.
+
+* **Grammar constrained generation corrupted sampler state on every token.**
+  `llama_sampler_sample()` already calls `llama_sampler_accept()` internally,
+  and all three generation loops in `bindings.cpp` called it a second time.
+  That left the grammar stack inconsistent, so `edge_grammar_completion()`,
+  `edge_extract()`, `edge_extract_batch()` and `edge_classify()` returned
+  only an opening brace or truncated output, mainly on Windows.
+
+* **`-Wkeyword-macro` in `ggml/ggml-common.h`.** C23 made `static_assert` a
+  keyword and the header defined a macro over it. Valid C, but clang 23 warns
+  and R CMD check counts that as a significant warning. The macro is now
+  skipped on C23 and later compilers.
+
+* **Missing standard library includes.** Twenty three C library headers were
+  used but not included, in files that only compiled because another header
+  happened to pull them in. Two headers shared between C and C++ used the
+  C++ spelling.
+
+## Docker
+
+* Added `docker/` with a base image, a variant with TinyLlama baked in, and
+  a compose file. The base image declares the model cache as a volume so a
+  host cache can be mounted for offline use.
 
 # edgemodelr 0.4.3
 
