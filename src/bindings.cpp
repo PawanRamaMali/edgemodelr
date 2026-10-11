@@ -5,6 +5,8 @@
 #include <string>
 #include <vector>
 #include <thread>
+#include <chrono>
+#include <sstream>
 #include <stdexcept>
 #include <cstdio>
 #include <fstream>
@@ -92,6 +94,13 @@ static void clear_kv_cache(llama_context * ctx) {
     llama_memory_clear(mem, true);
   }
 }
+
+// Frees the sampler chain on every exit path, including R errors, user
+// interrupts and ggml aborts that unwind out of the generation loop.
+struct SamplerDeleter {
+  void operator()(llama_sampler * s) const { if (s) llama_sampler_free(s); }
+};
+typedef std::unique_ptr<llama_sampler, SamplerDeleter> sampler_ptr;
 
 // Helper function to ensure initialization is done
 static void ensure_llama_initialized() {
@@ -289,7 +298,8 @@ SEXP edge_load_model_internal(std::string model_path, int n_ctx = 2048, int n_gp
 }
 
 // [[Rcpp::export]]
-std::string edge_completion_internal(SEXP model_ptr, std::string prompt, int n_predict = 128, double temperature = 0.8, double top_p = 0.95) {
+std::string edge_completion_internal(SEXP model_ptr, std::string prompt, int n_predict = 128, double temperature = 0.8, double top_p = 0.95, double timeout_seconds = 0.0) {
+  const auto started = std::chrono::steady_clock::now();
   try {
     if (TYPEOF(model_ptr) != EXTPTRSXP) {
       stop("Invalid model context");
@@ -352,7 +362,8 @@ std::string edge_completion_internal(SEXP model_ptr, std::string prompt, int n_p
     
     // Create a sampler chain for better token generation
     auto sampler_chain_params = llama_sampler_chain_default_params();
-    auto * sampler = llama_sampler_chain_init(sampler_chain_params);
+    sampler_ptr sampler_owner(llama_sampler_chain_init(sampler_chain_params));
+    llama_sampler * sampler = sampler_owner.get();
 
     // Add samplers in the right order for quality generation
     if (top_p < 1.0f) {
@@ -365,6 +376,17 @@ std::string edge_completion_internal(SEXP model_ptr, std::string prompt, int n_p
 
     // Generate tokens using the new sampler API
     for (int i = 0; i < n_predict; ++i) {
+      // Lets Esc/Ctrl-C stop a long generation.
+      Rcpp::checkUserInterrupt();
+      if (timeout_seconds > 0) {
+        const std::chrono::duration<double> elapsed = std::chrono::steady_clock::now() - started;
+        if (elapsed.count() >= timeout_seconds) {
+          std::ostringstream msg;
+          msg << "Generation timed out after " << timeout_seconds << " seconds";
+          throw std::runtime_error(msg.str());
+        }
+      }
+
       // Sample next token using the sampler chain
       llama_token new_token = llama_sampler_sample(sampler, edge_ctx->ctx, -1);
       
@@ -402,8 +424,6 @@ std::string edge_completion_internal(SEXP model_ptr, std::string prompt, int n_p
       }
     }
 
-    // Clean up sampler
-    llama_sampler_free(sampler);
 
     return result;
     
@@ -506,7 +526,8 @@ List edge_completion_stream_internal(SEXP model_ptr, std::string prompt, Functio
 
     // Create sampler chain for streaming
     auto sampler_chain_params = llama_sampler_chain_default_params();
-    auto * sampler = llama_sampler_chain_init(sampler_chain_params);
+    sampler_ptr sampler_owner(llama_sampler_chain_init(sampler_chain_params));
+    llama_sampler * sampler = sampler_owner.get();
 
     // Add samplers for quality generation
     if (top_p < 1.0f) {
@@ -519,6 +540,9 @@ List edge_completion_stream_internal(SEXP model_ptr, std::string prompt, Functio
 
     // Generate tokens one by one and stream them with proper sampling
     for (int i = 0; i < n_predict; ++i) {
+      // Lets Esc/Ctrl-C stop a long generation.
+      Rcpp::checkUserInterrupt();
+
       // Sample next token using the sampler chain
       llama_token new_token = llama_sampler_sample(sampler, edge_ctx->ctx, -1);
       
@@ -600,8 +624,6 @@ List edge_completion_stream_internal(SEXP model_ptr, std::string prompt, Functio
       warning("Final callback error: " + std::string(e.what()));
     }
 
-    // Clean up sampler
-    llama_sampler_free(sampler);
 
     // Return summary information
     return List::create(
@@ -660,13 +682,13 @@ std::string edge_completion_grammar_internal(SEXP model_ptr, std::string prompt,
 
     // Build sampler chain WITH grammar constraint
     auto sampler_chain_params = llama_sampler_chain_default_params();
-    auto * sampler = llama_sampler_chain_init(sampler_chain_params);
+    sampler_ptr sampler_owner(llama_sampler_chain_init(sampler_chain_params));
+    llama_sampler * sampler = sampler_owner.get();
 
     // Add grammar sampler first (constrains token selection)
     if (!grammar_str.empty()) {
       auto * grammar_sampler = llama_sampler_init_grammar(vocab, grammar_str.c_str(), grammar_root.c_str());
       if (!grammar_sampler) {
-        llama_sampler_free(sampler);
         stop("Failed to parse GBNF grammar. Check grammar syntax.");
       }
       llama_sampler_chain_add(sampler, grammar_sampler);
@@ -686,6 +708,8 @@ std::string edge_completion_grammar_internal(SEXP model_ptr, std::string prompt,
     result.reserve(n_predict * 8);
 
     for (int i = 0; i < n_predict; ++i) {
+      Rcpp::checkUserInterrupt();
+
       // llama_sampler_sample applies constraints, selects a token, AND calls
       // llama_sampler_accept internally — do NOT call accept again afterward.
       llama_token new_token = llama_sampler_sample(sampler, edge_ctx->ctx, -1);
@@ -706,7 +730,6 @@ std::string edge_completion_grammar_internal(SEXP model_ptr, std::string prompt,
       if (llama_decode(edge_ctx->ctx, batch)) break;
     }
 
-    llama_sampler_free(sampler);
     return result;
 
   } catch (const std::exception& e) {

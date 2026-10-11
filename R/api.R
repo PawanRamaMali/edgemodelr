@@ -167,21 +167,20 @@ edge_completion <- function(ctx, prompt, n_predict = 128L, temperature = 0.8, to
   temperature <- max(0.0, min(temperature, 2.0))  # Clamp temperature
   top_p <- max(0.1, min(top_p, 1.0))  # Clamp top_p
 
-  if (!is.null(timeout_seconds)) {
-    if (!is.numeric(timeout_seconds) || length(timeout_seconds) != 1 || timeout_seconds <= 0) {
-      stop("timeout_seconds must be a positive number of seconds")
-    }
-    old_limits <- setTimeLimit(elapsed = timeout_seconds, transient = TRUE)
-    on.exit({
-      setTimeLimit(cpu = Inf, elapsed = Inf, transient = TRUE)
-    }, add = TRUE)
+  if (is.null(timeout_seconds)) {
+    timeout_seconds <- 0
+  } else if (!is.numeric(timeout_seconds) || length(timeout_seconds) != 1 ||
+               is.na(timeout_seconds) || timeout_seconds <= 0) {
+    stop("timeout_seconds must be a positive number of seconds")
   }
 
+  # The timeout is checked in the generation loop, once per token.
   edge_completion_internal(ctx,
-                         prompt,
-                         as.integer(n_predict),
-                         as.numeric(temperature),
-                         as.numeric(top_p))
+                           prompt,
+                           as.integer(n_predict),
+                           as.numeric(temperature),
+                           as.numeric(top_p),
+                           as.numeric(timeout_seconds))
 }
 
 #' Free model context and release memory

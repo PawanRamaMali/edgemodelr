@@ -58,8 +58,8 @@ BEGIN_RCPP
 END_RCPP
 }
 // edge_completion_internal
-std::string edge_completion_internal(SEXP model_ptr, std::string prompt, int n_predict, double temperature, double top_p);
-RcppExport SEXP _edgemodelr_edge_completion_internal(SEXP model_ptrSEXP, SEXP promptSEXP, SEXP n_predictSEXP, SEXP temperatureSEXP, SEXP top_pSEXP) {
+std::string edge_completion_internal(SEXP model_ptr, std::string prompt, int n_predict, double temperature, double top_p, double timeout_seconds);
+RcppExport SEXP _edgemodelr_edge_completion_internal(SEXP model_ptrSEXP, SEXP promptSEXP, SEXP n_predictSEXP, SEXP temperatureSEXP, SEXP top_pSEXP, SEXP timeout_secondsSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
@@ -68,7 +68,8 @@ BEGIN_RCPP
     Rcpp::traits::input_parameter< int >::type n_predict(n_predictSEXP);
     Rcpp::traits::input_parameter< double >::type temperature(temperatureSEXP);
     Rcpp::traits::input_parameter< double >::type top_p(top_pSEXP);
-    rcpp_result_gen = Rcpp::wrap(edge_completion_internal(model_ptr, prompt, n_predict, temperature, top_p));
+    Rcpp::traits::input_parameter< double >::type timeout_seconds(timeout_secondsSEXP);
+    rcpp_result_gen = Rcpp::wrap(edge_completion_internal(model_ptr, prompt, n_predict, temperature, top_p, timeout_seconds));
     return rcpp_result_gen;
 END_RCPP
 }
@@ -209,7 +210,7 @@ static const R_CallMethodDef CallEntries[] = {
     {"_edgemodelr_edge_cuda_backend_path_internal", (DL_FUNC) &_edgemodelr_edge_cuda_backend_path_internal, 0},
     {"_edgemodelr_edge_cuda_backend_loaded_internal", (DL_FUNC) &_edgemodelr_edge_cuda_backend_loaded_internal, 0},
     {"_edgemodelr_edge_load_model_internal", (DL_FUNC) &_edgemodelr_edge_load_model_internal, 6},
-    {"_edgemodelr_edge_completion_internal", (DL_FUNC) &_edgemodelr_edge_completion_internal, 5},
+    {"_edgemodelr_edge_completion_internal", (DL_FUNC) &_edgemodelr_edge_completion_internal, 6},
     {"_edgemodelr_edge_free_model_internal", (DL_FUNC) &_edgemodelr_edge_free_model_internal, 1},
     {"_edgemodelr_is_valid_model_internal", (DL_FUNC) &_edgemodelr_is_valid_model_internal, 1},
     {"_edgemodelr_edge_completion_stream_internal", (DL_FUNC) &_edgemodelr_edge_completion_stream_internal, 6},

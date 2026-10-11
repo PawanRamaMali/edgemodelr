@@ -326,3 +326,33 @@ test_that("E2E: each completion starts from an empty context", {
   }
   expect_identical(out, first)
 })
+
+test_that("E2E: timeout_seconds stops a long generation", {
+  skip_on_cran()
+  skip_if_offline()
+  skip_on_os("windows") # Windows CI has memory/segfault issues with model loading
+
+  models <- edge_list_models()
+  tiny_model <- models[models$name == "TinyLlama-1.1B", ]
+  test_dir <- file.path(tempdir(), "edgemodelr_integration_tests")
+  dir.create(test_dir, showWarnings = FALSE, recursive = TRUE)
+  model_path <- file.path(test_dir, tiny_model$filename[1])
+  if (!file.exists(model_path)) {
+    edge_download_url(tiny_model$download_url[1], tiny_model$filename[1],
+                      cache_dir = test_dir)
+  }
+
+  ctx <- edge_load_model(model_path, n_ctx = 2048L, n_gpu_layers = 0)
+  on.exit(edge_free_model(ctx), add = TRUE)
+
+  started <- proc.time()[["elapsed"]]
+  expect_error(
+    edge_completion(ctx, "Write a very long story about a dragon.",
+                    n_predict = 1500L, timeout_seconds = 1),
+    "timed out"
+  )
+  expect_lt(proc.time()[["elapsed"]] - started, 30)
+
+  # The context is still usable afterwards.
+  expect_type(edge_completion(ctx, "Hello", n_predict = 4L), "character")
+})
