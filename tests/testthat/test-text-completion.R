@@ -6,7 +6,7 @@ test_that("edge_completion error handling", {
   expect_error(
     edge_completion(NULL, "Hello", n_predict = 5)
   )
-  
+
   expect_error(
     edge_completion("invalid", "Hello", n_predict = 5)
   )
@@ -22,14 +22,10 @@ test_that("edge_completion error handling", {
   # Test with missing arguments
   expect_error(edge_completion())
   expect_error(edge_completion(NULL))
-  
+
   # Test with invalid prompt types
   expect_error(edge_completion(NULL, NULL, n_predict = 5))
   expect_error(edge_completion(NULL, 123, n_predict = 5))
   expect_error(edge_completion(NULL, c("a", "b"), n_predict = 5))
   expect_error(edge_completion(NULL, list("hello"), n_predict = 5))
 })
-
-
-
-

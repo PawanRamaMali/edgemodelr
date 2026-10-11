@@ -1,0 +1,14 @@
+linters: linters_with_defaults(
+    line_length_linter(120),
+    object_length_linter(40),
+    return_linter = NULL,
+    indentation_linter = NULL
+  )
+exclusions: list(
+    "R/RcppExports.R",
+    "src",
+    "inst",
+    "examples",
+    "functional_test.R"
+  )
+encoding: "UTF-8"

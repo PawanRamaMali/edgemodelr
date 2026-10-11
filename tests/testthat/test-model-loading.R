@@ -36,22 +36,22 @@ test_that("edge_load_model handles invalid paths gracefully", {
     edge_load_model("nonexistent_model.gguf"),
     "Model file does not exist"
   )
-  
+
   # Test with empty string
   expect_error(
     edge_load_model(""),
     "Model file does not exist"
   )
-  
+
   # Test with NULL
   expect_error(edge_load_model(NULL))
-  
+
   # Test with directory instead of file
   temp_dir <- tempdir()
   expect_error(
     edge_load_model(temp_dir)
   )
-  
+
 })
 
 
@@ -65,11 +65,8 @@ test_that("is_valid_model handles invalid contexts", {
   expect_false(is_valid_model(TRUE))
   expect_false(is_valid_model(FALSE))
   expect_false(is_valid_model(c(1, 2, 3)))
-  
+
   # Test with missing arguments - function returns FALSE instead of erroring
   result <- is_valid_model()
   expect_false(result)
 })
-
-
-

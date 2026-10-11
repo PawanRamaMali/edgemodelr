@@ -22,10 +22,9 @@
 ^codecov\.yml$
 ^examples$
 ^cran-comments\.md$
-^cleanup$
 ^_backup$
 ^err\.txt$
 ^out\.txt$
-^update_llama\.py$
 ^functional_test\.R$
 ^.*\.log$
+^\.lintr$

@@ -58,10 +58,8 @@ CORE_OBJECTS = bindings.o RcppExports.o \
 #   EDGEMODELR_SIMD=AVX2 R CMD INSTALL edgemodelr
 #
 # Valid values: GENERIC, SSE42, AVX, AVX2, AVX512, NATIVE
-# Default (no env var): auto-detect based on architecture
-#   - x86_64: SSE4.2 baseline (safe for all x86_64 CPUs since 2008)
-#   - aarch64/arm64: NEON (built into ABI, no extra flags needed)
-#   - other: generic scalar fallback
+# Default (no env var): portable generic build (GGML_CPU_GENERIC, no arch
+# flags) on every architecture -- see the final else branch below.
 # ============================================================================
 
 UNAME_M := $(shell uname -m 2>/dev/null)
