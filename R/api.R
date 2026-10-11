@@ -280,6 +280,9 @@ edge_download_model <- function(model_id, filename = NULL, cache_dir = NULL, for
     if (is.null(filename)) filename <- row$filename
     return(edge_download_url(row$download_url, filename = filename,
                               cache_dir = cache_dir, force_download = force_download,
+                              verify_checksum = verify_checksum,
+                              expected_sha256 = expected_sha256,
+                              trust_first_use = trust_first_use,
                               verbose = verbose))
   }
 
@@ -515,14 +518,14 @@ edge_download_model <- function(model_id, filename = NULL, cache_dir = NULL, for
   known <- .get_known_hashes(cache_dir)
   if (is.null(expected_sha256) && nrow(known) > 0) {
     hit <- known
-    if (!is.null(model_id)) hit <- hit[hit$model_id == model_id, , drop = FALSE]
-    if (!is.null(filename)) hit <- hit[hit$filename == filename, , drop = FALSE]
+    if (!is.null(model_id)) hit <- hit[hit$model_id %in% model_id, , drop = FALSE]
+    if (!is.null(filename)) hit <- hit[hit$filename %in% filename, , drop = FALSE]
     if (nrow(hit) > 0) {
       expected_sha256 <- hit$sha256[1]
     }
   }
 
-  if (is.null(expected_sha256) || !nzchar(expected_sha256)) {
+  if (is.null(expected_sha256) || is.na(expected_sha256) || !nzchar(expected_sha256)) {
     if (verbose) {
       message("Checksum: no known SHA-256 for this model; skipping verification. ",
               "Set expected_sha256 or enable trust-first-use to store a local hash.")
@@ -530,7 +533,11 @@ edge_download_model <- function(model_id, filename = NULL, cache_dir = NULL, for
     if (trust_first_use) {
       computed <- .compute_sha256(path)
       if (!is.na(computed)) {
-        known <- rbind(known, data.frame(model_id = model_id, filename = filename, sha256 = computed,
+        # model_id is NULL for downloads by URL; a NULL column would make
+        # the new row the wrong width for rbind().
+        known <- rbind(known, data.frame(model_id = if (is.null(model_id)) NA_character_ else model_id,
+                                         filename = if (is.null(filename)) NA_character_ else filename,
+                                         sha256 = computed,
                                          stringsAsFactors = FALSE))
         .save_known_hashes(known, cache_dir)
         if (verbose) message("Checksum stored locally (trust-first-use).")
@@ -1523,6 +1530,8 @@ edge_chat_completion <- function(ctx, messages, n_predict = 256L,
 #'
 #' Remove outdated model files from the cache directory to comply with CRAN
 #' policies about actively managing cached content and keeping sizes small.
+#' The CUDA backend in the `cuda` subdirectory and the local checksum store
+#' are never removed.
 #'
 #' @param cache_dir Cache directory path (default: user cache directory)
 #' @param max_age_days Maximum age of files to keep in days (default: option edgemodelr.cache_max_age_days or 30)
@@ -1555,7 +1564,11 @@ edge_clean_cache <- function(cache_dir = NULL,
     return(invisible(character(0)))
   }
 
-  files <- list.files(cache_dir, full.names = TRUE, recursive = TRUE)
+  files <- list.files(cache_dir, recursive = TRUE)
+  # Leave the CUDA backend installed by edge_install_cuda() and the local
+  # checksum store alone: they are not cached models.
+  keep <- grepl("^cuda/", files) | basename(files) == "known_hashes.csv"
+  files <- file.path(cache_dir, files[!keep])
   if (length(files) == 0) {
     if (verbose) message("Cache directory is empty")
     return(invisible(character(0)))
@@ -1574,8 +1587,10 @@ edge_clean_cache <- function(cache_dir = NULL,
   size_files <- character(0)
   if (total_size > max_size_mb) {
     file_info_sorted <- if (use_lru) file_info[order(file_info$mtime), ] else file_info
-    cumsum_size <- cumsum(file_info_sorted$size_mb)
-    excess_files <- file_info_sorted[cumsum_size <= (total_size - max_size_mb), ]
+    # Evict files until the total is under the limit: a file goes if the
+    # files evicted before it do not yet free enough space.
+    freed_before <- cumsum(file_info_sorted$size_mb) - file_info_sorted$size_mb
+    excess_files <- file_info_sorted[freed_before < (total_size - max_size_mb), ]
     if (nrow(excess_files) > 0) {
       size_files <- excess_files$path
     }
@@ -2140,6 +2155,11 @@ edge_install_cuda <- function(cuda_version = "13.1",
 
   message("Downloading llama.cpp CUDA backend (", cuda_version, ") from GitHub Releases...")
   message("This is a ~200MB download. Please wait...")
+
+  # R's default 60 second timeout covers the whole transfer, which is too
+  # short for this download on most connections.
+  old_timeout <- options(timeout = max(3600, getOption("timeout")))
+  on.exit(options(old_timeout), add = TRUE)
 
   tryCatch({
     utils::download.file(release_url, tmp_zip, mode = "wb", quiet = FALSE)
@@ -3124,6 +3144,15 @@ edge_index_documents <- function(source, ctx, chunk_size = 500L,
   if (!is_valid_model(ctx)) {
     stop("Invalid model context. Load a model first with edge_load_model()")
   }
+  if (!is.numeric(chunk_size) || length(chunk_size) != 1L || is.na(chunk_size) || chunk_size < 1) {
+    stop("chunk_size must be a positive number")
+  }
+  if (!is.numeric(chunk_overlap) || length(chunk_overlap) != 1L || is.na(chunk_overlap) ||
+        chunk_overlap < 0 || chunk_overlap >= chunk_size) {
+    stop("chunk_overlap must be at least 0 and smaller than chunk_size")
+  }
+  chunk_size <- as.integer(chunk_size)
+  chunk_overlap <- as.integer(chunk_overlap)
 
   chunks <- character()
   sources <- character()
@@ -3410,7 +3439,9 @@ print.edge_index <- function(x, ...) {
     }
 
     chunks <- c(chunks, trimws(substr(text, pos, end)))
-    pos <- end + 1L - overlap
+    if (end >= text_len) break
+    # Always move forward, even when the overlap is as long as the chunk.
+    pos <- max(end + 1L - overlap, pos + 1L)
   }
 
   chunks[nchar(chunks) > 0L]
