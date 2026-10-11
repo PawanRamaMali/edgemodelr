@@ -82,6 +82,17 @@ static bool decode_prompt(llama_context * ctx, std::vector<llama_token> & tokens
   return true;
 }
 
+// Each completion starts from an empty KV cache. llama_batch_get_one() leaves
+// positions unset, so without this a prompt is appended after everything the
+// previous call left in the cache: answers depend on earlier calls, and once
+// the cache is full every later call fails.
+static void clear_kv_cache(llama_context * ctx) {
+  llama_memory_t mem = llama_get_memory(ctx);
+  if (mem) {
+    llama_memory_clear(mem, true);
+  }
+}
+
 // Helper function to ensure initialization is done
 static void ensure_llama_initialized() {
   static bool initialized = false;
@@ -331,6 +342,7 @@ std::string edge_completion_internal(SEXP model_ptr, std::string prompt, int n_p
     llama_batch batch = {};
 
     // Process the prompt
+    clear_kv_cache(edge_ctx->ctx);
     if (!decode_prompt(edge_ctx->ctx, prompt_tokens)) {
       stop("Failed to process prompt");
     }
@@ -482,6 +494,7 @@ List edge_completion_stream_internal(SEXP model_ptr, std::string prompt, Functio
     llama_batch batch = {};
 
     // Process the prompt
+    clear_kv_cache(edge_ctx->ctx);
     if (!decode_prompt(edge_ctx->ctx, prompt_tokens)) {
       stop("Failed to process prompt");
     }
@@ -642,6 +655,7 @@ std::string edge_completion_grammar_internal(SEXP model_ptr, std::string prompt,
 
     // Process prompt
     llama_batch batch = {};
+    clear_kv_cache(edge_ctx->ctx);
     if (!decode_prompt(edge_ctx->ctx, prompt_tokens)) stop("Failed to process prompt");
 
     // Build sampler chain WITH grammar constraint
