@@ -1,127 +1,39 @@
-## Resubmission - edgemodelr 0.4.3
+## Update - edgemodelr 0.4.5
 
-This addresses both points raised by Uwe Ligges on the 0.4.2 submission.
-There are no user-visible changes to the R API.
-
-### 1. Missing `<cstdlib>` in four translation units
-
-The reported errors were:
+This release fixes the WARNING on the current CRAN version (0.4.3), on
+r-devel-linux-x86_64-debian-clang, r-devel-linux-x86_64-fedora-clang and
+the M1mac additional check:
 
 ```
-llama/llama-mmap.cpp:303:19: error: use of undeclared identifier 'posix_memalign'
-llama/llama-mmap.cpp:309:47: error: use of undeclared identifier 'free'
-llama/llama-model-loader.cpp:512:9: error: use of undeclared identifier 'getenv'
-llama/llama-vocab.cpp:2732:20: error: use of undeclared identifier 'strtol'
+ggml/ggml-common.h:79:9: warning: keyword is hidden by macro definition [-Wkeyword-macro]
 ```
 
-These files now include `<cstdlib>`.
+C23 made `static_assert` a keyword, and the bundled header defined a
+macro with that name. The macro is now only defined for C standards
+before C23. This fix was prepared as 0.4.4, which was not submitted;
+0.4.5 contains it.
 
-Rather than patch only the reported lines, every file in `src/` was
-audited for the same defect: for each translation unit and header, the
-set of standard headers reachable through its own includes and through
-the package's local headers was computed, and the file body was scanned
-for symbols that set does not cover.
+### Other changes since 0.4.3
 
-The audit was run twice. The first pass covered the C headers and found
-the files above. The second pass covered the C++ standard library, on
-the grounds that the libc++ change behind these failures removes
-transitive includes of C++ headers as well, and found 38 further
-omissions across 26 files: `std::min`, `std::max` and `std::copy`
-without `<algorithm>`; `std::advance`, `std::distance` and `std::begin`
-without `<iterator>`; `std::is_same` and `std::enable_if` without
-`<type_traits>`; `std::move` and `std::pair` without `<utility>`; plus
-`std::unique_ptr`, `std::out_of_range`, `std::array`, and
-`isspace`/`toupper` without `<memory>`, `<stdexcept>`, `<array>` and
-`<cctype>` respectively. Each was checked against the source line to
-confirm it is a genuine use. All build under libstdc++, which supplies
-these declarations transitively, and so would not have been caught by
-any test environment available here.
-
-That audit found a fourth file, `llama/llama-batch.cpp`, which calls
-`getenv`, `atoi`, `malloc` and `free` with no `<cstdlib>` in scope. It
-did not appear in the compiler report because the build stopped at
-`llama-mmap.cpp` before reaching it. It would have failed this
-resubmission had it not been fixed.
-
-The audit reports seven remaining hits, all verified by hand to be false
-positives rather than defects:
-
-* `ggml-backend-impl.h`, `ggml-backend.h`, `llama.h`: `free` appears as a
-  struct member name and as a parameter name, never as a call.
-* `ggml.h`: `abort()` appears inside `GGML_UNREACHABLE()`, which is
-  defined only under `#ifndef NDEBUG`; the package always compiles with
-  `-DNDEBUG`.
-* `unicode.cpp`: `fprintf` appears inside `#ifndef USING_R`; the package
-  always compiles with `-DUSING_R=1`.
-* `RcppExports.cpp`: `std::string` and `std::vector` come from `<Rcpp.h>`,
-  which the audit does not traverse. The file is generated and is left
-  exactly as `Rcpp::compileAttributes()` writes it.
-
-### 2. CFLAGS and CXXFLAGS in subdirectory compilations
-
-This was a real defect and is now fixed. The pattern rules for `ggml/`
-and `llama/` invoked the compiler as
-
-```make
-	$(CXX) $(ALL_CPPFLAGS) $(GGML_CXXFLAGS) -c $< -o $@
-```
-
-where `GGML_CXXFLAGS` held only package-local flags. `$(ALL_CXXFLAGS)`,
-which is where `CXXFLAGS` from the user or the site `Makevars` arrives,
-was absent. Flags were therefore honoured for 6 of the 161 source files
-and silently dropped for the other 155.
-
-Every rule in `src/Makevars` and `src/Makevars.win` now reads
-
-```make
-	$(CXX) $(ALL_CPPFLAGS) $(ALL_CXXFLAGS) $(GGML_EXTRA_CXXFLAGS) -c $< -o $@
-```
-
-The engine-specific variables were renamed from `GGML_CXXFLAGS` to
-`GGML_EXTRA_CXXFLAGS` (and likewise for the C and generic variants) so
-that their role as additions rather than replacements is explicit at
-every use site. Redundant `-fPIC` and `-DNDEBUG` entries were dropped
-from them, since both now arrive through `$(ALL_*FLAGS)`.
-
-Verified after the change: all 161 compile commands in the install log
-carry `$(ALL_CFLAGS)` or `$(ALL_CXXFLAGS)`.
-
-### C++ standard
-
-`CXX_STD = CXX17` was added in 0.4.2 and is retained. The bundled
-llama.cpp and GGML sources target C++17. This also resolved the
-r-release-macos-x86_64 install failure, where `-std=gnu++20` combined
-with the libc++ in MacOSX11.sdk broke `std::filesystem::path::u8string()`
-handling in `ggml-backend-reg.cpp`.
+* `edge_load_model()` checks the GGUF magic header before calling the
+  bundled loader, so a file that is not a model gives an R error instead
+  of a crash.
+* Internal assertions in the bundled engine on R's thread now raise an R
+  error instead of `SIGABRT`.
+* Prompts longer than the batch size, the KV cache carrying over between
+  calls, user interrupts during generation, and several R-level bugs in
+  downloading, caching and document chunking are fixed. See NEWS.md.
 
 ### R CMD check --as-cran results
 
 0 ERRORs. 0 WARNINGs. 0 NOTEs.
 
-The installed size INFO and the "GNU make is a SystemRequirements" INFO
-are unchanged and both are inherent to the bundled inference engine.
+The C++ specification, installed size and "GNU make is a SystemRequirements"
+INFOs are unchanged and are inherent to the bundled inference engine.
 
 ### Test environments
 
-* Local: Windows 11, R 4.5.1, Rtools45 / GCC 14.3.0
-* GitHub Actions: ubuntu-latest (devel/release/oldrel-1),
-  windows-latest, macos-latest (ARM64), macos-15-intel (x86_64),
-  macOS Strict (M1/ARM64), Sanitizers (ASAN/UBSAN),
-  CRAN-ubuntu/windows/macos
-
-All 161 C++ and 6 C translation units were additionally compiled under
-both `-std=gnu++17` and `-std=gnu++20`.
-
-The whole package was additionally compiled against libc++ using clang
-22.1.8 in a container, under both `-std=gnu++17` and `-std=gnu++20`:
-161 of 161 translation units, no errors. libc++ is the standard library
-whose removal of transitive includes produced the reported failures, and
-it is not available in any hosted CI image, so this was the only way to
-test rather than infer. It is now the check we run before any
-resubmission or upstream resync.
-
-MacOSX11.sdk remains unavailable anywhere, so the C++ standard pin
-described above is what covers that configuration.
+* Local: Windows 11, R 4.6.0, Rtools45
 
 ### Third-party code
 

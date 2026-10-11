@@ -6,8 +6,8 @@ bibentry(
   author   = c(
     person("Pawan Rama", "Mali")
   ),
-  year     = "2025",
-  note     = "R package version 0.1.5",
+  year     = "2026",
+  note     = sprintf("R package version %s", meta$Version),
   url      = "https://github.com/PawanRamaMali/edgemodelr"
 )
 

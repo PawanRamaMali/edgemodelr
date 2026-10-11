@@ -1,6 +1,38 @@
-# edgemodelr (development)
+# edgemodelr 0.4.5
 
 ## Bug fixes
+
+* **Each completion now starts from an empty context.** The KV cache was
+  never cleared between calls, so every prompt was appended after the
+  previous prompt and answer. Answers depended on earlier calls, and after
+  a few calls the context filled up and every later call failed with
+  "Failed to process prompt". This affected `edge_completion()`,
+  `edge_stream_completion()`, `edge_grammar_completion()` and the functions
+  built on them.
+
+* **Generation can be interrupted.** Esc/Ctrl-C now stops a long
+  generation, and `timeout_seconds` in `edge_completion()` works: it used
+  to have no effect until the call finished. A timeout raises a "timed
+  out" error. The sampler is freed on every exit path.
+
+* **`edge_index_documents()` no longer hangs.** Splitting any document
+  longer than `chunk_size` looped forever. `chunk_overlap` must now be
+  smaller than `chunk_size`.
+
+* **`edge_download_model()` checks checksums for model names.** With a name
+  from `edge_list_models()`, `expected_sha256`, `verify_checksum` and
+  `trust_first_use` were silently ignored.
+
+* **`trust_first_use = TRUE` no longer fails after a download by URL.**
+  Storing the hash raised an error once the file had been downloaded.
+
+* **`edge_install_cuda()` no longer times out.** The ~200 MB download used
+  R's default 60 second timeout.
+
+* **`edge_clean_cache()` keeps the CUDA backend and checksum store.** Both
+  were deleted once they were older than `max_age_days`. The size limit
+  now removes the oldest files until the cache is under the limit; before,
+  some caches could never get under it.
 
 * **Prompts longer than the batch size crashed the session.** The prompt was
   passed to the model in a single call, which llama.cpp only accepts up to

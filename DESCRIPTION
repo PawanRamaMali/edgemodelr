@@ -1,7 +1,7 @@
 Package: edgemodelr
 Type: Package
 Title: Local Large Language Model Inference Engine
-Version: 0.4.4
+Version: 0.4.5
 Authors@R: c(
     person("Pawan Rama", "Mali", email = "prm@outlook.in", role = c("aut", "cre", "cph")),
     person("Georgi", "Gerganov", role = c("aut", "cph"), comment = "Author of llama.cpp and GGML library"),
@@ -39,7 +39,7 @@ Suggests:
     httr,
     plumber
 SystemRequirements: GNU make or equivalent for building
-Note: Package includes self-contained 'llama.cpp' implementation (~56MB)
+Note: Package includes a self-contained 'llama.cpp' implementation
   for complete functionality without external dependencies.
 Config/testthat/edition: 3
 Roxygen: list(markdown = TRUE)
