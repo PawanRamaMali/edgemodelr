@@ -90,3 +90,16 @@ test_that("Error messages are informative", {
     )
   })
 })
+
+
+
+test_that("ggml aborts become R errors instead of crashing the session", {
+  # GGML_ABORT/GGML_ASSERT used to end in raise(SIGABRT) because no abort
+  # callback was installed; now it must surface as a catchable R error.
+  expect_error(
+    edgemodelr:::ggml_abort_test_internal(),
+    "llama.cpp internal error: .*abort-callback self-test"
+  )
+  # The session (and the package) must still be usable afterwards.
+  expect_true(is.data.frame(edge_list_models()))
+})

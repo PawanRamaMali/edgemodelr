@@ -184,6 +184,15 @@ BEGIN_RCPP
     return R_NilValue;
 END_RCPP
 }
+// ggml_abort_test_internal
+void ggml_abort_test_internal();
+RcppExport SEXP _edgemodelr_ggml_abort_test_internal() {
+BEGIN_RCPP
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    ggml_abort_test_internal();
+    return R_NilValue;
+END_RCPP
+}
 // edge_simd_info_internal
 Rcpp::List edge_simd_info_internal();
 RcppExport SEXP _edgemodelr_edge_simd_info_internal() {
@@ -210,6 +219,7 @@ static const R_CallMethodDef CallEntries[] = {
     {"_edgemodelr_edge_chat_apply_template_internal", (DL_FUNC) &_edgemodelr_edge_chat_apply_template_internal, 3},
     {"_edgemodelr_edge_model_chat_template_internal", (DL_FUNC) &_edgemodelr_edge_model_chat_template_internal, 1},
     {"_edgemodelr_set_llama_logging", (DL_FUNC) &_edgemodelr_set_llama_logging, 1},
+    {"_edgemodelr_ggml_abort_test_internal", (DL_FUNC) &_edgemodelr_ggml_abort_test_internal, 0},
     {"_edgemodelr_edge_simd_info_internal", (DL_FUNC) &_edgemodelr_edge_simd_info_internal, 0},
     {NULL, NULL, 0}
 };

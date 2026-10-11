@@ -57,6 +57,10 @@ set_llama_logging <- function(enabled) {
     invisible(.Call(`_edgemodelr_set_llama_logging`, enabled))
 }
 
+ggml_abort_test_internal <- function() {
+    invisible(.Call(`_edgemodelr_ggml_abort_test_internal`))
+}
+
 edge_simd_info_internal <- function() {
     .Call(`_edgemodelr_edge_simd_info_internal`)
 }

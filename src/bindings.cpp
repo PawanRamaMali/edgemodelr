@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 #include <thread>
+#include <stdexcept>
 #include <cstdio>
 #include <fstream>
 #include <algorithm>
@@ -45,6 +46,24 @@ void quiet_log_callback(ggml_log_level level, const char * text, void * user_dat
     Rcpp::warning(std::string("llama.cpp error: ") + text);
   }
   // Otherwise, completely suppress output
+}
+
+// Thread that R runs on; recorded at package load. Only this thread may
+// signal an R error.
+static std::thread::id g_r_main_thread;
+
+// ggml abort callback. Without one, GGML_ABORT/GGML_ASSERT end in
+// raise(SIGABRT) (see ggml_abort in ggml.c) and take down the R session.
+// On R's thread we throw instead: the exception unwinds through ggml_abort
+// (C sources are built with -fexceptions) and through llama.cpp, which
+// either catches it (e.g. llama_model_load returns an error) or lets it
+// reach the BEGIN_RCPP/END_RCPP wrapper in RcppExports.cpp, which turns it
+// into an ordinary R error. On ggml worker threads there is no safe way to
+// reach R, so we return and ggml_abort falls back to raise(SIGABRT).
+static void r_abort_callback(const char * error_message) {
+  if (std::this_thread::get_id() == g_r_main_thread) {
+    throw std::runtime_error(std::string("llama.cpp internal error: ") + error_message);
+  }
 }
 
 // Helper function to ensure initialization is done
@@ -881,9 +900,21 @@ void set_llama_logging(bool enabled) {
   llama_log_set(quiet_log_callback, NULL);
 }
 
+// Test hook (not exported from NAMESPACE): fires GGML_ABORT on R's thread so
+// the test suite can check it becomes an R error instead of a crash.
+// [[Rcpp::export]]
+void ggml_abort_test_internal() {
+  GGML_ABORT("edgemodelr abort-callback self-test");
+}
+
 // Package initialization function - called when the package is loaded
 // [[Rcpp::init]]
 void edgemodelr_init(DllInfo *dll) {
   // Don't initialize llama.cpp during package loading to avoid segfaults
   // Initialization will happen lazily when first needed
+
+  // Installing the abort callback only stores a function pointer, so it is
+  // safe here, and it covers every later ggml call.
+  g_r_main_thread = std::this_thread::get_id();
+  ggml_set_abort_callback(r_abort_callback);
 }

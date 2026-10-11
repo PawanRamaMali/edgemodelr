@@ -1,3 +1,14 @@
+# edgemodelr (development)
+
+## Bug fixes
+
+* **Internal llama.cpp assertions no longer kill the R session.** No ggml
+  abort callback was ever installed, so any `GGML_ASSERT`/`GGML_ABORT` hit
+  on R's thread ended in `raise(SIGABRT)`. These now surface as an
+  ordinary R error ("llama.cpp internal error: ...") and the session keeps
+  working. Assertions on ggml worker threads still abort, because R cannot
+  be signalled from another thread.
+
 # edgemodelr 0.4.4
 
 ## CRAN clang23 fixes

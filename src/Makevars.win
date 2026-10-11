@@ -17,7 +17,9 @@ PKG_CFLAGS = -DNDEBUG -DGGML_USE_CPU
 # Optimisation, PIC and -DNDEBUG all arrive through $(ALL_*FLAGS); only
 # genuinely engine-specific additions belong here.
 GGML_EXTRA_CXXFLAGS = -ftree-vectorize
-GGML_EXTRA_CFLAGS = -ftree-vectorize -fno-builtin-printf
+# -fexceptions: the ggml abort callback in bindings.cpp throws a C++
+# exception that must unwind through ggml_abort() and other C frames.
+GGML_EXTRA_CFLAGS = -ftree-vectorize -fno-builtin-printf -fexceptions
 PKG_LIBS = $(LAPACK_LIBS) $(BLAS_LIBS) $(FLIBS)
 
 # Model-specific objects (one file per model architecture, added in b8179)
@@ -119,10 +121,10 @@ RcppExports.o: RcppExports.cpp
 #     ggml_gemv_q4_0_8x8_q8_0_generic are emitted with their true _generic names,
 #     which arch/x86/repack.o and arch/x86/quants.o reference as external symbols.
 ifeq ($(ARCH_OBJECTS),)
-GENERIC_EXTRA_CFLAGS   = -ftree-vectorize -DGGML_CPU_GENERIC
+GENERIC_EXTRA_CFLAGS   = -ftree-vectorize -fexceptions -DGGML_CPU_GENERIC
 GENERIC_EXTRA_CXXFLAGS = -ftree-vectorize -DGGML_CPU_GENERIC
 else
-GENERIC_EXTRA_CFLAGS   = -ftree-vectorize
+GENERIC_EXTRA_CFLAGS   = -ftree-vectorize -fexceptions
 GENERIC_EXTRA_CXXFLAGS = -ftree-vectorize
 endif
 
