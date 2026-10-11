@@ -2,6 +2,13 @@
 
 ## Bug fixes
 
+* **Prompts longer than the batch size crashed the session.** The prompt was
+  passed to the model in a single call, which llama.cpp only accepts up to
+  `n_batch` tokens (512 with the default `n_ctx = 2048`), so any prompt
+  between that and the context size hit an internal assertion, for example
+  a long `edge_ask()` context. The prompt is now fed in `n_batch`-sized
+  chunks in completion, streaming and grammar-constrained generation.
+
 * **Internal llama.cpp assertions no longer kill the R session.** No ggml
   abort callback was ever installed, so any `GGML_ASSERT`/`GGML_ABORT` hit
   on R's thread ended in `raise(SIGABRT)`. These now surface as an

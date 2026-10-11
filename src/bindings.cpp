@@ -66,6 +66,22 @@ static void r_abort_callback(const char * error_message) {
   }
 }
 
+// Feed the prompt to the model in chunks of at most n_batch tokens.
+// llama_decode() asserts n_tokens <= n_batch, so a single call with the whole
+// prompt fails for any prompt longer than n_batch (512 at n_ctx = 2048) even
+// though it fits in the context. llama_batch_get_one() leaves positions unset,
+// so each chunk continues from the previous one; only the last token of the
+// final chunk produces logits, which is the one sampling needs.
+static bool decode_prompt(llama_context * ctx, std::vector<llama_token> & tokens) {
+  const size_t n_batch = std::max<uint32_t>(1, llama_n_batch(ctx));
+  for (size_t i = 0; i < tokens.size(); i += n_batch) {
+    const size_t n = std::min(n_batch, tokens.size() - i);
+    llama_batch chunk = llama_batch_get_one(tokens.data() + i, (int32_t)n);
+    if (llama_decode(ctx, chunk)) return false;
+  }
+  return true;
+}
+
 // Helper function to ensure initialization is done
 static void ensure_llama_initialized() {
   static bool initialized = false;
@@ -312,10 +328,10 @@ std::string edge_completion_internal(SEXP model_ptr, std::string prompt, int n_p
     }
 
     // Create initial batch for the prompt
-    llama_batch batch = llama_batch_get_one(prompt_tokens.data(), (int32_t)prompt_tokens.size());
+    llama_batch batch = {};
 
     // Process the prompt
-    if (llama_decode(edge_ctx->ctx, batch)) {
+    if (!decode_prompt(edge_ctx->ctx, prompt_tokens)) {
       stop("Failed to process prompt");
     }
 
@@ -463,10 +479,10 @@ List edge_completion_stream_internal(SEXP model_ptr, std::string prompt, Functio
     }
 
     // Create initial batch for the prompt
-    llama_batch batch = llama_batch_get_one(prompt_tokens.data(), (int32_t)prompt_tokens.size());
+    llama_batch batch = {};
 
     // Process the prompt
-    if (llama_decode(edge_ctx->ctx, batch)) {
+    if (!decode_prompt(edge_ctx->ctx, prompt_tokens)) {
       stop("Failed to process prompt");
     }
 
@@ -625,8 +641,8 @@ std::string edge_completion_grammar_internal(SEXP model_ptr, std::string prompt,
     }
 
     // Process prompt
-    llama_batch batch = llama_batch_get_one(prompt_tokens.data(), (int32_t)prompt_tokens.size());
-    if (llama_decode(edge_ctx->ctx, batch)) stop("Failed to process prompt");
+    llama_batch batch = {};
+    if (!decode_prompt(edge_ctx->ctx, prompt_tokens)) stop("Failed to process prompt");
 
     // Build sampler chain WITH grammar constraint
     auto sampler_chain_params = llama_sampler_chain_default_params();
