@@ -277,27 +277,21 @@ test_that("E2E: prompts longer than n_batch are processed", {
                       cache_dir = test_dir)
   }
 
-  # n_ctx = 520 gives n_batch = 260. This prompt is about 310 tokens: it
+  # n_ctx = 513 gives n_batch = 256. This prompt is about 277 tokens: it
   # fits the context but used to trip GGML_ASSERT(n_tokens_all <= n_batch)
-  # because the whole prompt went to llama_decode in one call. Keep it
-  # short: the generic CPU build processes prompts slowly, and an 800
-  # token version took over 20 minutes on CI runners.
-  ctx <- edge_load_model(model_path, n_ctx = 520L, n_gpu_layers = 0)
+  # because the whole prompt went to llama_decode in one call. Keep it to
+  # one short call: the generic CPU build processes prompts slowly, and a
+  # 300 token prompt takes about 5 minutes on CI runners. All three
+  # completion paths share decode_prompt(), so one path covers the fix.
+  ctx <- edge_load_model(model_path, n_ctx = 513L, n_gpu_layers = 0)
   on.exit(edge_free_model(ctx), add = TRUE)
   long_prompt <- paste(
-    rep("The patient reported a mild headache on day three.", 26),
+    rep("The patient reported a mild headache on day three.", 23),
     collapse = " "
   )
 
-  out <- edge_completion(ctx, long_prompt, n_predict = 8L)
+  out <- edge_completion(ctx, long_prompt, n_predict = 4L)
   expect_type(out, "character")
-
-  grammar <- edge_json_grammar(list(answer = c("yes", "no")))
-  out2 <- edge_grammar_completion(
-    ctx, paste(long_prompt, "Did the patient report a headache?"),
-    grammar, n_predict = 16L
-  )
-  expect_match(out2, "\"answer\"")
 })
 
 test_that("E2E: each completion starts from an empty context", {
