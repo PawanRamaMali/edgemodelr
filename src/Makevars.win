@@ -87,6 +87,16 @@ else
   ARCH_OBJECTS =
 endif
 
+# 64-bit Windows GCC cannot keep the stack 32-byte aligned for AVX, so an
+# aligned vector move on a spilled register faults: every SIMD build used to
+# segfault in edge_load_model(). Have the assembler emit unaligned moves
+# instead, which cost nothing on current CPUs. SIMD builds only; the default
+# generic build is unchanged.
+ifneq ($(strip $(ARCH_OBJECTS)),)
+  GGML_EXTRA_CXXFLAGS += -Wa,-muse-unaligned-vector-move
+  GGML_EXTRA_CFLAGS += -Wa,-muse-unaligned-vector-move
+endif
+
 # Complete objects list with architecture support and model implementations
 OBJECTS = $(CORE_OBJECTS) $(MODEL_OBJECTS) $(ARCH_OBJECTS)
 
