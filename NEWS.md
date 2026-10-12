@@ -2,6 +2,13 @@
 
 ## Performance
 
+* `edge_load_model()` gains `prompt_cache`. With `prompt_cache = TRUE` the
+  model keeps its KV cache between calls and reuses the part of a new prompt
+  that matches the start of the previous one, so only the rest is processed.
+  It helps most when prompts share a long fixed beginning such as a system
+  prompt; in one test it cut each call by about 30%. Answers still depend
+  only on their own prompt. Off by default.
+
 * Grammar-constrained generation is about twice as fast on SIMD builds
   (`edge_grammar_completion()` and everything built on it, such as
   `edge_extract()` and `edge_classify()`). The grammar used to be checked
