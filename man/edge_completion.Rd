@@ -18,7 +18,7 @@ edge_completion(
 
 \item{n_predict}{Maximum tokens to generate (default: 128)}
 
-\item{temperature}{Sampling temperature (default: 0.8)}
+\item{temperature}{Sampling temperature (default: 0.8). 0 gives greedy decoding: the same prompt always gives the same text.}
 
 \item{top_p}{Top-p sampling parameter (default: 0.95)}
 

@@ -357,3 +357,38 @@ test_that("E2E: timeout_seconds stops a long generation", {
   # The context is still usable afterwards.
   expect_type(edge_completion(ctx, "Hello", n_predict = 4L), "character")
 })
+
+test_that("E2E: temperature 0 is greedy and gives the same text every time", {
+  skip_on_cran()
+  skip_if_offline()
+  skip_on_os("windows") # Windows CI has memory/segfault issues with model loading
+  skip_if_not_installed("jsonlite")
+
+  models <- edge_list_models()
+  tiny_model <- models[models$name == "TinyLlama-1.1B", ]
+  test_dir <- file.path(tempdir(), "edgemodelr_integration_tests")
+  dir.create(test_dir, showWarnings = FALSE, recursive = TRUE)
+  model_path <- file.path(test_dir, tiny_model$filename[1])
+  if (!file.exists(model_path)) {
+    edge_download_url(tiny_model$download_url[1], tiny_model$filename[1],
+                      cache_dir = test_dir)
+  }
+
+  ctx <- edge_load_model(model_path, n_ctx = 512L, n_gpu_layers = 0)
+  on.exit(edge_free_model(ctx), add = TRUE)
+
+  prompt <- "List three primary colours:"
+  first <- edge_completion(ctx, prompt, n_predict = 16L, temperature = 0)
+  expect_identical(edge_completion(ctx, prompt, n_predict = 16L, temperature = 0),
+                   first)
+
+  # Grammar output stays valid and is just as repeatable. Enum fields only,
+  # so the JSON always closes within n_predict.
+  grammar <- edge_json_grammar(list(answer = c("yes", "no"),
+                                    confidence = c("low", "medium", "high")))
+  q <- "Is Paris the capital of France? Reply in JSON."
+  a <- edge_grammar_completion(ctx, q, grammar, n_predict = 48L, temperature = 0)
+  expect_identical(edge_grammar_completion(ctx, q, grammar, n_predict = 48L,
+                                           temperature = 0), a)
+  expect_true(jsonlite::fromJSON(a)$answer %in% c("yes", "no"))
+})
