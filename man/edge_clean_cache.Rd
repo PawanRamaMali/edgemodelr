@@ -32,6 +32,8 @@ Invisible list of deleted files
 \description{
 Remove outdated model files from the cache directory to comply with CRAN
 policies about actively managing cached content and keeping sizes small.
+The CUDA backend in the \code{cuda} subdirectory and the local checksum store
+are never removed.
 }
 \examples{
 \dontrun{

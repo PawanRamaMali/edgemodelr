@@ -209,3 +209,99 @@ test_that("edge_load_ollama_model accepts optional parameters", {
     "No Ollama model"
   )
 })
+
+# ============================================================================
+# Fixes in 0.4.5
+# ============================================================================
+
+age_files <- function(paths, days) {
+  old <- Sys.time() - days * 24 * 3600
+  for (p in paths) Sys.setFileTime(p, old)
+}
+
+test_that("edge_clean_cache keeps the CUDA backend and checksum store", {
+  temp_cache <- tempfile("cache_test")
+  dir.create(temp_cache)
+  on.exit(unlink(temp_cache, recursive = TRUE), add = TRUE)
+  dir.create(file.path(temp_cache, "cuda"))
+  model <- file.path(temp_cache, "old_model.gguf")
+  dll <- file.path(temp_cache, "cuda", "ggml-cuda.dll")
+  hashes <- file.path(temp_cache, "known_hashes.csv")
+  for (p in c(model, dll, hashes)) writeLines("x", p)
+  age_files(c(model, dll, hashes), 60)
+
+  deleted <- edge_clean_cache(cache_dir = temp_cache, max_age_days = 30,
+                              ask = FALSE, verbose = FALSE)
+
+  expect_false(file.exists(model))
+  expect_true(file.exists(dll))
+  expect_true(file.exists(hashes))
+  expect_equal(basename(deleted), "old_model.gguf")
+})
+
+test_that("edge_clean_cache evicts oldest files until under the size limit", {
+  temp_cache <- tempfile("cache_test")
+  dir.create(temp_cache)
+  on.exit(unlink(temp_cache, recursive = TRUE), add = TRUE)
+  big_old <- file.path(temp_cache, "big_old.gguf")
+  small_new <- file.path(temp_cache, "small_new.gguf")
+  writeBin(raw(600 * 1024), big_old)
+  writeBin(raw(300 * 1024), small_new)
+  age_files(big_old, 2)
+
+  # 0.88 MB in total against a 0.5 MB limit: removing the oldest file is
+  # enough, even though it is larger than the excess.
+  edge_clean_cache(cache_dir = temp_cache, max_age_days = 30, max_size_mb = 0.5,
+                   ask = FALSE, verbose = FALSE)
+
+  expect_false(file.exists(big_old))
+  expect_true(file.exists(small_new))
+})
+
+test_that("trust_first_use stores a hash for downloads without a model id", {
+  temp_cache <- tempfile("cache_test")
+  dir.create(temp_cache)
+  on.exit(unlink(temp_cache, recursive = TRUE), add = TRUE)
+  model <- file.path(temp_cache, "m.gguf")
+  writeLines("model bytes", model)
+  skip_if(is.na(edgemodelr:::.compute_sha256(model)), "no SHA-256 tool available")
+
+  expect_true(edgemodelr:::.validate_model_checksum(
+    model, model_id = NULL, filename = "m.gguf", cache_dir = temp_cache,
+    trust_first_use = TRUE, verbose = FALSE
+  ))
+  known <- edgemodelr:::.get_known_hashes(temp_cache)
+  expect_equal(nrow(known), 1L)
+  expect_equal(known$filename, "m.gguf")
+
+  # The stored hash is then used to verify the same file.
+  expect_true(edgemodelr:::.validate_model_checksum(
+    model, filename = "m.gguf", cache_dir = temp_cache, verbose = FALSE
+  ))
+})
+
+test_that("edge_download_model passes checksum options through for model names", {
+  seen <- NULL
+  local_mocked_bindings(edge_download_url = function(...) {
+    seen <<- list(...)
+    "fake/path.gguf"
+  })
+
+  edge_download_model("TinyLlama-1.1B", expected_sha256 = "abc123",
+                      trust_first_use = TRUE, verbose = FALSE)
+
+  expect_equal(seen$expected_sha256, "abc123")
+  expect_true(seen$trust_first_use)
+  expect_true(seen$verify_checksum)
+})
+
+test_that(".chunk_text terminates and covers the whole text", {
+  text <- strrep("Hello there. ", 100)
+  chunks <- edgemodelr:::.chunk_text(text, chunk_size = 500L, overlap = 50L)
+  expect_true(length(chunks) >= 3L && length(chunks) <= 5L)
+  expect_true(endsWith(chunks[length(chunks)], "Hello there."))
+
+  # Overlap as large as the chunk used to stop pos from advancing.
+  chunks <- edgemodelr:::.chunk_text(strrep("abcdefghij", 30), chunk_size = 100L, overlap = 100L)
+  expect_true(length(chunks) > 0L)
+})

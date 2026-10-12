@@ -208,21 +208,35 @@ jobs:
             exit 1
           fi
 
-          # Install with sanitizers enabled
-          R CMD INSTALL --configure-args="--enable-sanitizers" "$PKG_TARBALL" || {
-            echo "⚠️  Cannot install with sanitizers, trying standard install"
-            R CMD INSTALL "$PKG_TARBALL"
-          }
+          # There is no configure script, so sanitizers are switched on
+          # through the user Makevars. src/Makevars appends to R's
+          # ALL_CFLAGS/ALL_CXXFLAGS, so these reach the vendored ggml/llama
+          # sources too. C++ is pinned to C++17 (CXX_STD), hence CXX17FLAGS.
+          SAN="-fsanitize=address,undefined -fno-sanitize-recover=undefined -fno-omit-frame-pointer -g -O1"
+          mkdir -p ~/.R
+          cat > ~/.R/Makevars <<MAKEVARS
+          CFLAGS += $SAN
+          CXXFLAGS += $SAN
+          CXX17FLAGS += $SAN
+          LDFLAGS += -fsanitize=address,undefined
+          MAKEVARS
+          cat ~/.R/Makevars
 
-          # Run tests with ASAN/UBSAN
-          export ASAN_OPTIONS="detect_leaks=1:detect_odr_violation=2"
+          R CMD INSTALL "$PKG_TARBALL"
+
+          # R itself is not built with ASAN, so the runtime must be preloaded.
+          # Leak detection is off: R does not free everything at exit.
+          export LD_PRELOAD="$(gcc -print-file-name=libasan.so):$(gcc -print-file-name=libubsan.so)"
+          export ASAN_OPTIONS="detect_leaks=0:detect_odr_violation=0:halt_on_error=1"
           export UBSAN_OPTIONS="print_stacktrace=1:halt_on_error=1"
 
-          R -e "library(edgemodelr); testthat::test_local()" || echo "⚠️  Sanitizer tests completed with warnings"
+          # Test the installed (sanitized) build. test_local() would recompile
+          # src/ through pkgload with debug flags that override the ones
+          # above. NOT_CRAN=true so the e2e tests run inference under ASAN.
+          Rscript -e "testthat::test_dir('tests/testthat', package = 'edgemodelr', load_package = 'installed', stop_on_failure = TRUE)"
         shell: bash
         env:
-          _R_CHECK_CRAN_INCOMING_: false
-          _R_CHECK_FORCE_SUGGESTS_: false
+          NOT_CRAN: true
 
       - name: Upload sanitizer results
         if: failure()

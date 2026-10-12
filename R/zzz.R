@@ -54,6 +54,6 @@
   }, error = function(e) {
     # Silently ignore cleanup errors during unload
   })
-  
+
   library.dynam.unload("edgemodelr", libpath)
 }

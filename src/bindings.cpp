@@ -5,6 +5,9 @@
 #include <string>
 #include <vector>
 #include <thread>
+#include <chrono>
+#include <sstream>
+#include <stdexcept>
 #include <cstdio>
 #include <fstream>
 #include <algorithm>
@@ -46,6 +49,58 @@ void quiet_log_callback(ggml_log_level level, const char * text, void * user_dat
   }
   // Otherwise, completely suppress output
 }
+
+// Thread that R runs on; recorded at package load. Only this thread may
+// signal an R error.
+static std::thread::id g_r_main_thread;
+
+// ggml abort callback. Without one, GGML_ABORT/GGML_ASSERT end in
+// raise(SIGABRT) (see ggml_abort in ggml.c) and take down the R session.
+// On R's thread we throw instead: the exception unwinds through ggml_abort
+// (C sources are built with -fexceptions) and through llama.cpp, which
+// either catches it (e.g. llama_model_load returns an error) or lets it
+// reach the BEGIN_RCPP/END_RCPP wrapper in RcppExports.cpp, which turns it
+// into an ordinary R error. On ggml worker threads there is no safe way to
+// reach R, so we return and ggml_abort falls back to raise(SIGABRT).
+static void r_abort_callback(const char * error_message) {
+  if (std::this_thread::get_id() == g_r_main_thread) {
+    throw std::runtime_error(std::string("llama.cpp internal error: ") + error_message);
+  }
+}
+
+// Feed the prompt to the model in chunks of at most n_batch tokens.
+// llama_decode() asserts n_tokens <= n_batch, so a single call with the whole
+// prompt fails for any prompt longer than n_batch (512 at n_ctx = 2048) even
+// though it fits in the context. llama_batch_get_one() leaves positions unset,
+// so each chunk continues from the previous one; only the last token of the
+// final chunk produces logits, which is the one sampling needs.
+static bool decode_prompt(llama_context * ctx, std::vector<llama_token> & tokens) {
+  const size_t n_batch = std::max<uint32_t>(1, llama_n_batch(ctx));
+  for (size_t i = 0; i < tokens.size(); i += n_batch) {
+    const size_t n = std::min(n_batch, tokens.size() - i);
+    llama_batch chunk = llama_batch_get_one(tokens.data() + i, (int32_t)n);
+    if (llama_decode(ctx, chunk)) return false;
+  }
+  return true;
+}
+
+// Each completion starts from an empty KV cache. llama_batch_get_one() leaves
+// positions unset, so without this a prompt is appended after everything the
+// previous call left in the cache: answers depend on earlier calls, and once
+// the cache is full every later call fails.
+static void clear_kv_cache(llama_context * ctx) {
+  llama_memory_t mem = llama_get_memory(ctx);
+  if (mem) {
+    llama_memory_clear(mem, true);
+  }
+}
+
+// Frees the sampler chain on every exit path, including R errors, user
+// interrupts and ggml aborts that unwind out of the generation loop.
+struct SamplerDeleter {
+  void operator()(llama_sampler * s) const { if (s) llama_sampler_free(s); }
+};
+typedef std::unique_ptr<llama_sampler, SamplerDeleter> sampler_ptr;
 
 // Helper function to ensure initialization is done
 static void ensure_llama_initialized() {
@@ -243,7 +298,8 @@ SEXP edge_load_model_internal(std::string model_path, int n_ctx = 2048, int n_gp
 }
 
 // [[Rcpp::export]]
-std::string edge_completion_internal(SEXP model_ptr, std::string prompt, int n_predict = 128, double temperature = 0.8, double top_p = 0.95) {
+std::string edge_completion_internal(SEXP model_ptr, std::string prompt, int n_predict = 128, double temperature = 0.8, double top_p = 0.95, double timeout_seconds = 0.0) {
+  const auto started = std::chrono::steady_clock::now();
   try {
     if (TYPEOF(model_ptr) != EXTPTRSXP) {
       stop("Invalid model context");
@@ -293,21 +349,11 @@ std::string edge_completion_internal(SEXP model_ptr, std::string prompt, int n_p
     }
 
     // Create initial batch for the prompt
-    // Start every completion from an empty cache. llama_batch_get_one leaves
-    // the batch positions unset, so the allocator continues numbering from
-    // seq_pos_max + 1. Without this the prompt is appended to whatever the
-    // previous call left behind: each answer is conditioned on every earlier
-    // prompt in the session, and repeated calls fill the context until decode
-    // fails with a misleading "Failed to process prompt".
-    llama_memory_t mem = llama_get_memory(edge_ctx->ctx);
-    if (mem) {
-      llama_memory_clear(mem, true);
-    }
-
-    llama_batch batch = llama_batch_get_one(prompt_tokens.data(), (int32_t)prompt_tokens.size());
+    llama_batch batch = {};
 
     // Process the prompt
-    if (llama_decode(edge_ctx->ctx, batch)) {
+    clear_kv_cache(edge_ctx->ctx);
+    if (!decode_prompt(edge_ctx->ctx, prompt_tokens)) {
       stop("Failed to process prompt");
     }
 
@@ -316,7 +362,8 @@ std::string edge_completion_internal(SEXP model_ptr, std::string prompt, int n_p
     
     // Create a sampler chain for better token generation
     auto sampler_chain_params = llama_sampler_chain_default_params();
-    auto * sampler = llama_sampler_chain_init(sampler_chain_params);
+    sampler_ptr sampler_owner(llama_sampler_chain_init(sampler_chain_params));
+    llama_sampler * sampler = sampler_owner.get();
 
     // Add samplers in the right order for quality generation
     if (top_p < 1.0f) {
@@ -329,6 +376,17 @@ std::string edge_completion_internal(SEXP model_ptr, std::string prompt, int n_p
 
     // Generate tokens using the new sampler API
     for (int i = 0; i < n_predict; ++i) {
+      // Lets Esc/Ctrl-C stop a long generation.
+      Rcpp::checkUserInterrupt();
+      if (timeout_seconds > 0) {
+        const std::chrono::duration<double> elapsed = std::chrono::steady_clock::now() - started;
+        if (elapsed.count() >= timeout_seconds) {
+          std::ostringstream msg;
+          msg << "Generation timed out after " << timeout_seconds << " seconds";
+          throw std::runtime_error(msg.str());
+        }
+      }
+
       // Sample next token using the sampler chain
       llama_token new_token = llama_sampler_sample(sampler, edge_ctx->ctx, -1);
       
@@ -366,8 +424,6 @@ std::string edge_completion_internal(SEXP model_ptr, std::string prompt, int n_p
       }
     }
 
-    // Clean up sampler
-    llama_sampler_free(sampler);
 
     return result;
     
@@ -455,21 +511,11 @@ List edge_completion_stream_internal(SEXP model_ptr, std::string prompt, Functio
     }
 
     // Create initial batch for the prompt
-    // Start every completion from an empty cache. llama_batch_get_one leaves
-    // the batch positions unset, so the allocator continues numbering from
-    // seq_pos_max + 1. Without this the prompt is appended to whatever the
-    // previous call left behind: each answer is conditioned on every earlier
-    // prompt in the session, and repeated calls fill the context until decode
-    // fails with a misleading "Failed to process prompt".
-    llama_memory_t mem = llama_get_memory(edge_ctx->ctx);
-    if (mem) {
-      llama_memory_clear(mem, true);
-    }
-
-    llama_batch batch = llama_batch_get_one(prompt_tokens.data(), (int32_t)prompt_tokens.size());
+    llama_batch batch = {};
 
     // Process the prompt
-    if (llama_decode(edge_ctx->ctx, batch)) {
+    clear_kv_cache(edge_ctx->ctx);
+    if (!decode_prompt(edge_ctx->ctx, prompt_tokens)) {
       stop("Failed to process prompt");
     }
 
@@ -480,7 +526,8 @@ List edge_completion_stream_internal(SEXP model_ptr, std::string prompt, Functio
 
     // Create sampler chain for streaming
     auto sampler_chain_params = llama_sampler_chain_default_params();
-    auto * sampler = llama_sampler_chain_init(sampler_chain_params);
+    sampler_ptr sampler_owner(llama_sampler_chain_init(sampler_chain_params));
+    llama_sampler * sampler = sampler_owner.get();
 
     // Add samplers for quality generation
     if (top_p < 1.0f) {
@@ -493,6 +540,9 @@ List edge_completion_stream_internal(SEXP model_ptr, std::string prompt, Functio
 
     // Generate tokens one by one and stream them with proper sampling
     for (int i = 0; i < n_predict; ++i) {
+      // Lets Esc/Ctrl-C stop a long generation.
+      Rcpp::checkUserInterrupt();
+
       // Sample next token using the sampler chain
       llama_token new_token = llama_sampler_sample(sampler, edge_ctx->ctx, -1);
       
@@ -574,8 +624,6 @@ List edge_completion_stream_internal(SEXP model_ptr, std::string prompt, Functio
       warning("Final callback error: " + std::string(e.what()));
     }
 
-    // Clean up sampler
-    llama_sampler_free(sampler);
 
     // Return summary information
     return List::create(
@@ -628,29 +676,19 @@ std::string edge_completion_grammar_internal(SEXP model_ptr, std::string prompt,
     }
 
     // Process prompt
-    // Start every completion from an empty cache. llama_batch_get_one leaves
-    // the batch positions unset, so the allocator continues numbering from
-    // seq_pos_max + 1. Without this the prompt is appended to whatever the
-    // previous call left behind: each answer is conditioned on every earlier
-    // prompt in the session, and repeated calls fill the context until decode
-    // fails with a misleading "Failed to process prompt".
-    llama_memory_t mem = llama_get_memory(edge_ctx->ctx);
-    if (mem) {
-      llama_memory_clear(mem, true);
-    }
-
-    llama_batch batch = llama_batch_get_one(prompt_tokens.data(), (int32_t)prompt_tokens.size());
-    if (llama_decode(edge_ctx->ctx, batch)) stop("Failed to process prompt");
+    llama_batch batch = {};
+    clear_kv_cache(edge_ctx->ctx);
+    if (!decode_prompt(edge_ctx->ctx, prompt_tokens)) stop("Failed to process prompt");
 
     // Build sampler chain WITH grammar constraint
     auto sampler_chain_params = llama_sampler_chain_default_params();
-    auto * sampler = llama_sampler_chain_init(sampler_chain_params);
+    sampler_ptr sampler_owner(llama_sampler_chain_init(sampler_chain_params));
+    llama_sampler * sampler = sampler_owner.get();
 
     // Add grammar sampler first (constrains token selection)
     if (!grammar_str.empty()) {
       auto * grammar_sampler = llama_sampler_init_grammar(vocab, grammar_str.c_str(), grammar_root.c_str());
       if (!grammar_sampler) {
-        llama_sampler_free(sampler);
         stop("Failed to parse GBNF grammar. Check grammar syntax.");
       }
       llama_sampler_chain_add(sampler, grammar_sampler);
@@ -670,6 +708,8 @@ std::string edge_completion_grammar_internal(SEXP model_ptr, std::string prompt,
     result.reserve(n_predict * 8);
 
     for (int i = 0; i < n_predict; ++i) {
+      Rcpp::checkUserInterrupt();
+
       // llama_sampler_sample applies constraints, selects a token, AND calls
       // llama_sampler_accept internally — do NOT call accept again afterward.
       llama_token new_token = llama_sampler_sample(sampler, edge_ctx->ctx, -1);
@@ -690,7 +730,6 @@ std::string edge_completion_grammar_internal(SEXP model_ptr, std::string prompt,
       if (llama_decode(edge_ctx->ctx, batch)) break;
     }
 
-    llama_sampler_free(sampler);
     return result;
 
   } catch (const std::exception& e) {
@@ -914,9 +953,21 @@ void set_llama_logging(bool enabled) {
   llama_log_set(quiet_log_callback, NULL);
 }
 
+// Test hook (not exported from NAMESPACE): fires GGML_ABORT on R's thread so
+// the test suite can check it becomes an R error instead of a crash.
+// [[Rcpp::export]]
+void ggml_abort_test_internal() {
+  GGML_ABORT("edgemodelr abort-callback self-test");
+}
+
 // Package initialization function - called when the package is loaded
 // [[Rcpp::init]]
 void edgemodelr_init(DllInfo *dll) {
   // Don't initialize llama.cpp during package loading to avoid segfaults
   // Initialization will happen lazily when first needed
+
+  // Installing the abort callback only stores a function pointer, so it is
+  // safe here, and it covers every later ggml call.
+  g_r_main_thread = std::this_thread::get_id();
+  ggml_set_abort_callback(r_abort_callback);
 }

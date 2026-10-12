@@ -4,19 +4,19 @@ test_that("Invalid file paths are handled properly", {
     edge_load_model("does_not_exist.gguf"),
     "Model file does not exist"
   )
-  
+
   # Empty file path
   expect_error(
     edge_load_model(""),
     "Model file does not exist"
   )
-  
+
   # NULL file path
   expect_error(
     edge_load_model(NULL),
     "invalid 'file' argument"
   )
-  
+
   # Directory instead of file
   if (dir.exists("tests")) {
     expect_error(
@@ -32,7 +32,7 @@ test_that("edge_completion handles errors gracefully", {
   expect_error(
     edge_completion(NULL, "Hello", n_predict = 5)
   )
-  
+
   # Test with invalid context types
   invalid_contexts <- list("string", 123, list(), data.frame())
   for (ctx in invalid_contexts) {
@@ -40,7 +40,7 @@ test_that("edge_completion handles errors gracefully", {
       edge_completion(ctx, "Hello", n_predict = 5)
     )
   }
-  
+
   # Test with invalid prompt types
   expect_error(edge_completion(NULL, NULL, n_predict = 5))
   expect_error(edge_completion(NULL, 123, n_predict = 5))
@@ -55,11 +55,11 @@ test_that("Corrupted or invalid model files are handled", {
   if (!file.exists(fake_gguf)) {
     writeLines("This is not a real GGUF file", fake_gguf)
   }
-  
+
   expect_error(
     edge_load_model(fake_gguf)
   )
-  
+
   # Cleanup
   if (file.exists(fake_gguf)) {
     unlink(fake_gguf)
@@ -79,7 +79,7 @@ test_that("Error messages are informative", {
       info = paste("Error message should be informative:", e$message)
     )
   })
-  
+
   # Test error messages for invalid contexts
   tryCatch({
     edge_completion("invalid_context", "Hello")
@@ -92,3 +92,14 @@ test_that("Error messages are informative", {
 })
 
 
+
+test_that("ggml aborts become R errors instead of crashing the session", {
+  # GGML_ABORT/GGML_ASSERT used to end in raise(SIGABRT) because no abort
+  # callback was installed; now it must surface as a catchable R error.
+  expect_error(
+    edgemodelr:::ggml_abort_test_internal(),
+    "llama.cpp internal error: .*abort-callback self-test"
+  )
+  # The session (and the package) must still be usable afterwards.
+  expect_true(is.data.frame(edge_list_models()))
+})

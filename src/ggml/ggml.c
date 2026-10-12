@@ -56,7 +56,7 @@
  * The fprintf/fputs/fflush calls in this file are diagnostic-only:
  * the default log callback (overridden by the R bindings via
  * llama_log_set), backtrace WARNING messages (unreachable in R
- * because the abort callback longjmps first), and the optional
+ * because the abort callback throws first), and the optional
  * ggml_graph_dump_dot debug helper (not exposed to R). The macros
  * discard the stream arguments so that stderr/stdout symbols never
  * reach the compiled object. */
@@ -267,8 +267,8 @@ GGML_API ggml_abort_callback_t ggml_set_abort_callback(ggml_abort_callback_t cal
 
 void ggml_abort(const char * file, int line, const char * fmt, ...) {
 #ifndef USING_R
-    // In R builds, fflush(stdout) is omitted: the abort callback (Rf_error)
-    // does longjmp and never returns, so flushing stdout is not needed.
+    // In R builds, fflush(stdout) is omitted: the abort callback throws a C++
+    // exception (on R's thread), so flushing stdout is not needed.
     // Referencing stdout violates CRAN's compiled-code policy on macOS.
     fflush(stdout);
 #endif
@@ -296,8 +296,8 @@ void ggml_abort(const char * file, int line, const char * fmt, ...) {
     // CRAN policy prohibits calling abort() from compiled code.
     // raise(SIGABRT) has the same effect (terminates the process via signal)
     // without referencing the banned 'abort' symbol in the object file.
-    // In practice the R bindings always install an abort callback (Rf_error,
-    // which does longjmp), so this line is never reached during normal use.
+    // In practice the R bindings install an abort callback that throws on
+    // R's thread; this line is reached only for aborts on ggml worker threads.
     raise(SIGABRT);
     for (;;) {} // unreachable; satisfies _Noreturn requirement for the compiler
 #else

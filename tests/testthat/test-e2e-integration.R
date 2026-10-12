@@ -261,3 +261,98 @@ test_that("E2E: Model reload and reuse", {
   expect_true(is.character(result1))
   expect_true(is.character(result2))
 })
+
+test_that("E2E: prompts longer than n_batch are processed", {
+  skip_on_cran()
+  skip_if_offline()
+  skip_on_os("windows") # Windows CI has memory/segfault issues with model loading
+
+  models <- edge_list_models()
+  tiny_model <- models[models$name == "TinyLlama-1.1B", ]
+  test_dir <- file.path(tempdir(), "edgemodelr_integration_tests")
+  dir.create(test_dir, showWarnings = FALSE, recursive = TRUE)
+  model_path <- file.path(test_dir, tiny_model$filename[1])
+  if (!file.exists(model_path)) {
+    edge_download_url(tiny_model$download_url[1], tiny_model$filename[1],
+                      cache_dir = test_dir)
+  }
+
+  # n_ctx = 2048 gives n_batch = 512. This prompt is about 800 tokens: it
+  # fits the context but used to trip GGML_ASSERT(n_tokens_all <= n_batch)
+  # because the whole prompt went to llama_decode in one call.
+  ctx <- edge_load_model(model_path, n_ctx = 2048L, n_gpu_layers = 0)
+  on.exit(edge_free_model(ctx), add = TRUE)
+  long_prompt <- paste(
+    rep("The patient reported a mild headache on day three.", 70),
+    collapse = " "
+  )
+
+  out <- edge_completion(ctx, long_prompt, n_predict = 8L)
+  expect_type(out, "character")
+
+  grammar <- edge_json_grammar(list(answer = c("yes", "no")))
+  out2 <- edge_grammar_completion(
+    ctx, paste(long_prompt, "Did the patient report a headache?"),
+    grammar, n_predict = 16L
+  )
+  expect_match(out2, "\"answer\"")
+})
+
+test_that("E2E: each completion starts from an empty context", {
+  skip_on_cran()
+  skip_if_offline()
+  skip_on_os("windows") # Windows CI has memory/segfault issues with model loading
+
+  models <- edge_list_models()
+  tiny_model <- models[models$name == "TinyLlama-1.1B", ]
+  test_dir <- file.path(tempdir(), "edgemodelr_integration_tests")
+  dir.create(test_dir, showWarnings = FALSE, recursive = TRUE)
+  model_path <- file.path(test_dir, tiny_model$filename[1])
+  if (!file.exists(model_path)) {
+    edge_download_url(tiny_model$download_url[1], tiny_model$filename[1],
+                      cache_dir = test_dir)
+  }
+
+  # n_ctx = 256 fills after a few calls if the KV cache carries over.
+  ctx <- edge_load_model(model_path, n_ctx = 256L, n_gpu_layers = 0)
+  on.exit(edge_free_model(ctx), add = TRUE)
+
+  first <- edge_completion(ctx, "The capital of France is", n_predict = 16L,
+                           temperature = 0)
+  edge_completion(ctx, "List three colours:", n_predict = 32L, temperature = 0)
+  for (i in 1:8) {
+    out <- edge_completion(ctx, "The capital of France is", n_predict = 16L,
+                           temperature = 0)
+  }
+  expect_identical(out, first)
+})
+
+test_that("E2E: timeout_seconds stops a long generation", {
+  skip_on_cran()
+  skip_if_offline()
+  skip_on_os("windows") # Windows CI has memory/segfault issues with model loading
+
+  models <- edge_list_models()
+  tiny_model <- models[models$name == "TinyLlama-1.1B", ]
+  test_dir <- file.path(tempdir(), "edgemodelr_integration_tests")
+  dir.create(test_dir, showWarnings = FALSE, recursive = TRUE)
+  model_path <- file.path(test_dir, tiny_model$filename[1])
+  if (!file.exists(model_path)) {
+    edge_download_url(tiny_model$download_url[1], tiny_model$filename[1],
+                      cache_dir = test_dir)
+  }
+
+  ctx <- edge_load_model(model_path, n_ctx = 2048L, n_gpu_layers = 0)
+  on.exit(edge_free_model(ctx), add = TRUE)
+
+  started <- proc.time()[["elapsed"]]
+  expect_error(
+    edge_completion(ctx, "Write a very long story about a dragon.",
+                    n_predict = 1500L, timeout_seconds = 1),
+    "timed out"
+  )
+  expect_lt(proc.time()[["elapsed"]] - started, 30)
+
+  # The context is still usable afterwards.
+  expect_type(edge_completion(ctx, "Hello", n_predict = 4L), "character")
+})

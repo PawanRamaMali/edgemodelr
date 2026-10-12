@@ -17,8 +17,8 @@ edge_load_model_internal <- function(model_path, n_ctx = 2048L, n_gpu_layers = 0
     .Call(`_edgemodelr_edge_load_model_internal`, model_path, n_ctx, n_gpu_layers, n_threads, flash_attn, embeddings)
 }
 
-edge_completion_internal <- function(model_ptr, prompt, n_predict = 128L, temperature = 0.8, top_p = 0.95) {
-    .Call(`_edgemodelr_edge_completion_internal`, model_ptr, prompt, n_predict, temperature, top_p)
+edge_completion_internal <- function(model_ptr, prompt, n_predict = 128L, temperature = 0.8, top_p = 0.95, timeout_seconds = 0.0) {
+    .Call(`_edgemodelr_edge_completion_internal`, model_ptr, prompt, n_predict, temperature, top_p, timeout_seconds)
 }
 
 edge_free_model_internal <- function(model_ptr) {
@@ -55,6 +55,10 @@ edge_model_chat_template_internal <- function(model_ptr) {
 
 set_llama_logging <- function(enabled) {
     invisible(.Call(`_edgemodelr_set_llama_logging`, enabled))
+}
+
+ggml_abort_test_internal <- function() {
+    invisible(.Call(`_edgemodelr_ggml_abort_test_internal`))
 }
 
 edge_simd_info_internal <- function() {

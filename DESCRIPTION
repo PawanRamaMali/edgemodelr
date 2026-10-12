@@ -29,7 +29,7 @@ Imports:
     utils,
     tools
 Suggests:
-    testthat (>= 3.0.0),
+    testthat (>= 3.1.7),
     knitr,
     rmarkdown,
     curl,
@@ -41,7 +41,7 @@ Suggests:
     DBI,
     RSQLite
 SystemRequirements: GNU make or equivalent for building
-Note: Package includes self-contained 'llama.cpp' implementation (~56MB)
+Note: Package includes a self-contained 'llama.cpp' implementation
   for complete functionality without external dependencies.
 Config/testthat/edition: 3
 Roxygen: list(markdown = TRUE)

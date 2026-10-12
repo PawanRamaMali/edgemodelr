@@ -20,37 +20,12 @@ rather than summarise it. The reference pages say so.
 
 ## Bug fixes
 
-* **Loading a file that is not GGUF crashed the R session.** The bundled
-  loader is not hardened against arbitrary input: on clang 23 a plain text
-  file made it read unmapped memory rather than return null, taking the
-  session down. `edge_load_model()` now checks for the GGUF magic header
-  before calling the loader and raises a normal R error instead. The crash
-  was reachable in every earlier release.
-
-* **Every completion was conditioned on the previous ones.** The three
-  generation loops build the prompt batch with `llama_batch_get_one()`, which
-  leaves the positions unset, so the allocator continued numbering from where
-  the last call stopped. Nothing cleared the cache in between, so an answer
-  depended on every earlier prompt in the session and repeated calls filled
-  the context until decoding failed with a misleading "Failed to process
-  prompt". Asked to name a fruit after two other questions, the model replied
-  "fresh. Name a location: Paihia", continuing the earlier prompts instead of
-  answering. This affected `edge_map()`, `edge_classify()`,
-  `edge_extract_batch()` and `edge_narrate()`, which all issue one completion
-  per element against a single context. Each loop now clears the cache before
-  decoding its prompt.
-
 * **Grammar constrained generation corrupted sampler state on every token.**
   `llama_sampler_sample()` already calls `llama_sampler_accept()` internally,
   and all three generation loops in `bindings.cpp` called it a second time.
   That left the grammar stack inconsistent, so `edge_grammar_completion()`,
   `edge_extract()`, `edge_extract_batch()` and `edge_classify()` returned
   only an opening brace or truncated output, mainly on Windows.
-
-* **`-Wkeyword-macro` in `ggml/ggml-common.h`.** C23 made `static_assert` a
-  keyword and the header defined a macro over it. Valid C, but clang 23 warns
-  and R CMD check counts that as a significant warning. The macro is now
-  skipped on C23 and later compilers.
 
 * **Missing standard library includes.** Twenty three C library headers were
   used but not included, in files that only compiled because another header
@@ -62,6 +37,73 @@ rather than summarise it. The reference pages say so.
 * Added `docker/` with a base image, a variant with TinyLlama baked in, and
   a compose file. The base image declares the model cache as a volume so a
   host cache can be mounted for offline use.
+
+# edgemodelr 0.4.5
+
+## Bug fixes
+
+* **Each completion now starts from an empty context.** The KV cache was
+  never cleared between calls, so every prompt was appended after the
+  previous prompt and answer. Answers depended on earlier calls, and after
+  a few calls the context filled up and every later call failed with
+  "Failed to process prompt". This affected `edge_completion()`,
+  `edge_stream_completion()`, `edge_grammar_completion()` and the functions
+  built on them.
+
+* **Generation can be interrupted.** Esc/Ctrl-C now stops a long
+  generation, and `timeout_seconds` in `edge_completion()` works: it used
+  to have no effect until the call finished. A timeout raises a "timed
+  out" error. The sampler is freed on every exit path.
+
+* **`edge_index_documents()` no longer hangs.** Splitting any document
+  longer than `chunk_size` looped forever. `chunk_overlap` must now be
+  smaller than `chunk_size`.
+
+* **`edge_download_model()` checks checksums for model names.** With a name
+  from `edge_list_models()`, `expected_sha256`, `verify_checksum` and
+  `trust_first_use` were silently ignored.
+
+* **`trust_first_use = TRUE` no longer fails after a download by URL.**
+  Storing the hash raised an error once the file had been downloaded.
+
+* **`edge_install_cuda()` no longer times out.** The ~200 MB download used
+  R's default 60 second timeout.
+
+* **`edge_clean_cache()` keeps the CUDA backend and checksum store.** Both
+  were deleted once they were older than `max_age_days`. The size limit
+  now removes the oldest files until the cache is under the limit; before,
+  some caches could never get under it.
+
+* **Prompts longer than the batch size crashed the session.** The prompt was
+  passed to the model in a single call, which llama.cpp only accepts up to
+  `n_batch` tokens (512 with the default `n_ctx = 2048`), so any prompt
+  between that and the context size hit an internal assertion, for example
+  a long `edge_ask()` context. The prompt is now fed in `n_batch`-sized
+  chunks in completion, streaming and grammar-constrained generation.
+
+* **Internal llama.cpp assertions no longer kill the R session.** No ggml
+  abort callback was ever installed, so any `GGML_ASSERT`/`GGML_ABORT` hit
+  on R's thread ended in `raise(SIGABRT)`. These now surface as an
+  ordinary R error ("llama.cpp internal error: ...") and the session keeps
+  working. Assertions on ggml worker threads still abort, because R cannot
+  be signalled from another thread.
+
+# edgemodelr 0.4.4
+
+## CRAN clang23 fixes
+
+* **Loading a file that is not GGUF crashed the R session.** The bundled
+  loader is not hardened against arbitrary input, and on clang 23 a plain
+  text file made it read unmapped memory rather than return null, taking
+  the session down. `edge_load_model()` now checks for the GGUF magic
+  header before calling the loader and raises a normal R error instead.
+  The crash was reachable in every earlier release; it only surfaced now
+  because 0.4.1 failed to install on clang 23, so its tests never ran.
+
+* **`-Wkeyword-macro` in `ggml/ggml-common.h`.** C23 made `static_assert`
+  a keyword, and the header defined a macro over it. Valid C, but clang 23
+  warns and R CMD check counts that as a significant warning. The macro is
+  now skipped when the compiler is C23 or later.
 
 # edgemodelr 0.4.3
 

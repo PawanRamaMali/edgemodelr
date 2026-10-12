@@ -42,16 +42,16 @@ edge_load_model <- function(model_path, n_ctx = 2048L, n_gpu_layers = 0L, n_thre
          "  2. Quick setup: edge_quick_setup('TinyLlama-1.1B')\n",
          "  3. List models: edge_list_models()")
   }
-  
+
   # Check if it's a directory instead of a file
   if (dir.exists(model_path)) {
     stop("Path is a directory, not a file: ", model_path)
   }
-  
+
   if (!grepl("\\.gguf$", model_path, ignore.case = TRUE)) {
     warning("Model file should have .gguf extension for optimal compatibility")
   }
-  
+
   # Validate and optimize parameters
   if (!is.numeric(n_ctx) || n_ctx <= 0) {
     stop("n_ctx must be a positive integer")
@@ -127,28 +127,28 @@ edge_load_model <- function(model_path, n_ctx = 2048L, n_gpu_layers = 0L, n_thre
 #' @param top_p Top-p sampling parameter (default: 0.95)
 #' @param timeout_seconds Optional timeout in seconds for inference
 #' @return Generated text as character string
-#' 
+#'
 #' @examples
 #' \dontrun{
 #' # Basic completion example
 #' setup <- edge_quick_setup("TinyLlama-1.1B")
 #' if (!is.null(setup$context)) {
 #'   ctx <- setup$context
-#'   
+#'
 #'   # Simple completion
 #'   result <- edge_completion(ctx, "The capital of France is", n_predict = 50)
 #'   cat("Result:", result, "\n")
-#'   
+#'
 #'   # Completion with custom parameters
 #'   creative_result <- edge_completion(
-#'     ctx, 
+#'     ctx,
 #'     "Write a short poem about data science:",
 #'     n_predict = 100,
 #'     temperature = 0.9,
 #'     top_p = 0.8
 #'   )
 #'   cat("Creative result:", creative_result, "\n")
-#'   
+#'
 #'   edge_free_model(ctx)
 #' }
 #' }
@@ -167,43 +167,42 @@ edge_completion <- function(ctx, prompt, n_predict = 128L, temperature = 0.8, to
   temperature <- max(0.0, min(temperature, 2.0))  # Clamp temperature
   top_p <- max(0.1, min(top_p, 1.0))  # Clamp top_p
 
-  if (!is.null(timeout_seconds)) {
-    if (!is.numeric(timeout_seconds) || length(timeout_seconds) != 1 || timeout_seconds <= 0) {
-      stop("timeout_seconds must be a positive number of seconds")
-    }
-    old_limits <- setTimeLimit(elapsed = timeout_seconds, transient = TRUE)
-    on.exit({
-      setTimeLimit(cpu = Inf, elapsed = Inf, transient = TRUE)
-    }, add = TRUE)
+  if (is.null(timeout_seconds)) {
+    timeout_seconds <- 0
+  } else if (!is.numeric(timeout_seconds) || length(timeout_seconds) != 1 ||
+               is.na(timeout_seconds) || timeout_seconds <= 0) {
+    stop("timeout_seconds must be a positive number of seconds")
   }
 
+  # The timeout is checked in the generation loop, once per token.
   edge_completion_internal(ctx,
-                         prompt,
-                         as.integer(n_predict),
-                         as.numeric(temperature),
-                         as.numeric(top_p))
+                           prompt,
+                           as.integer(n_predict),
+                           as.numeric(temperature),
+                           as.numeric(top_p),
+                           as.numeric(timeout_seconds))
 }
 
 #' Free model context and release memory
 #'
 #' @param ctx Model context from edge_load_model()
 #' @return NULL (invisibly)
-#' 
+#'
 #' @examples
 #' \dontrun{
 #' # Proper cleanup after model usage
 #' setup <- edge_quick_setup("TinyLlama-1.1B")
 #' if (!is.null(setup$context)) {
 #'   ctx <- setup$context
-#'   
+#'
 #'   # Use model for various tasks
 #'   result <- edge_completion(ctx, "Hello", n_predict = 20)
 #'   cat(result)
-#'   
+#'
 #'   # Always clean up when done
 #'   edge_free_model(ctx)
 #' }
-#' 
+#'
 #' # Safe cleanup - handles invalid contexts gracefully
 #' edge_free_model(NULL)  # Safe, no error
 #' edge_free_model("invalid")  # Safe, no error
@@ -217,7 +216,7 @@ edge_free_model <- function(ctx) {
   if (!inherits(ctx, "externalptr")) {
     return(invisible(NULL))
   }
-  
+
   invisible(edge_free_model_internal(ctx))
 }
 
@@ -281,6 +280,9 @@ edge_download_model <- function(model_id, filename = NULL, cache_dir = NULL, for
     if (is.null(filename)) filename <- row$filename
     return(edge_download_url(row$download_url, filename = filename,
                               cache_dir = cache_dir, force_download = force_download,
+                              verify_checksum = verify_checksum,
+                              expected_sha256 = expected_sha256,
+                              trust_first_use = trust_first_use,
                               verbose = verbose))
   }
 
@@ -516,14 +518,14 @@ edge_download_model <- function(model_id, filename = NULL, cache_dir = NULL, for
   known <- .get_known_hashes(cache_dir)
   if (is.null(expected_sha256) && nrow(known) > 0) {
     hit <- known
-    if (!is.null(model_id)) hit <- hit[hit$model_id == model_id, , drop = FALSE]
-    if (!is.null(filename)) hit <- hit[hit$filename == filename, , drop = FALSE]
+    if (!is.null(model_id)) hit <- hit[hit$model_id %in% model_id, , drop = FALSE]
+    if (!is.null(filename)) hit <- hit[hit$filename %in% filename, , drop = FALSE]
     if (nrow(hit) > 0) {
       expected_sha256 <- hit$sha256[1]
     }
   }
 
-  if (is.null(expected_sha256) || !nzchar(expected_sha256)) {
+  if (is.null(expected_sha256) || is.na(expected_sha256) || !nzchar(expected_sha256)) {
     if (verbose) {
       message("Checksum: no known SHA-256 for this model; skipping verification. ",
               "Set expected_sha256 or enable trust-first-use to store a local hash.")
@@ -531,7 +533,11 @@ edge_download_model <- function(model_id, filename = NULL, cache_dir = NULL, for
     if (trust_first_use) {
       computed <- .compute_sha256(path)
       if (!is.na(computed)) {
-        known <- rbind(known, data.frame(model_id = model_id, filename = filename, sha256 = computed,
+        # model_id is NULL for downloads by URL; a NULL column would make
+        # the new row the wrong width for rbind().
+        known <- rbind(known, data.frame(model_id = if (is.null(model_id)) NA_character_ else model_id,
+                                         filename = if (is.null(filename)) NA_character_ else filename,
+                                         sha256 = computed,
                                          stringsAsFactors = FALSE))
         .save_known_hashes(known, cache_dir)
         if (verbose) message("Checksum stored locally (trust-first-use).")
@@ -1258,15 +1264,15 @@ edge_small_model_config <- function(model_size_mb = NULL, available_ram_gb = NUL
 #' @param temperature Sampling temperature (default: 0.8)
 #' @param top_p Top-p sampling parameter (default: 0.95)
 #' @return List with full response and generation statistics
-#' 
+#'
 #' @examples
 #' \dontrun{
 #' model_path <- file.path(tempdir(), "model.gguf")
 #' if (file.exists(model_path)) {
 #'   ctx <- edge_load_model(model_path)
-#'   
+#'
 #'   # Basic streaming with token display
-#'   result <- edge_stream_completion(ctx, "Hello, how are you?", 
+#'   result <- edge_stream_completion(ctx, "Hello, how are you?",
 #'     callback = function(data) {
 #'       if (!data$is_final) {
 #'         cat(data$token)
@@ -1276,7 +1282,7 @@ edge_small_model_config <- function(model_size_mb = NULL, available_ram_gb = NUL
 #'       }
 #'       return(TRUE)  # Continue generation
 #'     })
-#'   
+#'
 #'   edge_free_model(ctx)
 #' }
 #' }
@@ -1295,7 +1301,7 @@ edge_stream_completion <- function(ctx, prompt, callback, n_predict = 128L, temp
   if (!is_valid_model(ctx)) {
     stop("Invalid model context. Load a model first with edge_load_model()")
   }
-  
+
   if (!is.null(timeout_seconds)) {
     if (!is.numeric(timeout_seconds) || length(timeout_seconds) != 1 || timeout_seconds <= 0) {
       stop("timeout_seconds must be a positive number of seconds")
@@ -1342,17 +1348,17 @@ edge_stream_completion <- function(ctx, prompt, callback, n_predict = 128L, temp
 #' @param temperature Sampling temperature (default: 0.8)
 #' @param verbose Whether to print status messages (default: TRUE)
 #' @return NULL (runs interactively)
-#' 
+#'
 #' @examples
 #' \dontrun{
 #' setup <- edge_quick_setup("TinyLlama-1.1B")
 #' ctx <- setup$context
-#' 
+#'
 #' if (!is.null(ctx)) {
 #'   # Start interactive chat with streaming
-#'   # edge_chat_stream(ctx, 
+#'   # edge_chat_stream(ctx,
 #'   #   system_prompt = "You are a helpful R programming assistant.")
-#'   
+#'
 #'   edge_free_model(ctx)
 #' }
 #' }
@@ -1361,46 +1367,46 @@ edge_chat_stream <- function(ctx, system_prompt = NULL, max_history = 10, n_pred
   if (!is_valid_model(ctx)) {
     stop("Invalid model context. Load a model first with edge_load_model()")
   }
-  
+
   conversation_history <- list()
-  
+
   # Add system prompt if provided
   if (!is.null(system_prompt)) {
-    conversation_history <- append(conversation_history, 
+    conversation_history <- append(conversation_history,
                                  list(list(role = "system", content = system_prompt)))
     }
-  
+
   if (verbose) {
     message("Chat started! Type 'quit', 'exit', or 'bye' to end.")
     message("Responses will stream in real-time.")
   }
   if (verbose) cat("\n")
-  
+
   while (TRUE) {
     user_input <- readline("You: ")
-    
+
     # Check for exit commands
     if (tolower(trimws(user_input)) %in% c("quit", "exit", "bye", "")) {
       if (verbose) message("Chat ended!")
       break
     }
-    
+
     # Add user message to history
-    conversation_history <- append(conversation_history, 
+    conversation_history <- append(conversation_history,
                                  list(list(role = "user", content = user_input)))
-    
+
     # Build prompt from conversation history
     prompt <- build_chat_prompt(conversation_history)
-    
+
     # Stream the response
     if (verbose) {
       cat("Assistant: ")
       utils::flush.console()
     }
-    
+
     current_response <- ""
-    
-    result <- edge_stream_completion(ctx, prompt, 
+
+    result <- edge_stream_completion(ctx, prompt,
       callback = function(data) {
         if (!data$is_final) {
           if (verbose) {
@@ -1414,21 +1420,21 @@ edge_chat_stream <- function(ctx, system_prompt = NULL, max_history = 10, n_pred
           return(TRUE)
         }
       },
-      n_predict = n_predict, 
+      n_predict = n_predict,
       temperature = temperature)
-    
+
     # Use the response captured during streaming
     assistant_response <- current_response
-    
+
     # Add assistant response to history
-    conversation_history <- append(conversation_history, 
+    conversation_history <- append(conversation_history,
                                  list(list(role = "assistant", content = assistant_response)))
-    
+
     # Trim history if too long
     if (length(conversation_history) > max_history * 2) {
       # Keep system prompt (if exists) and most recent exchanges
       system_msgs <- conversation_history[sapply(conversation_history, function(x) x$role == "system")]
-      recent_msgs <- tail(conversation_history[sapply(conversation_history, function(x) x$role != "system")], 
+      recent_msgs <- tail(conversation_history[sapply(conversation_history, function(x) x$role != "system")],
                          max_history * 2 - length(system_msgs))
       conversation_history <- c(system_msgs, recent_msgs)
     }
@@ -1524,6 +1530,8 @@ edge_chat_completion <- function(ctx, messages, n_predict = 256L,
 #'
 #' Remove outdated model files from the cache directory to comply with CRAN
 #' policies about actively managing cached content and keeping sizes small.
+#' The CUDA backend in the `cuda` subdirectory and the local checksum store
+#' are never removed.
 #'
 #' @param cache_dir Cache directory path (default: user cache directory)
 #' @param max_age_days Maximum age of files to keep in days (default: option edgemodelr.cache_max_age_days or 30)
@@ -1536,7 +1544,7 @@ edge_chat_completion <- function(ctx, messages, n_predict = 256L,
 #' \dontrun{
 #' # Clean cache files older than 30 days
 #' edge_clean_cache()
-#' 
+#'
 #' # Clean cache with custom settings
 #' edge_clean_cache(max_age_days = 7, max_size_mb = 100)
 #' }
@@ -1550,65 +1558,71 @@ edge_clean_cache <- function(cache_dir = NULL,
   if (is.null(cache_dir)) {
     cache_dir <- tools::R_user_dir("edgemodelr", "cache")
   }
-  
+
   if (!dir.exists(cache_dir)) {
     if (verbose) message("Cache directory does not exist: ", cache_dir)
     return(invisible(character(0)))
   }
-  
-  files <- list.files(cache_dir, full.names = TRUE, recursive = TRUE)
+
+  files <- list.files(cache_dir, recursive = TRUE)
+  # Leave the CUDA backend installed by edge_install_cuda() and the local
+  # checksum store alone: they are not cached models.
+  keep <- grepl("^cuda/", files) | basename(files) == "known_hashes.csv"
+  files <- file.path(cache_dir, files[!keep])
   if (length(files) == 0) {
     if (verbose) message("Cache directory is empty")
     return(invisible(character(0)))
   }
-  
+
   file_info <- file.info(files)
   file_info$path <- files
   file_info$age_days <- as.numeric(difftime(Sys.time(), file_info$mtime, units = "days"))
   file_info$size_mb <- file_info$size / (1024^2)
-  
+
   # Files to delete by age
   old_files <- file_info[file_info$age_days > max_age_days, ]
-  
+
   # Files to delete by size (oldest first if total exceeds limit)
   total_size <- sum(file_info$size_mb, na.rm = TRUE)
   size_files <- character(0)
   if (total_size > max_size_mb) {
     file_info_sorted <- if (use_lru) file_info[order(file_info$mtime), ] else file_info
-    cumsum_size <- cumsum(file_info_sorted$size_mb)
-    excess_files <- file_info_sorted[cumsum_size <= (total_size - max_size_mb), ]
+    # Evict files until the total is under the limit: a file goes if the
+    # files evicted before it do not yet free enough space.
+    freed_before <- cumsum(file_info_sorted$size_mb) - file_info_sorted$size_mb
+    excess_files <- file_info_sorted[freed_before < (total_size - max_size_mb), ]
     if (nrow(excess_files) > 0) {
       size_files <- excess_files$path
     }
   }
-  
+
   files_to_delete <- unique(c(old_files$path, size_files))
-  
+
   if (length(files_to_delete) == 0) {
     if (verbose) message("No files need cleaning")
     return(invisible(character(0)))
   }
-  
+
   # Show what will be deleted
   total_delete_size <- sum(file_info[file_info$path %in% files_to_delete, "size_mb"], na.rm = TRUE)
   if (verbose) {
-    message("Found ", length(files_to_delete), " files to delete (", 
+    message("Found ", length(files_to_delete), " files to delete (",
             round(total_delete_size, 1), " MB)")
   }
-  
+
   # Ask for confirmation only when requested and in an interactive session
   if (ask && interactive()) {
     consent <- utils::askYesNo(
       paste("Delete", length(files_to_delete), "cached files?"),
       default = TRUE
     )
-    
+
     if (is.na(consent) || !consent) {
       if (verbose) message("Cleanup cancelled by user")
       return(invisible(character(0)))
     }
   }
-  
+
   # Delete files
   deleted_files <- character(0)
   for (file in files_to_delete) {
@@ -1619,11 +1633,11 @@ edge_clean_cache <- function(cache_dir = NULL,
       }
     }
   }
-  
+
   if (length(deleted_files) > 0) {
     if (verbose) message("Deleted ", length(deleted_files), " files from cache")
   }
-  
+
   invisible(deleted_files)
 }
 
@@ -1651,13 +1665,13 @@ edge_cache_info <- function(cache_dir = NULL) {
 #' Enable or disable verbose output from the underlying llama.cpp library.
 #' By default, all output except errors is suppressed to comply with CRAN policies.
 #'
-#' @param enabled Logical. If TRUE, enables verbose llama.cpp output. If FALSE (default), 
+#' @param enabled Logical. If TRUE, enables verbose llama.cpp output. If FALSE (default),
 #'   suppresses all output except errors.
 #' @return Invisible NULL
 #' @examples
 #' # Enable verbose output (not recommended for normal use)
 #' edge_set_verbose(TRUE)
-#' 
+#'
 #' # Disable verbose output (default, recommended)
 #' edge_set_verbose(FALSE)
 #' @export
@@ -2141,6 +2155,11 @@ edge_install_cuda <- function(cuda_version = "13.1",
 
   message("Downloading llama.cpp CUDA backend (", cuda_version, ") from GitHub Releases...")
   message("This is a ~200MB download. Please wait...")
+
+  # R's default 60 second timeout covers the whole transfer, which is too
+  # short for this download on most connections.
+  old_timeout <- options(timeout = max(3600, getOption("timeout")))
+  on.exit(options(old_timeout), add = TRUE)
 
   tryCatch({
     utils::download.file(release_url, tmp_zip, mode = "wb", quiet = FALSE)
@@ -3522,6 +3541,15 @@ edge_index_documents <- function(source, ctx, chunk_size = 500L,
   if (!is_valid_model(ctx)) {
     stop("Invalid model context. Load a model first with edge_load_model()")
   }
+  if (!is.numeric(chunk_size) || length(chunk_size) != 1L || is.na(chunk_size) || chunk_size < 1) {
+    stop("chunk_size must be a positive number")
+  }
+  if (!is.numeric(chunk_overlap) || length(chunk_overlap) != 1L || is.na(chunk_overlap) ||
+        chunk_overlap < 0 || chunk_overlap >= chunk_size) {
+    stop("chunk_overlap must be at least 0 and smaller than chunk_size")
+  }
+  chunk_size <- as.integer(chunk_size)
+  chunk_overlap <- as.integer(chunk_overlap)
 
   chunks <- character()
   sources <- character()
@@ -3808,7 +3836,9 @@ print.edge_index <- function(x, ...) {
     }
 
     chunks <- c(chunks, trimws(substr(text, pos, end)))
-    pos <- end + 1L - overlap
+    if (end >= text_len) break
+    # Always move forward, even when the overlap is as long as the chunk.
+    pos <- max(end + 1L - overlap, pos + 1L)
   }
 
   chunks[nchar(chunks) > 0L]

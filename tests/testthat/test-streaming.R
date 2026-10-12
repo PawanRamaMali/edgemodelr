@@ -4,7 +4,7 @@ test_that("edge_stream_completion validates parameters", {
     edge_stream_completion(NULL, "test", "not_a_function"),
     "Callback must be a function"
   )
-  
+
   # Test that prompt validation happens first
   expect_error(
     edge_stream_completion(NULL, c("a", "b"), function(x) TRUE),
@@ -46,7 +46,7 @@ test_that("build_chat_prompt formats correctly", {
 
 test_that("edge_stream_completion callback logic validation", {
   # Test callback return value logic (without requiring model)
-  
+
   # Callback that should stop early
   early_stop_callback <- function(data) {
     if (!data$is_final && data$position >= 3) {
@@ -54,22 +54,22 @@ test_that("edge_stream_completion callback logic validation", {
     }
     return(TRUE)
   }
-  
+
   # Callback that continues
   continue_callback <- function(data) {
     return(TRUE)
   }
-  
+
   # Callback that stops immediately
   immediate_stop_callback <- function(data) {
     return(FALSE)
   }
-  
+
   # Test that these are valid functions
   expect_true(is.function(early_stop_callback))
   expect_true(is.function(continue_callback))
   expect_true(is.function(immediate_stop_callback))
-  
+
   # Test callback logic with mock data
   mock_data <- list(is_final = FALSE, position = 5)
   expect_false(early_stop_callback(mock_data))  # Should stop
@@ -79,13 +79,13 @@ test_that("edge_stream_completion callback logic validation", {
 
 test_that("Streaming callback function validation", {
   # Test different callback function scenarios
-  
+
   # Valid callback function
   valid_callback <- function(data) {
     return(TRUE)
   }
   expect_true(is.function(valid_callback))
-  
+
   # Test callback that returns different values
   callback_false <- function(data) FALSE
   callback_true <- function(data) TRUE
@@ -93,11 +93,11 @@ test_that("Streaming callback function validation", {
     if (data$is_final) return(TRUE)
     return(data$position < 5)
   }
-  
+
   expect_true(is.function(callback_false))
   expect_true(is.function(callback_true))
   expect_true(is.function(callback_complex))
-  
+
   # Test invalid callback types
   expect_false(is.function("not a function"))
   expect_false(is.function(NULL))
