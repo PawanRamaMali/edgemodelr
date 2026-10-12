@@ -2578,7 +2578,7 @@ edge_json_grammar <- function(schema) {
   paste(grammar_parts, collapse = "")
 }
 
-#' Extract structured data from text using grammar-constrained generation
+#' Extract structured data from text
 #'
 #' High-level function that combines prompt construction with grammar-constrained
 #' generation to extract structured data from text. Returns a parsed R list.
@@ -2589,7 +2589,24 @@ edge_json_grammar <- function(schema) {
 #' @param instruction Optional instruction to guide extraction (default: auto-generated)
 #' @param n_predict Maximum tokens to generate (default: 512)
 #' @param temperature Sampling temperature (default: 0.2, very low for factual extraction)
-#' @return A named list with the extracted fields, or the raw JSON string if parsing fails
+#' @param draft If TRUE, first let the model answer in free text, then run the
+#'   grammar-constrained pass with that draft in the prompt (default: FALSE).
+#'   It adds a second generation pass, so it takes two to four times as long.
+#' @return A named list with the extracted fields, or the raw JSON string if parsing fails.
+#'   Requires the \pkg{jsonlite} package for automatic parsing.
+#'
+#' @details
+#' The grammar guarantees well-formed JSON, which is where most of its accuracy
+#' gain comes from. Forcing a very small model straight into a strict format
+#' can, however, cost answer accuracy. With \code{draft = TRUE} the model first
+#' reasons about the fields without constraints and the grammar is applied only
+#' to the final answer. Published results for this "draft, then constrain"
+#' pattern show gains for 4B-14B models (e.g. micro-F1 0.644 to 0.795 for
+#' Qwen3-14B on GenSIE 2026 zero-shot extraction). It is most worth trying with
+#' models under about 4B parameters, or when plain extraction leaves fields wrong.
+#'
+#' @seealso \code{\link{edge_json_grammar}}, \code{\link{edge_grammar_completion}},
+#'   \code{\link{edge_classify}}, \code{\link{edge_extract_batch}}
 #'
 #' @examples
 #' \dontrun{
@@ -2608,7 +2625,7 @@ edge_json_grammar <- function(schema) {
 #' }
 #' @export
 edge_extract <- function(ctx, text, schema, instruction = NULL, n_predict = 512L,
-                          temperature = 0.2) {
+                          temperature = 0.2, draft = FALSE) {
   if (!is.character(text) || length(text) != 1L) {
     stop("text must be a single character string")
   }
@@ -2631,9 +2648,25 @@ edge_extract <- function(ctx, text, schema, instruction = NULL, n_predict = 512L
     )
   }
 
+  notes <- ""
+  if (isTRUE(draft)) {
+    draft_prompt <- paste0(
+      "### Instruction\n", instruction,
+      " Think through the text and write each field on its own line as ",
+      "\"field: value\".",
+      "\n\n### Text\n", text,
+      "\n\n### Notes\n"
+    )
+    draft_text <- edge_completion(ctx, draft_prompt,
+                                  n_predict = n_predict,
+                                  temperature = temperature)
+    notes <- paste0("\n\n### Notes\n", trimws(draft_text))
+  }
+
   prompt <- paste0(
     "### Instruction\n", instruction,
     "\n\n### Text\n", text,
+    notes,
     "\n\n### Response\n"
   )
 
@@ -3012,7 +3045,11 @@ edge_map <- function(ctx, texts, prompt_template, n_predict = 128L,
 #' @param n_predict Maximum tokens to generate per text (default: 512)
 #' @param temperature Sampling temperature (default: 0.2)
 #' @param progress Show progress messages (default: TRUE)
+#' @param draft Passed to \code{\link{edge_extract}}: draft in free text first,
+#'   then apply the grammar (default: FALSE)
 #' @return A data frame with one row per text and columns for each schema field
+#'
+#' @seealso \code{\link{edge_extract}}, \code{\link{edge_map}}
 #'
 #' @examples
 #' \dontrun{
@@ -3035,7 +3072,7 @@ edge_map <- function(ctx, texts, prompt_template, n_predict = 128L,
 #' @export
 edge_extract_batch <- function(ctx, texts, schema, instruction = NULL,
                                 n_predict = 512L, temperature = 0.2,
-                                progress = TRUE) {
+                                progress = TRUE, draft = FALSE) {
   if (!is.character(texts) || length(texts) == 0L) {
     stop("texts must be a non-empty character vector")
   }
@@ -3053,7 +3090,8 @@ edge_extract_batch <- function(ctx, texts, schema, instruction = NULL,
       edge_extract(ctx, texts[i], schema,
                     instruction = instruction,
                     n_predict = n_predict,
-                    temperature = temperature),
+                    temperature = temperature,
+                    draft = draft),
       error = function(e) {
         warning("Extraction failed for text ", i, ": ", e$message)
         # Return NA-filled row

@@ -19,6 +19,11 @@
   them to the source, with a tolerance for numeric fields. Both run by
   default; `method = "literal"` runs the deterministic check alone.
 
+* `edge_extract()` and `edge_extract_batch()` gain `draft = TRUE`, which lets
+  the model answer in free text before the grammar-constrained pass. Forcing
+  a very small model straight into strict JSON can cost accuracy; drafting
+  first usually recovers it, at two to four times the generation time.
+
 All three need a capable model. Small general purpose models produce valid
 SQL that answers a different question, and narratives that restate the input
 rather than summarise it. The reference pages say so.
