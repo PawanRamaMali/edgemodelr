@@ -341,13 +341,18 @@ test_that("E2E: timeout_seconds stops a long generation", {
   ctx <- edge_load_model(model_path, n_ctx = 2048L, n_gpu_layers = 0)
   on.exit(edge_free_model(ctx), add = TRUE)
 
+  # The timeout is checked between tokens, so it fires after the prompt and
+  # at least one token. Scale the bound by a short run on this machine:
+  # under ASAN that alone takes close to a minute.
+  prompt <- "Write a very long story about a dragon."
+  short <- system.time(edge_completion(ctx, prompt, n_predict = 4L))[["elapsed"]]
+
   started <- proc.time()[["elapsed"]]
   expect_error(
-    edge_completion(ctx, "Write a very long story about a dragon.",
-                    n_predict = 1500L, timeout_seconds = 1),
+    edge_completion(ctx, prompt, n_predict = 1500L, timeout_seconds = 1),
     "timed out"
   )
-  expect_lt(proc.time()[["elapsed"]] - started, 30)
+  expect_lt(proc.time()[["elapsed"]] - started, 30 + 10 * short)
 
   # The context is still usable afterwards.
   expect_type(edge_completion(ctx, "Hello", n_predict = 4L), "character")
