@@ -280,9 +280,9 @@ test_that("E2E: prompts longer than n_batch are processed", {
   # n_ctx = 513 gives n_batch = 256. This prompt is about 277 tokens: it
   # fits the context but used to trip GGML_ASSERT(n_tokens_all <= n_batch)
   # because the whole prompt went to llama_decode in one call. Keep it to
-  # one short call: the generic CPU build processes prompts slowly, and a
-  # 300 token prompt takes about 5 minutes on CI runners. All three
-  # completion paths share decode_prompt(), so one path covers the fix.
+  # one short call: the generic CPU build processes prompts slowly, and the
+  # sanitizer job runs this file under ASAN. All three completion paths
+  # share decode_prompt(), so one path covers the fix.
   ctx <- edge_load_model(model_path, n_ctx = 513L, n_gpu_layers = 0)
   on.exit(edge_free_model(ctx), add = TRUE)
   long_prompt <- paste(
