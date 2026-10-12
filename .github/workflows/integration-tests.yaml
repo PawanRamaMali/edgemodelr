@@ -60,11 +60,18 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-models-
 
+      # Install normally instead of devtools::load_all(): load_all compiles
+      # with -O0 and asserts on, which makes inference 20 to 300 times
+      # slower and pushed the E2E jobs past their time limit.
+      - name: Install package
+        run: MAKEFLAGS=-j4 R CMD INSTALL --no-multiarch .
+        shell: bash
+
       - name: Run integration tests - Model Download
         if: matrix.config.test-suite == 'model-download'
         run: |
           Rscript -e "
-          devtools::load_all('.')
+          library(edgemodelr)
           testthat::test_dir('tests/testthat', filter = 'e2e', reporter = 'progress')
           "
         shell: bash
@@ -74,7 +81,7 @@ jobs:
         if: matrix.config.test-suite == 'inference'
         run: |
           Rscript -e "
-          devtools::load_all('.')
+          library(edgemodelr)
           testthat::test_dir('tests/testthat', filter = 'e2e', reporter = 'progress')
           "
         shell: bash
@@ -84,7 +91,7 @@ jobs:
         if: matrix.config.test-suite == 'streaming'
         run: |
           Rscript -e "
-          devtools::load_all('.')
+          library(edgemodelr)
           testthat::test_dir('tests/testthat', filter = 'e2e', reporter = 'progress')
           "
         shell: bash
@@ -130,10 +137,13 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-bench-models-
 
+      - name: Install package
+        run: MAKEFLAGS=-j4 R CMD INSTALL --no-multiarch .
+        shell: bash
+
       - name: Run performance benchmarks
         run: |
           Rscript -e '
-          devtools::load_all()
           library(edgemodelr)
 
           # Setup

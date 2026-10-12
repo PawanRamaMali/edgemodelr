@@ -222,7 +222,9 @@ jobs:
           MAKEVARS
           cat ~/.R/Makevars
 
-          R CMD INSTALL "$PKG_TARBALL"
+          # --no-test-load: the install-time load test runs before the ASAN
+          # runtime is preloaded below, and fails without it.
+          R CMD INSTALL --no-test-load "$PKG_TARBALL"
 
           # R itself is not built with ASAN, so the runtime must be preloaded.
           # Leak detection is off: R does not free everything at exit.
