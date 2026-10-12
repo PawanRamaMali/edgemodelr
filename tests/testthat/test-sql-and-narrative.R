@@ -63,6 +63,28 @@ test_that("edge_text_to_sql argument checks fire in order", {
   expect_error(edge_text_to_sql(NULL, "q", character(0)), "Invalid model context")
 })
 
+test_that(".clean_sql_output strips fences in any case", {
+  clean <- edgemodelr:::.clean_sql_output
+  expect_equal(clean("```sql\nSELECT 1;\n```"), "SELECT 1;")
+  expect_equal(clean("Here you go:\n```SQL\nSELECT 1;\n```"), "SELECT 1;")
+  expect_equal(clean("SELECT 1; -- done. Explanation: trivial"), "SELECT 1;")
+})
+
+
+test_that(".clean_sql_output keeps semicolons inside quoted literals", {
+  clean <- edgemodelr:::.clean_sql_output
+  expect_equal(
+    clean("SELECT * FROM notes WHERE text = 'started; resolved'; extra"),
+    "SELECT * FROM notes WHERE text = 'started; resolved';"
+  )
+  expect_equal(
+    clean("SELECT 'it''s; fine' AS x; chatter"),
+    "SELECT 'it''s; fine' AS x;"
+  )
+  expect_equal(clean("SELECT \"a;b\" FROM t;"), "SELECT \"a;b\" FROM t;")
+})
+
+
 test_that("edge_verify_narrative literal check needs no model", {
   narrative <- paste(
     "Subject ABC-001-042 on Drug X had ALT of 285 U/L (ULN 55) on study",

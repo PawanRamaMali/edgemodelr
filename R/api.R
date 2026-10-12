@@ -3266,11 +3266,12 @@ edge_text_to_sql <- function(ctx, question, schema, dialect = "sqlite",
 .clean_sql_output <- function(raw) {
   if (!is.character(raw) || length(raw) != 1L) return(NA_character_)
   s <- raw
-  # Strip common ```sql ... ``` fences
-  s <- sub("(?s)^.*?```(?:sql)?\\s*", "", s, perl = TRUE)
+  # Strip common ```sql ... ``` fences (any case: models also write ```SQL)
+  s <- sub("(?si)^.*?```(?:sql)?\\s*", "", s, perl = TRUE)
   s <- sub("(?s)```.*$", "", s, perl = TRUE)
-  # Strip trailing model chatter after the first semicolon
-  semi <- regexpr(";", s, fixed = TRUE)
+  # Strip trailing model chatter after the first semicolon that ends the
+  # statement, ignoring semicolons inside quoted literals
+  semi <- .sql_terminator(s)
   if (semi > 0) {
     s <- substr(s, 1L, semi)
   } else {
@@ -3282,6 +3283,24 @@ edge_text_to_sql <- function(ctx, question, schema, dialect = "sqlite",
   # Drop leading "SQL:" labels the model sometimes emits
   s <- sub("^\\s*(SQL|Query)\\s*:\\s*", "", s, ignore.case = TRUE)
   trimws(s)
+}
+
+# Position of the first semicolon outside quoted SQL literals, or 0.
+.sql_terminator <- function(s) {
+  chars <- strsplit(s, "", fixed = TRUE)[[1]]
+  quote <- ""
+  for (i in seq_along(chars)) {
+    ch <- chars[[i]]
+    if (nzchar(quote)) {
+      # A doubled quote ('it''s') closes and reopens, which works out the same
+      if (ch == quote) quote <- ""
+    } else if (ch == "'" || ch == "\"") {
+      quote <- ch
+    } else if (ch == ";") {
+      return(i)
+    }
+  }
+  0L
 }
 
 #' Generate an English narrative from structured data
@@ -3522,7 +3541,9 @@ edge_verify_narrative <- function(ctx, narrative, expected, schema = NULL,
                                instruction = paste0(
                                  "Re-extract the following fields from the narrative. ",
                                  "Return only values that appear explicitly in the text. ",
-                                 "If a field is not present, leave it as a best guess based on the wording."
+                                 "Do not guess or infer. If a field is not stated in the text, ",
+                                 "return an empty string for text, 0 for numbers and false ",
+                                 "for true/false fields."
                                ),
                                temperature = temperature)
 

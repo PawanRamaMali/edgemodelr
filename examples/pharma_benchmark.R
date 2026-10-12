@@ -239,6 +239,10 @@ eval_model <- function(model) {
 ## ---------------------------------------------------------------------------
 all_results <- lapply(MODELS, eval_model)
 all_results <- Filter(Negate(is.null), all_results)
+if (length(all_results) == 0L) {
+  stop("No benchmark results: none of the model files in MODELS exist. ",
+       "Edit MODELS to point at local GGUF files.")
+}
 
 sql_all  <- do.call(rbind, lapply(all_results, function(r) r$sql))
 narr_all <- do.call(rbind, lapply(all_results, function(r) r$narr))
