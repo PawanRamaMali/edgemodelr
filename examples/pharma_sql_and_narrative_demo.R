@@ -5,11 +5,14 @@
 ## then exercises:
 ##   1. edge_text_to_sql()    -- NL question -> SQL over CDISC-style tables
 ##   2. edge_narrate()        -- Structured lab record -> English narrative
-##   3. edge_verify_narrative -- Numeric back-check against source values
+##   3. edge_verify_narrative -- Number, term and field back-check against source
 ##
-## Choose your model below. Qwen3-1.7B is a good sweet spot for AE/lab work
-## on a laptop CPU; for SQL accuracy on real CDISC schemas prefer Qwen3-4B
-## or a dedicated text-to-SQL model (e.g. SQLCoder-7B-2 Q4_K_M).
+## Choose your model below. Qwen3-1.7B runs comfortably on a laptop CPU;
+## larger models (Qwen3-4B, or a text-to-SQL model such as SQLCoder-7B-2
+## Q4_K_M) usually write better SQL. No published benchmark covers
+## text-to-SQL on CDISC SDTM/ADaM yet, so measure accuracy on your own
+## schema against gold queries (pharma_benchmark.R does this) before relying
+## on the generated SQL.
 ## ============================================================================
 
 options(warn = 1, edgemodelr.verbose = FALSE)
@@ -169,9 +172,14 @@ for (i in seq_len(nrow(abnormal))) {
 }
 
 ## ---------------------------------------------------------------------------
-## 5. Numeric back-verification of the generated narratives
+## 5. Back-verification of the generated narratives
 ## ---------------------------------------------------------------------------
-cat("\n\n--- Numeric Back-Verification ---\n")
+## Two independent checks per narrative: a deterministic one (every number
+## must appear; lab-test codes from the study's dictionary must not be added
+## or dropped) and a model re-extraction of the fields.
+cat("\n\n--- Back-Verification ---\n")
+
+lab_terms <- dbGetQuery(con, "SELECT DISTINCT LBTESTCD FROM ADLB")$LBTESTCD
 
 verdicts <- vector("list", nrow(abnormal))
 for (i in seq_len(nrow(abnormal))) {
@@ -182,17 +190,27 @@ for (i in seq_len(nrow(abnormal))) {
     LBDY     = as.integer(abnormal$LBDY[i])
   )
   v <- edge_verify_narrative(ctx, narratives[i], expected = expected,
-                              tolerance = 0.5)
+                              tolerance = 0.5, terms = lab_terms)
   verdicts[[i]] <- v
   cat("\nRecord ", i, ": ", abnormal$USUBJID[i], " — ",
       if (v$ok) "PASS" else "FAIL", "\n", sep = "")
   if (!v$ok) {
-    print(v$mismatches)
+    if (nrow(v$mismatches) > 0L) print(v$mismatches)
+    missing_numbers <- v$literal$field[!v$literal$found]
+    if (length(missing_numbers) > 0L) {
+      cat("  numbers not in narrative:", paste(missing_numbers, collapse = ", "), "\n")
+    }
+    if (length(v$unsupported_terms) > 0L) {
+      cat("  lab tests not in source:", paste(v$unsupported_terms, collapse = ", "), "\n")
+    }
+    if (length(v$omitted_terms) > 0L) {
+      cat("  lab tests left out:", paste(v$omitted_terms, collapse = ", "), "\n")
+    }
   }
 }
 
 n_pass <- sum(vapply(verdicts, function(v) isTRUE(v$ok), logical(1)))
-cat(sprintf("\nVerification summary: %d / %d narratives passed numeric back-check.\n",
+cat(sprintf("\nVerification summary: %d / %d narratives passed back-verification.\n",
             n_pass, length(verdicts)))
 
 ## ---------------------------------------------------------------------------

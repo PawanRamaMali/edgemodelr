@@ -3270,7 +3270,11 @@ edge_text_to_sql <- function(ctx, question, schema, dialect = "sqlite",
 #' @details
 #' This is a drafting helper. For regulated outputs (CSR, ICSR, PV) always run
 #' \code{\link{edge_verify_narrative}} or an equivalent back-check before
-#' surfacing the text to a human reviewer.
+#' surfacing the text to a human reviewer, and pass it the study's drug and
+#' adverse-event terms. Unchecked output is often wrong: in a published study
+#' of small models drafting case narratives from ICSRs, 60% of outputs had
+#' wrong drug information and 71% wrong or missing adverse events (Hakim et
+#' al., 2024, arXiv:2407.18322).
 #'
 #' Output quality depends heavily on the model. Small models tend to restate the
 #' input fields rather than summarise them. A model of at least 7B parameters
@@ -3366,12 +3370,16 @@ edge_narrate <- function(ctx, data, instruction = NULL, max_words = 60L,
 
 #' Verify a generated narrative against source values
 #'
-#' Numeric and categorical back-check: re-extracts named fields from a
-#' generated narrative using \code{\link{edge_extract}} and compares them to
-#' the source record. Numeric mismatches use a tolerance; text fields are
-#' compared case-insensitively after trimming.
+#' Checks a generated narrative against the source record in two independent
+#' ways. The \emph{literal} check needs no model: every numeric source value
+#' must appear in the narrative, and, when \code{terms} is given, every term
+#' from that dictionary (e.g. drug names, adverse-event terms) must occur in the
+#' narrative if and only if it occurs in the source. The \emph{model} check
+#' re-extracts the named fields from the narrative with \code{\link{edge_extract}}
+#' and compares them to the source record.
 #'
-#' @param ctx Model context from edge_load_model()
+#' @param ctx Model context from edge_load_model(). May be NULL when
+#'   \code{method = "literal"}.
 #' @param narrative Character string produced by \code{\link{edge_narrate}} or
 #'   any other generator.
 #' @param expected Named list of source field values. The names define which
@@ -3383,34 +3391,69 @@ edge_narrate <- function(ctx, data, instruction = NULL, max_words = 60L,
 #' @param tolerance Numeric tolerance for number fields (default: 1e-6).
 #'   Values within \code{tolerance} are considered equal.
 #' @param temperature Sampling temperature for re-extraction (default: 0.1)
+#' @param method Which checks to run: \code{"both"} (default), \code{"literal"}
+#'   (deterministic only, no model call) or \code{"model"} (re-extraction only).
+#' @param terms Optional character vector of controlled terms to guard, such as
+#'   the drug names and MedDRA terms relevant to the study. Matching is
+#'   case-insensitive on whole words. Ignored when \code{method = "model"}.
 #' @return A list with:
 #'   \itemize{
-#'     \item \code{ok}: TRUE if every expected field matches.
+#'     \item \code{ok}: TRUE if every check that was run passed.
 #'     \item \code{extracted}: the parsed extraction (as returned by
-#'           \code{edge_extract}).
+#'           \code{edge_extract}), or NULL if the model check was not run.
 #'     \item \code{expected}: the supplied expected values.
-#'     \item \code{mismatches}: data.frame with one row per failing field.
+#'     \item \code{mismatches}: data.frame with one row per field that failed
+#'           the model check.
+#'     \item \code{literal}: data.frame (\code{field}, \code{expected},
+#'           \code{found}) for each numeric source value.
+#'     \item \code{unsupported_terms}: terms that appear in the narrative but
+#'           not in the source, i.e. likely hallucinations.
+#'     \item \code{omitted_terms}: terms that appear in the source but not in
+#'           the narrative.
 #'   }
 #'
 #' @details
-#' This check re-extracts the fields with the model, so it inherits the model's
-#' limitations. A small model can miss a field that is present and report a
-#' mismatch that is not real. Treat a failed check as a reason to look rather
-#' than as proof of an error, and use a capable model where the result matters.
+#' The model check re-extracts the fields with the model, so it inherits the
+#' model's limitations. A small model can miss a field that is present and
+#' report a mismatch that is not real, or confirm a value that is wrong. The
+#' literal check has no such failure mode, but it is strict: it does not
+#' recognise numbers written as words, and it reports a term as missing when
+#' the narrative uses a synonym or a misspelling. Treat any failure as a reason
+#' for a human to look rather than as proof of an error.
+#'
+#' Unchecked generated narratives are often wrong. In a published study of
+#' small models drafting case narratives from ICSRs, 60% of outputs contained
+#' wrong drug information and 71% wrong or missing adverse events. A simple
+#' drug and adverse-event name comparison between source and output, which is
+#' what \code{terms} provides, flagged every hallucinated drug name in the
+#' sample that was checked (Hakim et al., 2024, arXiv:2407.18322).
 #'
 #' @examples
 #' \dontrun{
 #' ctx <- edge_load_model("Qwen3-1.7B-Q4_K_M.gguf", n_ctx = 2048L)
 #'
-#' rec <- list(subject = "S001", alt = 285, uln = 55, study_day = 28)
+#' rec <- list(subject = "S001", drug = "Drug X", event = "Hepatotoxicity",
+#'             alt = 285, uln = 55, study_day = 28)
 #' narrative <- edge_narrate(ctx, rec)
-#' check <- edge_verify_narrative(ctx, narrative, expected = rec)
-#' if (!check$ok) print(check$mismatches)
+#' check <- edge_verify_narrative(ctx, narrative, expected = rec,
+#'                                terms = c("Drug X", "Drug Y",
+#'                                          "Hepatotoxicity", "Rash"))
+#' if (!check$ok) {
+#'   print(check$mismatches)
+#'   print(check$literal[!check$literal$found, ])
+#'   print(check$unsupported_terms)
+#' }
+#'
+#' # Deterministic check only, no model needed
+#' edge_verify_narrative(NULL, narrative, rec, method = "literal")
 #' }
 #' @export
 edge_verify_narrative <- function(ctx, narrative, expected, schema = NULL,
-                                   tolerance = 1e-6, temperature = 0.1) {
-  if (!is_valid_model(ctx)) {
+                                   tolerance = 1e-6, temperature = 0.1,
+                                   method = c("both", "literal", "model"),
+                                   terms = NULL) {
+  method <- match.arg(method)
+  if (method != "literal" && !is_valid_model(ctx)) {
     stop("Invalid model context. Load a model first with edge_load_model()")
   }
   if (!is.character(narrative) || length(narrative) != 1L) {
@@ -3419,53 +3462,107 @@ edge_verify_narrative <- function(ctx, narrative, expected, schema = NULL,
   if (!is.list(expected) || is.null(names(expected)) || length(expected) == 0L) {
     stop("expected must be a non-empty named list")
   }
-
-  if (is.null(schema)) {
-    schema <- lapply(expected, function(v) {
-      if (is.logical(v)) "boolean"
-      else if (is.integer(v)) "integer"
-      else if (is.numeric(v)) "number"
-      else "string"
-    })
-    names(schema) <- names(expected)
+  if (!is.null(terms) && (!is.character(terms) || anyNA(terms))) {
+    stop("terms must be a character vector without NA")
   }
 
-  extracted <- edge_extract(ctx, narrative, schema,
-                             instruction = paste0(
-                               "Re-extract the following fields from the narrative. ",
-                               "Return only values that appear explicitly in the text. ",
-                               "If a field is not present, leave it as a best guess based on the wording."
-                             ),
-                             temperature = temperature)
+  extracted <- NULL
+  mismatch_df <- data.frame(field = character(), expected = character(),
+                            got = character(), stringsAsFactors = FALSE)
+  if (method != "literal") {
+    if (is.null(schema)) {
+      schema <- lapply(expected, function(v) {
+        if (is.logical(v)) "boolean"
+        else if (is.integer(v)) "integer"
+        else if (is.numeric(v)) "number"
+        else "string"
+      })
+      names(schema) <- names(expected)
+    }
 
-  mismatches <- list()
-  for (nm in names(expected)) {
-    got <- if (is.list(extracted) && nm %in% names(extracted)) extracted[[nm]] else NA
-    exp <- expected[[nm]]
-    eq <- .field_equal(got, exp, tolerance)
-    if (!isTRUE(eq)) {
-      mismatches[[length(mismatches) + 1L]] <- data.frame(
-        field = nm,
-        expected = .as_display(exp),
-        got = .as_display(got),
-        stringsAsFactors = FALSE
-      )
+    extracted <- edge_extract(ctx, narrative, schema,
+                               instruction = paste0(
+                                 "Re-extract the following fields from the narrative. ",
+                                 "Return only values that appear explicitly in the text. ",
+                                 "If a field is not present, leave it as a best guess based on the wording."
+                               ),
+                               temperature = temperature)
+
+    mismatches <- list()
+    for (nm in names(expected)) {
+      got <- if (is.list(extracted) && nm %in% names(extracted)) extracted[[nm]] else NA
+      exp <- expected[[nm]]
+      eq <- .field_equal(got, exp, tolerance)
+      if (!isTRUE(eq)) {
+        mismatches[[length(mismatches) + 1L]] <- data.frame(
+          field = nm,
+          expected = .as_display(exp),
+          got = .as_display(got),
+          stringsAsFactors = FALSE
+        )
+      }
+    }
+    if (length(mismatches) > 0L) mismatch_df <- do.call(rbind, mismatches)
+  }
+
+  literal_df <- data.frame(field = character(), expected = character(),
+                           found = logical(), stringsAsFactors = FALSE)
+  unsupported <- character()
+  omitted <- character()
+  if (method != "model") {
+    literal_df <- .literal_number_check(narrative, expected, tolerance)
+    if (length(terms) > 0L) {
+      source_text <- paste(vapply(expected, .as_display, character(1)),
+                           collapse = "\n")
+      in_narrative <- vapply(terms, .term_present, logical(1), text = narrative)
+      in_source <- vapply(terms, .term_present, logical(1), text = source_text)
+      unsupported <- unname(terms[in_narrative & !in_source])
+      omitted <- unname(terms[in_source & !in_narrative])
     }
   }
 
-  mismatch_df <- if (length(mismatches) > 0L) {
-    do.call(rbind, mismatches)
-  } else {
-    data.frame(field = character(), expected = character(),
-               got = character(), stringsAsFactors = FALSE)
-  }
-
   list(
-    ok = nrow(mismatch_df) == 0L,
+    ok = nrow(mismatch_df) == 0L && all(literal_df$found) &&
+      length(unsupported) == 0L && length(omitted) == 0L,
     extracted = extracted,
     expected = expected,
-    mismatches = mismatch_df
+    mismatches = mismatch_df,
+    literal = literal_df,
+    unsupported_terms = unsupported,
+    omitted_terms = omitted
   )
+}
+
+# Every numeric source value must appear as a number in the narrative.
+# Thousands separators are dropped first; digits that are part of an
+# identifier such as "ABC-001-042" are not treated as numbers. A unit may
+# follow directly, as in "2.5mg" or "285U/L".
+.literal_number_check <- function(narrative, expected, tolerance) {
+  is_num <- vapply(expected, function(v) {
+    is.numeric(v) && length(v) >= 1L && !is.na(v[1])
+  }, logical(1))
+  fields <- names(expected)[is_num]
+  text <- gsub("(?<=\\d),(?=\\d{3}(?!\\d))", "", narrative, perl = TRUE)
+  tokens <- regmatches(text, gregexpr("(?<![\\w.-])-?\\d+(?:\\.\\d+)?(?!\\.?\\d)",
+                                      text, perl = TRUE))[[1]]
+  found_numbers <- suppressWarnings(as.numeric(tokens))
+  found_numbers <- found_numbers[!is.na(found_numbers)]
+  found <- vapply(fields, function(nm) {
+    any(abs(found_numbers - expected[[nm]][1]) <= tolerance)
+  }, logical(1))
+  data.frame(
+    field = fields,
+    expected = vapply(expected[fields], .as_display, character(1)),
+    found = unname(found),
+    stringsAsFactors = FALSE,
+    row.names = NULL
+  )
+}
+
+# Case-insensitive whole-word match of a literal term.
+.term_present <- function(term, text) {
+  pattern <- paste0("(?<![[:alnum:]])\\Q", term, "\\E(?![[:alnum:]])")
+  grepl(pattern, text, ignore.case = TRUE, perl = TRUE)
 }
 
 .field_equal <- function(got, exp, tolerance) {

@@ -46,7 +46,11 @@ them without inferring anything that is not in the input.
 \details{
 This is a drafting helper. For regulated outputs (CSR, ICSR, PV) always run
 \code{\link{edge_verify_narrative}} or an equivalent back-check before
-surfacing the text to a human reviewer.
+surfacing the text to a human reviewer, and pass it the study's drug and
+adverse-event terms. Unchecked output is often wrong: in a published study
+of small models drafting case narratives from ICSRs, 60\% of outputs had
+wrong drug information and 71\% wrong or missing adverse events (Hakim et
+al., 2024, arXiv:2407.18322).
 
 Output quality depends heavily on the model. Small models tend to restate the
 input fields rather than summarise them. A model of at least 7B parameters

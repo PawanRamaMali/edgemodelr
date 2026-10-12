@@ -11,8 +11,13 @@
   narrative per record.
 
 * `edge_verify_narrative()` checks a generated narrative against the values
-  it came from. It re-extracts the named fields from the text and compares
-  them to the source of truth, with a tolerance for numeric fields.
+  it came from. A deterministic check, which needs no model, confirms that
+  every numeric source value appears in the text. With `terms` (for example
+  the study's drug names and MedDRA terms) it also flags terms the narrative
+  adds that are not in the source, likely hallucinations, and source terms it
+  leaves out. A model-based check re-extracts the named fields and compares
+  them to the source, with a tolerance for numeric fields. Both run by
+  default; `method = "literal"` runs the deterministic check alone.
 
 All three need a capable model. Small general purpose models produce valid
 SQL that answers a different question, and narratives that restate the input

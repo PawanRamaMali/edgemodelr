@@ -170,7 +170,7 @@ instead of summarising it.
 |----------|-------------|
 | `edge_text_to_sql(ctx, question, schema, dialect, con, ...)` | Question plus schema to SQL, optionally executed through a DBI connection |
 | `edge_narrate(ctx, data, instruction, max_words, ...)` | Short English summary of a record, a row, or a data frame |
-| `edge_verify_narrative(ctx, narrative, expected, ...)` | Re-extract fields from a narrative and compare them to the source values |
+| `edge_verify_narrative(ctx, narrative, expected, terms, method, ...)` | Check a narrative against its source: numbers must appear, drug/AE `terms` must not be added or dropped, and fields are re-extracted and compared |
 
 ### Serving
 
