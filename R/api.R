@@ -8,6 +8,13 @@
 #'   Set to a lower value to leave cores free for other tasks.
 #' @param flash_attn Enable flash attention for faster inference (default: TRUE).
 #'   Reduces memory usage and improves speed. Set to FALSE for maximum compatibility.
+#' @param embeddings Enable embedding extraction mode (default: FALSE).
+#'   Must be TRUE to use \code{\link{edge_embeddings}} with this context.
+#' @param prompt_cache Keep the KV cache between calls and reuse the part of a new prompt
+#'   that matches the start of the previous one, so only the rest is processed
+#'   (default: FALSE). Much faster when prompts share a long fixed beginning,
+#'   such as a system prompt. Each completion still depends only on its own
+#'   prompt.
 #' @return External pointer to the loaded model context
 #'
 #' @examples
@@ -34,7 +41,8 @@
 #' }
 #' }
 #' @export
-edge_load_model <- function(model_path, n_ctx = 2048L, n_gpu_layers = 0L, n_threads = NULL, flash_attn = TRUE, embeddings = FALSE) {
+edge_load_model <- function(model_path, n_ctx = 2048L, n_gpu_layers = 0L, n_threads = NULL, flash_attn = TRUE, embeddings = FALSE,
+                            prompt_cache = FALSE) {
   if (!file.exists(model_path)) {
     stop("Model file does not exist: ", model_path, "\n",
          "Try these options:\n",
@@ -100,7 +108,8 @@ edge_load_model <- function(model_path, n_ctx = 2048L, n_gpu_layers = 0L, n_thre
                              n_gpu_layers_actual,
                              as.integer(if (is.null(n_threads)) 0L else n_threads),
                              as.logical(flash_attn),
-                             as.logical(embeddings))
+                             as.logical(embeddings),
+                             isTRUE(prompt_cache))
   }, error = function(e) {
     # Provide more context about what went wrong
     if (grepl("llama_load_model_from_file", e$message)) {
@@ -123,7 +132,8 @@ edge_load_model <- function(model_path, n_ctx = 2048L, n_gpu_layers = 0L, n_thre
 #' @param ctx Model context from edge_load_model()
 #' @param prompt Input text prompt
 #' @param n_predict Maximum tokens to generate (default: 128)
-#' @param temperature Sampling temperature (default: 0.8)
+#' @param temperature Sampling temperature (default: 0.8). 0 gives greedy
+#'   decoding: the same prompt always gives the same text.
 #' @param top_p Top-p sampling parameter (default: 0.95)
 #' @param timeout_seconds Optional timeout in seconds for inference
 #' @return Generated text as character string
@@ -1261,7 +1271,8 @@ edge_small_model_config <- function(model_size_mb = NULL, available_ram_gb = NUL
 #' @param prompt Input text prompt
 #' @param callback Function called for each generated token. Receives list with token info.
 #' @param n_predict Maximum tokens to generate (default: 128)
-#' @param temperature Sampling temperature (default: 0.8)
+#' @param temperature Sampling temperature (default: 0.8). 0 gives greedy
+#'   decoding: the same prompt always gives the same text.
 #' @param top_p Top-p sampling parameter (default: 0.95)
 #' @return List with full response and generation statistics
 #'
@@ -2410,7 +2421,8 @@ edge_cuda_info <- function() {
 #' @param grammar A GBNF grammar string defining allowed output structure
 #' @param grammar_root The root rule name in the grammar (default: "root")
 #' @param n_predict Maximum tokens to generate (default: 512)
-#' @param temperature Sampling temperature (default: 0.3, lower for structured output)
+#' @param temperature Sampling temperature (default: 0.3, lower for structured
+#'   output). 0 gives greedy decoding: the same prompt always gives the same text.
 #' @param top_p Nucleus sampling threshold (default: 0.95)
 #' @return Character string containing only the generated text (not the prompt)
 #'
@@ -2504,7 +2516,10 @@ edge_json_grammar <- function(schema) {
     stop("schema must be a named list")
   }
 
-  ws <- 'ws ::= [ \\t\\n]*\n'
+  # Nothing, one space, or one newline and indentation, as in llama.cpp's
+  # JSON grammars. With unlimited whitespace, greedy decoding (temperature
+  # 0) loops on newlines until n_predict runs out.
+  ws <- 'ws ::= "" | " " | "\\n" [ \\t]{0,20}\n'
   string_rule <- 'string ::= "\\"" [^"\\\\]* "\\""\n'
   number_rule <- 'number ::= "-"? [0-9]+ ("." [0-9]+)?\n'
   integer_rule <- 'integer ::= "-"? [0-9]+\n'

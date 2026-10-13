@@ -23,7 +23,7 @@ edge_grammar_completion(
 
 \item{n_predict}{Maximum tokens to generate (default: 512)}
 
-\item{temperature}{Sampling temperature (default: 0.3, lower for structured output)}
+\item{temperature}{Sampling temperature (default: 0.3, lower for structured output). 0 gives greedy decoding: the same prompt always gives the same text.}
 
 \item{top_p}{Nucleus sampling threshold (default: 0.95)}
 }

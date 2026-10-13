@@ -28,25 +28,50 @@ All three need a capable model. Small general purpose models produce valid
 SQL that answers a different question, and narratives that restate the input
 rather than summarise it. The reference pages say so.
 
-## Bug fixes
+## Performance
 
-* **Grammar constrained generation corrupted sampler state on every token.**
-  `llama_sampler_sample()` already calls `llama_sampler_accept()` internally,
-  and all three generation loops in `bindings.cpp` called it a second time.
-  That left the grammar stack inconsistent, so `edge_grammar_completion()`,
-  `edge_extract()`, `edge_extract_batch()` and `edge_classify()` returned
-  only an opening brace or truncated output, mainly on Windows.
+* `edge_load_model()` gains `prompt_cache`. With `prompt_cache = TRUE` the
+  model keeps its KV cache between calls and reuses the part of a new prompt
+  that matches the start of the previous one, so only the rest is processed.
+  It helps most when prompts share a long fixed beginning such as a system
+  prompt; in one test it cut each call by about 30%. Answers still depend
+  only on their own prompt. Off by default.
+
+* Grammar-constrained generation is about twice as fast on SIMD builds
+  (`edge_grammar_completion()` and everything built on it, such as
+  `edge_extract()` and `edge_classify()`). The grammar used to be checked
+  against every token in the vocabulary at every step; it now checks the
+  sampled token and falls back to the full check only when that token is
+  rejected, as llama.cpp does.
+
+## Bug fixes
 
 * **Missing standard library includes.** Twenty three C library headers were
   used but not included, in files that only compiled because another header
   happened to pull them in. Two headers shared between C and C++ used the
   C++ spelling.
 
+* **SIMD builds no longer crash on Windows.** Installing with
+  `EDGEMODELR_SIMD` set to AVX, AVX2, AVX512 or NATIVE built fine but
+  segfaulted in `edge_load_model()`: 64-bit Windows GCC cannot keep the
+  stack 32-byte aligned for AVX, so aligned vector moves faulted. SIMD
+  builds on Windows now assemble with `-Wa,-muse-unaligned-vector-move`.
+  The default generic build is unchanged.
+
+* `temperature = 0` now means greedy decoding, so the same prompt always
+  gives the same text. It used to skip temperature scaling but still sample
+  at random.
+
+* `edge_json_grammar()` allows at most one newline and indentation between
+  fields. With unlimited whitespace a model could fill `n_predict` with
+  blank lines and return incomplete JSON, which greedy decoding did every
+  time.
 ## Docker
 
 * Added `docker/` with a base image, a variant with TinyLlama baked in, and
   a compose file. The base image declares the model cache as a volume so a
   host cache can be mounted for offline use.
+
 
 # edgemodelr 0.4.5
 
