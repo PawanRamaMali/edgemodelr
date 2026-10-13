@@ -2223,10 +2223,10 @@ edge_install_cuda <- function(cuda_version = "13.1",
 #' The CUDA backend (`ggml-cuda-XX.dll`) requires two sets of runtime DLLs
 #' that are **not** included with the NVIDIA display driver:
 #' \itemize{
-#'   \item \strong{nvcudart_hybrid64.dll} — CUDA hybrid runtime, already
+#'   \item \strong{nvcudart_hybrid64.dll}: CUDA hybrid runtime, already
 #'         present on your system in the Windows DriverStore (installed with
 #'         the GPU driver). This function copies it to the edgemodelr cache.
-#'   \item \strong{cublas64_13.dll / cublasLt64_13.dll} — cuBLAS linear-algebra
+#'   \item \strong{cublas64_13.dll / cublasLt64_13.dll}: cuBLAS linear-algebra
 #'         library (~400 MB download from NVIDIA's official redistrib server).
 #' }
 #'
@@ -2593,7 +2593,7 @@ edge_json_grammar <- function(schema) {
   paste(grammar_parts, collapse = "")
 }
 
-#' Extract structured data from text using grammar-constrained generation
+#' Extract structured data from text
 #'
 #' High-level function that combines prompt construction with grammar-constrained
 #' generation to extract structured data from text. Returns a parsed R list.
@@ -2604,7 +2604,24 @@ edge_json_grammar <- function(schema) {
 #' @param instruction Optional instruction to guide extraction (default: auto-generated)
 #' @param n_predict Maximum tokens to generate (default: 512)
 #' @param temperature Sampling temperature (default: 0.2, very low for factual extraction)
-#' @return A named list with the extracted fields, or the raw JSON string if parsing fails
+#' @param draft If TRUE, first let the model answer in free text, then run the
+#'   grammar-constrained pass with that draft in the prompt (default: FALSE).
+#'   It adds a second generation pass, so it takes two to four times as long.
+#' @return A named list with the extracted fields, or the raw JSON string if parsing fails.
+#'   Requires the \pkg{jsonlite} package for automatic parsing.
+#'
+#' @details
+#' The grammar guarantees well-formed JSON, which is where most of its accuracy
+#' gain comes from. Forcing a very small model straight into a strict format
+#' can, however, cost answer accuracy. With \code{draft = TRUE} the model first
+#' reasons about the fields without constraints and the grammar is applied only
+#' to the final answer. Published results for this "draft, then constrain"
+#' pattern show gains for 4B-14B models (e.g. micro-F1 0.644 to 0.795 for
+#' Qwen3-14B on GenSIE 2026 zero-shot extraction). It is most worth trying with
+#' models under about 4B parameters, or when plain extraction leaves fields wrong.
+#'
+#' @seealso \code{\link{edge_json_grammar}}, \code{\link{edge_grammar_completion}},
+#'   \code{\link{edge_classify}}, \code{\link{edge_extract_batch}}
 #'
 #' @examples
 #' \dontrun{
@@ -2623,7 +2640,7 @@ edge_json_grammar <- function(schema) {
 #' }
 #' @export
 edge_extract <- function(ctx, text, schema, instruction = NULL, n_predict = 512L,
-                          temperature = 0.2) {
+                          temperature = 0.2, draft = FALSE) {
   if (!is.character(text) || length(text) != 1L) {
     stop("text must be a single character string")
   }
@@ -2646,9 +2663,25 @@ edge_extract <- function(ctx, text, schema, instruction = NULL, n_predict = 512L
     )
   }
 
+  notes <- ""
+  if (isTRUE(draft)) {
+    draft_prompt <- paste0(
+      "### Instruction\n", instruction,
+      " Think through the text and write each field on its own line as ",
+      "\"field: value\".",
+      "\n\n### Text\n", text,
+      "\n\n### Notes\n"
+    )
+    draft_text <- edge_completion(ctx, draft_prompt,
+                                  n_predict = n_predict,
+                                  temperature = temperature)
+    notes <- paste0("\n\n### Notes\n", trimws(draft_text))
+  }
+
   prompt <- paste0(
     "### Instruction\n", instruction,
     "\n\n### Text\n", text,
+    notes,
     "\n\n### Response\n"
   )
 
@@ -3027,7 +3060,11 @@ edge_map <- function(ctx, texts, prompt_template, n_predict = 128L,
 #' @param n_predict Maximum tokens to generate per text (default: 512)
 #' @param temperature Sampling temperature (default: 0.2)
 #' @param progress Show progress messages (default: TRUE)
+#' @param draft Passed to \code{\link{edge_extract}}: draft in free text first,
+#'   then apply the grammar (default: FALSE)
 #' @return A data frame with one row per text and columns for each schema field
+#'
+#' @seealso \code{\link{edge_extract}}, \code{\link{edge_map}}
 #'
 #' @examples
 #' \dontrun{
@@ -3050,7 +3087,7 @@ edge_map <- function(ctx, texts, prompt_template, n_predict = 128L,
 #' @export
 edge_extract_batch <- function(ctx, texts, schema, instruction = NULL,
                                 n_predict = 512L, temperature = 0.2,
-                                progress = TRUE) {
+                                progress = TRUE, draft = FALSE) {
   if (!is.character(texts) || length(texts) == 0L) {
     stop("texts must be a non-empty character vector")
   }
@@ -3068,7 +3105,8 @@ edge_extract_batch <- function(ctx, texts, schema, instruction = NULL,
       edge_extract(ctx, texts[i], schema,
                     instruction = instruction,
                     n_predict = n_predict,
-                    temperature = temperature),
+                    temperature = temperature,
+                    draft = draft),
       error = function(e) {
         warning("Extraction failed for text ", i, ": ", e$message)
         # Return NA-filled row
@@ -3104,6 +3142,521 @@ edge_extract_batch <- function(ctx, texts, schema, instruction = NULL,
       df
     }
   )
+}
+
+
+# ============================================================================
+# Text-to-SQL, narration, and numeric back-verification
+# ============================================================================
+
+#' Generate a SQL query from a natural language question
+#'
+#' Convenience wrapper that constructs a text-to-SQL prompt with the supplied
+#' schema, queries the model, and post-processes the output into a single
+#' executable SQL statement. Optionally executes the query in a DBI connection
+#' and returns both the SQL and its result.
+#'
+#' @param ctx Model context from edge_load_model()
+#' @param question Natural language question (single character string)
+#' @param schema One or more CREATE TABLE statements describing the relevant
+#'   tables. Pass a single string or a character vector: vectors are
+#'   concatenated with newlines. Pre-filter the schema to only the tables that
+#'   are likely relevant to the question; large schemas degrade accuracy.
+#' @param dialect SQL dialect label inserted into the prompt (default "sqlite").
+#'   Examples: "sqlite", "postgresql", "snowflake".
+#' @param examples Optional named list of question -> SQL pairs used as
+#'   few-shot examples (e.g. \code{list("How many subjects?" = "SELECT COUNT(*) FROM ADSL;")}).
+#' @param con Optional DBI connection. When non-NULL the generated SQL is
+#'   executed in a read-only sense using \code{DBI::dbGetQuery}; failures are
+#'   captured rather than re-thrown.
+#' @param n_predict Maximum tokens to generate (default: 256)
+#' @param temperature Sampling temperature (default: 0.1, low for SQL)
+#' @return If \code{con} is NULL, a single character string containing the SQL.
+#'   If \code{con} is supplied, a list with elements \code{sql}, \code{result},
+#'   and \code{error} (NA on success).
+#'
+#' @details
+#' This is a drafting helper, not a sandbox. Always review generated SQL before
+#' executing it against any system of record. Pair this function with a
+#' read-only connection and dedicated validation logic for production use.
+#'
+#' Output quality depends heavily on the model. Small general purpose models
+#' often produce syntactically valid SQL that answers a different question than
+#' the one asked. Use a model fine tuned for SQL, or a general model of at least
+#' 7B parameters, and review every statement before running it.
+#'
+#' @examples
+#' \dontrun{
+#' ctx <- edge_load_model("sqlcoder-7b-2.Q4_K_M.gguf", n_ctx = 4096L)
+#'
+#' schema <- "
+#' CREATE TABLE ADSL (USUBJID TEXT, AGE INTEGER, SEX TEXT, TRT01A TEXT, SAFFL TEXT);
+#' CREATE TABLE ADAE (USUBJID TEXT, AETERM TEXT, AESER TEXT, AEREL TEXT);
+#' "
+#'
+#' sql <- edge_text_to_sql(ctx,
+#'   "How many subjects on active arm had at least one serious related AE?",
+#'   schema = schema, dialect = "sqlite")
+#' cat(sql)
+#'
+#' # With execution
+#' con <- DBI::dbConnect(RSQLite::SQLite(), "study.db")
+#' out <- edge_text_to_sql(ctx, "Count safety analysis subjects per arm",
+#'                          schema = schema, con = con)
+#' out$sql
+#' out$result
+#' DBI::dbDisconnect(con)
+#' }
+#' @export
+edge_text_to_sql <- function(ctx, question, schema, dialect = "sqlite",
+                              examples = NULL, con = NULL,
+                              n_predict = 256L, temperature = 0.1) {
+  if (!is_valid_model(ctx)) {
+    stop("Invalid model context. Load a model first with edge_load_model()")
+  }
+  if (!is.character(question) || length(question) != 1L || nchar(question) == 0L) {
+    stop("question must be a non-empty single character string")
+  }
+  if (!is.character(schema) || length(schema) == 0L) {
+    stop("schema must be a character vector of one or more CREATE TABLE statements")
+  }
+  if (!is.character(dialect) || length(dialect) != 1L) {
+    stop("dialect must be a single character string")
+  }
+
+  schema_block <- paste(schema, collapse = "\n")
+
+  example_block <- ""
+  if (!is.null(examples)) {
+    if (!is.list(examples) || is.null(names(examples))) {
+      stop("examples must be a named list of question -> SQL pairs")
+    }
+    parts <- character()
+    for (i in seq_along(examples)) {
+      parts <- c(parts,
+        paste0("### Question\n", names(examples)[i],
+               "\n\n### SQL\n", examples[[i]]))
+    }
+    example_block <- paste0(paste(parts, collapse = "\n\n"), "\n\n")
+  }
+
+  prompt <- paste0(
+    "### Task\n",
+    "Generate a ", dialect, " SQL query that answers the question below. ",
+    "Use only the tables and columns defined in the schema. ",
+    "Return a single statement ending with a semicolon.\n\n",
+    "### Database Schema\n", schema_block, "\n\n",
+    example_block,
+    "### Question\n", question, "\n\n",
+    "### SQL\n"
+  )
+
+  raw <- edge_completion(ctx, prompt,
+                          n_predict = n_predict,
+                          temperature = temperature,
+                          top_p = 0.95)
+  sql <- .clean_sql_output(raw)
+
+  if (is.null(con)) {
+    return(sql)
+  }
+
+  if (!requireNamespace("DBI", quietly = TRUE)) {
+    stop("Package 'DBI' is required when 'con' is supplied. Install with install.packages('DBI').")
+  }
+
+  result <- NULL
+  err <- NA_character_
+  tryCatch({
+    result <- DBI::dbGetQuery(con, sql)
+  }, error = function(e) {
+    err <<- conditionMessage(e)
+  })
+
+  list(sql = sql, result = result, error = err)
+}
+
+#' Clean raw model output into an executable SQL statement
+#' @keywords internal
+.clean_sql_output <- function(raw) {
+  if (!is.character(raw) || length(raw) != 1L) return(NA_character_)
+  s <- raw
+  # Strip common ```sql ... ``` fences (any case: models also write ```SQL)
+  s <- sub("(?si)^.*?```(?:sql)?\\s*", "", s, perl = TRUE)
+  s <- sub("(?s)```.*$", "", s, perl = TRUE)
+  # Strip trailing model chatter after the first semicolon that ends the
+  # statement, ignoring semicolons inside quoted literals
+  semi <- .sql_terminator(s)
+  if (semi > 0) {
+    s <- substr(s, 1L, semi)
+  } else {
+    # No semicolon: cut at any "### " section header the model echoed
+    s <- sub("\\s*###.*$", "", s)
+    s <- sub("\\s*Explanation.*$", "", s, ignore.case = TRUE)
+    s <- sub("\\s*Note:.*$", "", s, ignore.case = TRUE)
+  }
+  # Drop leading "SQL:" labels the model sometimes emits
+  s <- sub("^\\s*(SQL|Query)\\s*:\\s*", "", s, ignore.case = TRUE)
+  trimws(s)
+}
+
+# Position of the first semicolon outside quoted SQL literals, or 0.
+.sql_terminator <- function(s) {
+  chars <- strsplit(s, "", fixed = TRUE)[[1]]
+  quote <- ""
+  for (i in seq_along(chars)) {
+    ch <- chars[[i]]
+    if (nzchar(quote)) {
+      # A doubled quote ('it''s') closes and reopens, which works out the same
+      if (ch == quote) quote <- ""
+    } else if (ch == "'" || ch == "\"") {
+      quote <- ch
+    } else if (ch == ";") {
+      return(i)
+    }
+  }
+  0L
+}
+
+#' Generate an English narrative from structured data
+#'
+#' Turns a named list, single-row data.frame, or multi-row data.frame into one
+#' or more short English sentences describing the data. The function linearises
+#' the input as labelled "field: value" lines and asks the model to narrate
+#' them without inferring anything that is not in the input.
+#'
+#' @param ctx Model context from edge_load_model()
+#' @param data A named list, a data.frame, or a character vector of pre-formatted
+#'   "field: value" blocks. Multi-row data.frames are processed row-by-row and
+#'   the function returns a character vector of the same length.
+#' @param instruction Optional instruction overriding the default
+#'   ("Write a single short paragraph describing this record. Use only the data
+#'   provided. Do not infer causality or add information.")
+#' @param max_words Soft limit communicated in the prompt (default: 60). Not
+#'   enforced; the model is asked to stay under this.
+#' @param n_predict Maximum tokens to generate per record (default: 200)
+#' @param temperature Sampling temperature (default: 0.3)
+#' @param progress Show progress messages for multi-row inputs (default: TRUE)
+#' @return Character vector of narratives, one per input record.
+#'
+#' @details
+#' This is a drafting helper. For regulated outputs (CSR, ICSR, PV) always run
+#' \code{\link{edge_verify_narrative}} or an equivalent back-check before
+#' surfacing the text to a human reviewer, and pass it the study's drug and
+#' adverse-event terms. Unchecked output is often wrong: in a published study
+#' of small models drafting case narratives from ICSRs, 60% of outputs had
+#' wrong drug information and 71% wrong or missing adverse events (Hakim et
+#' al., 2024, arXiv:2407.18322).
+#'
+#' Output quality depends heavily on the model. Small models tend to restate the
+#' input fields rather than summarise them. A model of at least 7B parameters
+#' gives noticeably better narratives.
+#'
+#' @examples
+#' \dontrun{
+#' ctx <- edge_load_model("Qwen3-1.7B-Q4_K_M.gguf", n_ctx = 2048L)
+#'
+#' lab <- list(
+#'   USUBJID = "ABC-001-042", LBTESTCD = "ALT",
+#'   LBORRES = 285, LBORNRHI = 55,
+#'   LBDY = 28, VISIT = "Week 4", LBNRIND = "HIGH"
+#' )
+#' edge_narrate(ctx, lab)
+#'
+#' # Multi-row data.frame
+#' df <- data.frame(
+#'   subject = c("S001", "S002"),
+#'   alt = c(285, 47),
+#'   uln = c(55, 55),
+#'   flag = c("HIGH", "NORMAL")
+#' )
+#' edge_narrate(ctx, df)
+#' }
+#' @export
+edge_narrate <- function(ctx, data, instruction = NULL, max_words = 60L,
+                          n_predict = 200L, temperature = 0.3,
+                          progress = TRUE) {
+  if (!is_valid_model(ctx)) {
+    stop("Invalid model context. Load a model first with edge_load_model()")
+  }
+  if (is.null(instruction)) {
+    instruction <- paste0(
+      "Write a single short paragraph describing this record. ",
+      "Use only the data provided. Do not infer causality or add information. ",
+      "Stay under ", as.integer(max_words), " words."
+    )
+  }
+
+  records <- .linearise_records(data)
+
+  n <- length(records)
+  out <- character(n)
+  for (i in seq_len(n)) {
+    if (progress && n > 1L) {
+      message(sprintf("[%d/%d] Narrating...", i, n))
+      flush.console()
+    }
+    prompt <- paste0(
+      "### Instruction\n", instruction,
+      "\n\n### Data\n", records[i],
+      "\n\n### Narrative\n"
+    )
+    raw <- edge_completion(ctx, prompt,
+                            n_predict = n_predict,
+                            temperature = temperature,
+                            top_p = 0.95)
+    out[i] <- trimws(raw)
+  }
+  out
+}
+
+#' Linearise a record into a "field: value" block
+#' @keywords internal
+.linearise_records <- function(data) {
+  if (is.character(data)) {
+    return(data)
+  }
+  if (is.data.frame(data)) {
+    out <- character(nrow(data))
+    for (i in seq_len(nrow(data))) {
+      row <- as.list(data[i, , drop = FALSE])
+      out[i] <- .linearise_one(row)
+    }
+    return(out)
+  }
+  if (is.list(data) && !is.null(names(data))) {
+    return(.linearise_one(data))
+  }
+  stop("data must be a named list, a data.frame, or a character vector")
+}
+
+.linearise_one <- function(rec) {
+  nm <- names(rec)
+  vals <- vapply(rec, function(v) {
+    if (is.null(v) || length(v) == 0L) return("(missing)")
+    if (is.na(v[1])) return("(missing)")
+    as.character(v[1])
+  }, character(1))
+  paste(sprintf("- %s: %s", nm, vals), collapse = "\n")
+}
+
+#' Verify a generated narrative against source values
+#'
+#' Checks a generated narrative against the source record in two independent
+#' ways. The \emph{literal} check needs no model: every numeric source value
+#' must appear in the narrative, and, when \code{terms} is given, every term
+#' from that dictionary (e.g. drug names, adverse-event terms) must occur in the
+#' narrative if and only if it occurs in the source. The \emph{model} check
+#' re-extracts the named fields from the narrative with \code{\link{edge_extract}}
+#' and compares them to the source record.
+#'
+#' @param ctx Model context from edge_load_model(). May be NULL when
+#'   \code{method = "literal"}.
+#' @param narrative Character string produced by \code{\link{edge_narrate}} or
+#'   any other generator.
+#' @param expected Named list of source field values. The names define which
+#'   fields to re-extract from the narrative. Values define the source-of-truth.
+#' @param schema Optional named list overriding the schema passed to
+#'   \code{edge_extract}. If NULL, types are inferred from \code{expected}
+#'   (numeric -> "number", integer -> "integer", logical -> "boolean",
+#'   character -> "string").
+#' @param tolerance Numeric tolerance for number fields (default: 1e-6).
+#'   Values within \code{tolerance} are considered equal.
+#' @param temperature Sampling temperature for re-extraction (default: 0.1)
+#' @param method Which checks to run: \code{"both"} (default), \code{"literal"}
+#'   (deterministic only, no model call) or \code{"model"} (re-extraction only).
+#' @param terms Optional character vector of controlled terms to guard, such as
+#'   the drug names and MedDRA terms relevant to the study. Matching is
+#'   case-insensitive on whole words. Ignored when \code{method = "model"}.
+#' @return A list with:
+#'   \itemize{
+#'     \item \code{ok}: TRUE if every check that was run passed.
+#'     \item \code{extracted}: the parsed extraction (as returned by
+#'           \code{edge_extract}), or NULL if the model check was not run.
+#'     \item \code{expected}: the supplied expected values.
+#'     \item \code{mismatches}: data.frame with one row per field that failed
+#'           the model check.
+#'     \item \code{literal}: data.frame (\code{field}, \code{expected},
+#'           \code{found}) for each numeric source value.
+#'     \item \code{unsupported_terms}: terms that appear in the narrative but
+#'           not in the source, i.e. likely hallucinations.
+#'     \item \code{omitted_terms}: terms that appear in the source but not in
+#'           the narrative.
+#'   }
+#'
+#' @details
+#' The model check re-extracts the fields with the model, so it inherits the
+#' model's limitations. A small model can miss a field that is present and
+#' report a mismatch that is not real, or confirm a value that is wrong. The
+#' literal check has no such failure mode, but it is strict: it does not
+#' recognise numbers written as words, and it reports a term as missing when
+#' the narrative uses a synonym or a misspelling. Treat any failure as a reason
+#' for a human to look rather than as proof of an error.
+#'
+#' Unchecked generated narratives are often wrong. In a published study of
+#' small models drafting case narratives from ICSRs, 60% of outputs contained
+#' wrong drug information and 71% wrong or missing adverse events. A simple
+#' drug and adverse-event name comparison between source and output, which is
+#' what \code{terms} provides, flagged every hallucinated drug name in the
+#' sample that was checked (Hakim et al., 2024, arXiv:2407.18322).
+#'
+#' @examples
+#' \dontrun{
+#' ctx <- edge_load_model("Qwen3-1.7B-Q4_K_M.gguf", n_ctx = 2048L)
+#'
+#' rec <- list(subject = "S001", drug = "Drug X", event = "Hepatotoxicity",
+#'             alt = 285, uln = 55, study_day = 28)
+#' narrative <- edge_narrate(ctx, rec)
+#' check <- edge_verify_narrative(ctx, narrative, expected = rec,
+#'                                terms = c("Drug X", "Drug Y",
+#'                                          "Hepatotoxicity", "Rash"))
+#' if (!check$ok) {
+#'   print(check$mismatches)
+#'   print(check$literal[!check$literal$found, ])
+#'   print(check$unsupported_terms)
+#' }
+#'
+#' # Deterministic check only, no model needed
+#' edge_verify_narrative(NULL, narrative, rec, method = "literal")
+#' }
+#' @export
+edge_verify_narrative <- function(ctx, narrative, expected, schema = NULL,
+                                   tolerance = 1e-6, temperature = 0.1,
+                                   method = c("both", "literal", "model"),
+                                   terms = NULL) {
+  method <- match.arg(method)
+  if (method != "literal" && !is_valid_model(ctx)) {
+    stop("Invalid model context. Load a model first with edge_load_model()")
+  }
+  if (!is.character(narrative) || length(narrative) != 1L) {
+    stop("narrative must be a single character string")
+  }
+  if (!is.list(expected) || is.null(names(expected)) || length(expected) == 0L) {
+    stop("expected must be a non-empty named list")
+  }
+  if (!is.null(terms) && (!is.character(terms) || anyNA(terms))) {
+    stop("terms must be a character vector without NA")
+  }
+
+  extracted <- NULL
+  mismatch_df <- data.frame(field = character(), expected = character(),
+                            got = character(), stringsAsFactors = FALSE)
+  if (method != "literal") {
+    if (is.null(schema)) {
+      schema <- lapply(expected, function(v) {
+        if (is.logical(v)) "boolean"
+        else if (is.integer(v)) "integer"
+        else if (is.numeric(v)) "number"
+        else "string"
+      })
+      names(schema) <- names(expected)
+    }
+
+    extracted <- edge_extract(ctx, narrative, schema,
+                               instruction = paste0(
+                                 "Re-extract the following fields from the narrative. ",
+                                 "Return only values that appear explicitly in the text. ",
+                                 "Do not guess or infer. If a field is not stated in the text, ",
+                                 "return an empty string for text, 0 for numbers and false ",
+                                 "for true/false fields."
+                               ),
+                               temperature = temperature)
+
+    mismatches <- list()
+    for (nm in names(expected)) {
+      got <- if (is.list(extracted) && nm %in% names(extracted)) extracted[[nm]] else NA
+      exp <- expected[[nm]]
+      eq <- .field_equal(got, exp, tolerance)
+      if (!isTRUE(eq)) {
+        mismatches[[length(mismatches) + 1L]] <- data.frame(
+          field = nm,
+          expected = .as_display(exp),
+          got = .as_display(got),
+          stringsAsFactors = FALSE
+        )
+      }
+    }
+    if (length(mismatches) > 0L) mismatch_df <- do.call(rbind, mismatches)
+  }
+
+  literal_df <- data.frame(field = character(), expected = character(),
+                           found = logical(), stringsAsFactors = FALSE)
+  unsupported <- character()
+  omitted <- character()
+  if (method != "model") {
+    literal_df <- .literal_number_check(narrative, expected, tolerance)
+    if (length(terms) > 0L) {
+      source_text <- paste(vapply(expected, .as_display, character(1)),
+                           collapse = "\n")
+      in_narrative <- vapply(terms, .term_present, logical(1), text = narrative)
+      in_source <- vapply(terms, .term_present, logical(1), text = source_text)
+      unsupported <- unname(terms[in_narrative & !in_source])
+      omitted <- unname(terms[in_source & !in_narrative])
+    }
+  }
+
+  list(
+    ok = nrow(mismatch_df) == 0L && all(literal_df$found) &&
+      length(unsupported) == 0L && length(omitted) == 0L,
+    extracted = extracted,
+    expected = expected,
+    mismatches = mismatch_df,
+    literal = literal_df,
+    unsupported_terms = unsupported,
+    omitted_terms = omitted
+  )
+}
+
+# Every numeric source value must appear as a number in the narrative.
+# Thousands separators are dropped first; digits that are part of an
+# identifier such as "ABC-001-042" are not treated as numbers. A unit may
+# follow directly, as in "2.5mg" or "285U/L".
+.literal_number_check <- function(narrative, expected, tolerance) {
+  is_num <- vapply(expected, function(v) {
+    is.numeric(v) && length(v) >= 1L && !is.na(v[1])
+  }, logical(1))
+  fields <- names(expected)[is_num]
+  text <- gsub("(?<=\\d),(?=\\d{3}(?!\\d))", "", narrative, perl = TRUE)
+  tokens <- regmatches(text, gregexpr("(?<![\\w.-])-?\\d+(?:\\.\\d+)?(?!\\.?\\d)",
+                                      text, perl = TRUE))[[1]]
+  found_numbers <- suppressWarnings(as.numeric(tokens))
+  found_numbers <- found_numbers[!is.na(found_numbers)]
+  found <- vapply(fields, function(nm) {
+    any(abs(found_numbers - expected[[nm]][1]) <= tolerance)
+  }, logical(1))
+  data.frame(
+    field = fields,
+    expected = vapply(expected[fields], .as_display, character(1)),
+    found = unname(found),
+    stringsAsFactors = FALSE,
+    row.names = NULL
+  )
+}
+
+# Case-insensitive whole-word match of a literal term.
+.term_present <- function(term, text) {
+  pattern <- paste0("(?<![[:alnum:]])\\Q", term, "\\E(?![[:alnum:]])")
+  grepl(pattern, text, ignore.case = TRUE, perl = TRUE)
+}
+
+.field_equal <- function(got, exp, tolerance) {
+  if (length(got) == 0L || (length(got) == 1L && is.na(got))) return(FALSE)
+  if (is.logical(exp)) {
+    return(isTRUE(as.logical(got) == exp))
+  }
+  if (is.numeric(exp)) {
+    g <- suppressWarnings(as.numeric(got))
+    if (is.na(g)) return(FALSE)
+    return(abs(g - exp) <= tolerance)
+  }
+  identical(tolower(trimws(as.character(got))),
+            tolower(trimws(as.character(exp))))
+}
+
+.as_display <- function(v) {
+  if (length(v) == 0L) return("(empty)")
+  if (is.na(v[1])) return("(NA)")
+  as.character(v[1])
 }
 
 
@@ -3485,11 +4038,11 @@ print.edge_index <- function(x, ...) {
 #' @details
 #' Endpoints served:
 #' \itemize{
-#'   \item \code{POST /v1/completions} — Text completion
-#'   \item \code{POST /v1/chat/completions} — Chat completion (uses model's native template)
-#'   \item \code{POST /v1/embeddings} — Text embeddings (if \code{embeddings = TRUE})
-#'   \item \code{GET /v1/models} — List loaded model info
-#'   \item \code{GET /health} — Health check
+#'   \item \code{POST /v1/completions}: Text completion
+#'   \item \code{POST /v1/chat/completions}: Chat completion (uses model's native template)
+#'   \item \code{POST /v1/embeddings}: Text embeddings (if \code{embeddings = TRUE})
+#'   \item \code{GET /v1/models}: List loaded model info
+#'   \item \code{GET /health}: Health check
 #' }
 #'
 #' The server runs in the foreground. Press Ctrl+C / Esc to stop.

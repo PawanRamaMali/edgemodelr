@@ -35,6 +35,8 @@
 #if defined(__APPLE__)
 #    include <sys/sysctl.h>
 #    include <sys/types.h>
+#include <cstdio>
+#include <cstring>
 #endif
 
 // ggml-backend interface

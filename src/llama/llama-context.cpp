@@ -15,6 +15,7 @@
 #include <limits>
 #include <stdexcept>
 #include <algorithm>
+#include <cassert>
 
 //
 // llama_context

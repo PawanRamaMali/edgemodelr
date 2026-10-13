@@ -27,4 +27,6 @@
 ^out\.txt$
 ^functional_test\.R$
 ^.*\.log$
+^docker$
+^\.dockerignore$
 ^\.lintr$

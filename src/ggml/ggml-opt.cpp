@@ -13,6 +13,7 @@
 #include <map>
 #include <random>
 #include <vector>
+#include <cstring>
 
 /* CRAN compliance: suppress stdio diagnostic output in R builds.
  * The fprintf/fflush calls in this file render a training-progress

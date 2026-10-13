@@ -14,6 +14,9 @@
 #if defined(__gnu_linux__)
 #include <sys/syscall.h>
 #include <unistd.h>
+#include <cassert>
+#include <cstdio>
+#include <cstring>
 #endif
 
 #if (defined(_WIN32) || defined(_WIN64))

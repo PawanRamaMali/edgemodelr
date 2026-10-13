@@ -1,4 +1,32 @@
-# edgemodelr (development)
+# edgemodelr 0.5.0
+
+## New features
+
+* `edge_text_to_sql()` turns a natural language question plus a CREATE TABLE
+  schema into SQL. Pass a DBI connection to `con` and it executes the query
+  and returns the rows, otherwise it returns the statement.
+
+* `edge_narrate()` writes a short English summary of a record. Accepts a
+  named list, a single row, or a multi-row data frame, and returns one
+  narrative per record.
+
+* `edge_verify_narrative()` checks a generated narrative against the values
+  it came from. A deterministic check, which needs no model, confirms that
+  every numeric source value appears in the text. With `terms` (for example
+  the study's drug names and MedDRA terms) it also flags terms the narrative
+  adds that are not in the source, likely hallucinations, and source terms it
+  leaves out. A model-based check re-extracts the named fields and compares
+  them to the source, with a tolerance for numeric fields. Both run by
+  default; `method = "literal"` runs the deterministic check alone.
+
+* `edge_extract()` and `edge_extract_batch()` gain `draft = TRUE`, which lets
+  the model answer in free text before the grammar-constrained pass. Forcing
+  a very small model straight into strict JSON can cost accuracy; drafting
+  first usually recovers it, at two to four times the generation time.
+
+All three need a capable model. Small general purpose models produce valid
+SQL that answers a different question, and narratives that restate the input
+rather than summarise it. The reference pages say so.
 
 ## Performance
 
@@ -18,6 +46,11 @@
 
 ## Bug fixes
 
+* **Missing standard library includes.** Twenty three C library headers were
+  used but not included, in files that only compiled because another header
+  happened to pull them in. Two headers shared between C and C++ used the
+  C++ spelling.
+
 * **SIMD builds no longer crash on Windows.** Installing with
   `EDGEMODELR_SIMD` set to AVX, AVX2, AVX512 or NATIVE built fine but
   segfaulted in `edge_load_model()`: 64-bit Windows GCC cannot keep the
@@ -33,6 +66,12 @@
   fields. With unlimited whitespace a model could fill `n_predict` with
   blank lines and return incomplete JSON, which greedy decoding did every
   time.
+## Docker
+
+* Added `docker/` with a base image, a variant with TinyLlama baked in, and
+  a compose file. The base image declares the model cache as a volume so a
+  host cache can be mounted for offline use.
+
 
 # edgemodelr 0.4.5
 
