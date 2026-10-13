@@ -3,7 +3,8 @@
 \title{Load a local GGUF model for inference}
 \usage{
 edge_load_model(model_path, n_ctx = 2048L, n_gpu_layers = 0L,
-  n_threads = NULL, flash_attn = TRUE, embeddings = FALSE)
+  n_threads = NULL, flash_attn = TRUE, embeddings = FALSE,
+  prompt_cache = FALSE)
 }
 \arguments{
 \item{model_path}{Path to a .gguf model file}
@@ -22,6 +23,12 @@ Reduces memory usage and improves speed. Set to FALSE for maximum compatibility.
 Must be TRUE to use \code{\link{edge_embeddings}} with this context.
 A model loaded with \code{embeddings = TRUE} can still be used for
 text generation.}
+
+\item{prompt_cache}{Keep the KV cache between calls and reuse the part of a new prompt
+that matches the start of the previous one, so only the rest is processed
+(default: FALSE). Much faster when prompts share a long fixed beginning,
+such as a system prompt. Each completion still depends only on its own
+prompt.}
 }
 \value{
 External pointer to the loaded model context

@@ -392,3 +392,39 @@ test_that("E2E: temperature 0 is greedy and gives the same text every time", {
                                            temperature = 0), a)
   expect_true(jsonlite::fromJSON(a)$answer %in% c("yes", "no"))
 })
+
+test_that("E2E: prompt_cache gives the same answers as an empty context", {
+  skip_on_cran()
+  skip_if_offline()
+  skip_on_os("windows") # Windows CI has memory/segfault issues with model loading
+
+  models <- edge_list_models()
+  tiny_model <- models[models$name == "TinyLlama-1.1B", ]
+  test_dir <- file.path(tempdir(), "edgemodelr_integration_tests")
+  dir.create(test_dir, showWarnings = FALSE, recursive = TRUE)
+  model_path <- file.path(test_dir, tiny_model$filename[1])
+  if (!file.exists(model_path)) {
+    edge_download_url(tiny_model$download_url[1], tiny_model$filename[1],
+                      cache_dir = test_dir)
+  }
+
+  cached <- edge_load_model(model_path, n_ctx = 512L, prompt_cache = TRUE)
+  on.exit(edge_free_model(cached), add = TRUE)
+  plain <- edge_load_model(model_path, n_ctx = 512L)
+  on.exit(edge_free_model(plain), add = TRUE)
+
+  # Prompts share a long start; the last one repeats the first, so it
+  # follows a different prompt and reuses only the shared part.
+  intro <- "You answer geography questions with one short sentence. "
+  prompts <- paste0(intro, c("What is the capital of France?",
+                             "What is the capital of Japan?",
+                             "What is the capital of France?"))
+  run <- function(ctx) {
+    vapply(prompts, function(p) {
+      edge_completion(ctx, p, n_predict = 12L, temperature = 0)
+    }, character(1), USE.NAMES = FALSE)
+  }
+  with_cache <- run(cached)
+  expect_identical(with_cache, run(plain))
+  expect_identical(with_cache[3], with_cache[1])
+})

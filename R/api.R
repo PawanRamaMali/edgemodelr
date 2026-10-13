@@ -8,6 +8,13 @@
 #'   Set to a lower value to leave cores free for other tasks.
 #' @param flash_attn Enable flash attention for faster inference (default: TRUE).
 #'   Reduces memory usage and improves speed. Set to FALSE for maximum compatibility.
+#' @param embeddings Enable embedding extraction mode (default: FALSE).
+#'   Must be TRUE to use \code{\link{edge_embeddings}} with this context.
+#' @param prompt_cache Keep the KV cache between calls and reuse the part of a new prompt
+#'   that matches the start of the previous one, so only the rest is processed
+#'   (default: FALSE). Much faster when prompts share a long fixed beginning,
+#'   such as a system prompt. Each completion still depends only on its own
+#'   prompt.
 #' @return External pointer to the loaded model context
 #'
 #' @examples
@@ -34,7 +41,8 @@
 #' }
 #' }
 #' @export
-edge_load_model <- function(model_path, n_ctx = 2048L, n_gpu_layers = 0L, n_threads = NULL, flash_attn = TRUE, embeddings = FALSE) {
+edge_load_model <- function(model_path, n_ctx = 2048L, n_gpu_layers = 0L, n_threads = NULL, flash_attn = TRUE, embeddings = FALSE,
+                            prompt_cache = FALSE) {
   if (!file.exists(model_path)) {
     stop("Model file does not exist: ", model_path, "\n",
          "Try these options:\n",
@@ -100,7 +108,8 @@ edge_load_model <- function(model_path, n_ctx = 2048L, n_gpu_layers = 0L, n_thre
                              n_gpu_layers_actual,
                              as.integer(if (is.null(n_threads)) 0L else n_threads),
                              as.logical(flash_attn),
-                             as.logical(embeddings))
+                             as.logical(embeddings),
+                             isTRUE(prompt_cache))
   }, error = function(e) {
     # Provide more context about what went wrong
     if (grepl("llama_load_model_from_file", e$message)) {
