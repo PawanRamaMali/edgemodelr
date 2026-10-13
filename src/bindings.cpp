@@ -11,6 +11,7 @@
 #include <cstdio>
 #include <fstream>
 #include <algorithm>
+#include <cmath>
 
 #include "llama.h"
 #include "ggml-backend.h"
@@ -101,6 +102,21 @@ struct SamplerDeleter {
   void operator()(llama_sampler * s) const { if (s) llama_sampler_free(s); }
 };
 typedef std::unique_ptr<llama_sampler, SamplerDeleter> sampler_ptr;
+
+// The sampling steps after any grammar. temperature = 0 means greedy
+// decoding, so the same prompt always gives the same text; otherwise top-p,
+// temperature and a seeded random draw.
+static void add_sampling_steps(llama_sampler * chain, double temperature, double top_p) {
+  if (temperature <= 0.0) {
+    llama_sampler_chain_add(chain, llama_sampler_init_greedy());
+    return;
+  }
+  if (top_p < 1.0) {
+    llama_sampler_chain_add(chain, llama_sampler_init_top_p(static_cast<float>(top_p), 1));
+  }
+  llama_sampler_chain_add(chain, llama_sampler_init_temp(static_cast<float>(temperature)));
+  llama_sampler_chain_add(chain, llama_sampler_init_dist(12345));
+}
 
 // Helper function to ensure initialization is done
 static void ensure_llama_initialized() {
@@ -365,14 +381,7 @@ std::string edge_completion_internal(SEXP model_ptr, std::string prompt, int n_p
     sampler_ptr sampler_owner(llama_sampler_chain_init(sampler_chain_params));
     llama_sampler * sampler = sampler_owner.get();
 
-    // Add samplers in the right order for quality generation
-    if (top_p < 1.0f) {
-      llama_sampler_chain_add(sampler, llama_sampler_init_top_p(static_cast<float>(top_p), 1));
-    }
-    if (temperature > 0.0f) {
-      llama_sampler_chain_add(sampler, llama_sampler_init_temp(static_cast<float>(temperature)));
-    }
-    llama_sampler_chain_add(sampler, llama_sampler_init_dist(12345)); // Random seed
+    add_sampling_steps(sampler, temperature, top_p);
 
     // Generate tokens using the new sampler API
     for (int i = 0; i < n_predict; ++i) {
@@ -529,14 +538,7 @@ List edge_completion_stream_internal(SEXP model_ptr, std::string prompt, Functio
     sampler_ptr sampler_owner(llama_sampler_chain_init(sampler_chain_params));
     llama_sampler * sampler = sampler_owner.get();
 
-    // Add samplers for quality generation
-    if (top_p < 1.0f) {
-      llama_sampler_chain_add(sampler, llama_sampler_init_top_p(static_cast<float>(top_p), 1));
-    }
-    if (temperature > 0.0f) {
-      llama_sampler_chain_add(sampler, llama_sampler_init_temp(static_cast<float>(temperature)));
-    }
-    llama_sampler_chain_add(sampler, llama_sampler_init_dist(12345)); // Random seed
+    add_sampling_steps(sampler, temperature, top_p);
 
     // Generate tokens one by one and stream them with proper sampling
     for (int i = 0; i < n_predict; ++i) {
@@ -680,28 +682,33 @@ std::string edge_completion_grammar_internal(SEXP model_ptr, std::string prompt,
     clear_kv_cache(edge_ctx->ctx);
     if (!decode_prompt(edge_ctx->ctx, prompt_tokens)) stop("Failed to process prompt");
 
-    // Build sampler chain WITH grammar constraint
+    // The grammar is kept out of the sampler chain, as in llama.cpp's common
+    // sampler: sample with the chain first and check only that one token
+    // against the grammar. The grammar runs over the whole vocabulary only
+    // when the token is rejected. Checking all of a 150k-token vocabulary at
+    // every step made grammar completions several times slower.
     auto sampler_chain_params = llama_sampler_chain_default_params();
     sampler_ptr sampler_owner(llama_sampler_chain_init(sampler_chain_params));
     llama_sampler * sampler = sampler_owner.get();
+    add_sampling_steps(sampler, temperature, top_p);
 
-    // Add grammar sampler first (constrains token selection)
+    sampler_ptr grammar_owner;
+    llama_sampler * grammar_sampler = nullptr;
     if (!grammar_str.empty()) {
-      auto * grammar_sampler = llama_sampler_init_grammar(vocab, grammar_str.c_str(), grammar_root.c_str());
+      grammar_sampler = llama_sampler_init_grammar(vocab, grammar_str.c_str(), grammar_root.c_str());
       if (!grammar_sampler) {
         stop("Failed to parse GBNF grammar. Check grammar syntax.");
       }
-      llama_sampler_chain_add(sampler, grammar_sampler);
+      grammar_owner.reset(grammar_sampler);
     }
 
-    // Add standard samplers
-    if (top_p < 1.0f) {
-      llama_sampler_chain_add(sampler, llama_sampler_init_top_p(static_cast<float>(top_p), 1));
-    }
-    if (temperature > 0.0f) {
-      llama_sampler_chain_add(sampler, llama_sampler_init_temp(static_cast<float>(temperature)));
-    }
-    llama_sampler_chain_add(sampler, llama_sampler_init_dist(12345));
+    const int n_vocab = llama_vocab_n_tokens(vocab);
+    std::vector<llama_token_data> candidates(n_vocab);
+    auto all_candidates = [&]() {
+      const float * logits = llama_get_logits_ith(edge_ctx->ctx, -1);
+      for (int t = 0; t < n_vocab; ++t) candidates[t] = llama_token_data{t, logits[t], 0.0f};
+      return llama_token_data_array{candidates.data(), static_cast<size_t>(n_vocab), -1, false};
+    };
 
     // Generate tokens (only collect generated text, not prompt)
     std::string result;
@@ -710,9 +717,24 @@ std::string edge_completion_grammar_internal(SEXP model_ptr, std::string prompt,
     for (int i = 0; i < n_predict; ++i) {
       Rcpp::checkUserInterrupt();
 
-      // llama_sampler_sample applies constraints, selects a token, AND calls
-      // llama_sampler_accept internally — do NOT call accept again afterward.
-      llama_token new_token = llama_sampler_sample(sampler, edge_ctx->ctx, -1);
+      // Sample, then accept the token once into each sampler. (Accepting
+      // into the grammar twice would advance its state twice.)
+      llama_token_data_array cur = all_candidates();
+      llama_sampler_apply(sampler, &cur);
+      llama_token new_token = cur.data[cur.selected].id;
+      if (grammar_sampler) {
+        llama_token_data single = {new_token, 1.0f, 0.0f};
+        llama_token_data_array one = {&single, 1, -1, false};
+        llama_sampler_apply(grammar_sampler, &one);
+        if (std::isinf(single.logit) && single.logit < 0) {
+          cur = all_candidates();
+          llama_sampler_apply(grammar_sampler, &cur);
+          llama_sampler_apply(sampler, &cur);
+          new_token = cur.data[cur.selected].id;
+        }
+        llama_sampler_accept(grammar_sampler, new_token);
+      }
+      llama_sampler_accept(sampler, new_token);
 
       if (llama_vocab_is_eog(vocab, new_token)) break;
 
