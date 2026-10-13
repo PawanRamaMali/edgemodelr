@@ -1,3 +1,14 @@
+# edgemodelr (development)
+
+## Bug fixes
+
+* **SIMD builds no longer crash on Windows.** Installing with
+  `EDGEMODELR_SIMD` set to AVX, AVX2, AVX512 or NATIVE built fine but
+  segfaulted in `edge_load_model()`: 64-bit Windows GCC cannot keep the
+  stack 32-byte aligned for AVX, so aligned vector moves faulted. SIMD
+  builds on Windows now assemble with `-Wa,-muse-unaligned-vector-move`.
+  The default generic build is unchanged.
+
 # edgemodelr 0.4.5
 
 ## Bug fixes
