@@ -1,3 +1,34 @@
+# edgemodelr 0.6.0
+
+## Speed
+
+* On 64-bit ARM (Apple silicon, ARM Linux) the default build now uses
+  llama.cpp's NEON kernels instead of generic C. NEON is part of the aarch64
+  baseline, so no extra compiler flags are needed. x86 keeps the portable
+  generic build by default.
+
+* `edge_embeddings()` decodes several texts per batch, one sequence each,
+  instead of one text per decode. On 64 short texts such as codelist terms
+  this is about 1.4x faster on an 8 core CPU.
+
+* `edge_load_model()` now uses one thread per physical core when
+  `n_threads` is NULL, instead of every hardware thread. On an 8 core,
+  16 thread CPU this doubled generation speed (21 to 49 tokens per second
+  with a 0.6B model). Prompt processing still uses every hardware thread,
+  which is faster there.
+
+* `edge_grammar_completion()` has a new `jump_forward` argument, on by
+  default. Text the grammar allows in only one way (JSON keys, separators,
+  the rest of an enum value once it is unambiguous) is added without sampling
+  and decoded in one batch. With four long JSON keys a 0.6B model wrote the
+  object about 3x faster; with short keys the saving is small. The forced
+  text is tokenized the standard way, so output can differ slightly from
+  `jump_forward = FALSE`.
+
+* `edge_json_grammar()` has a new `compact` argument. With `compact = TRUE`
+  the layout is fixed to `{"key": value, "key": value}`, so every key and
+  separator is forced and jump-forward skips over it.
+
 # edgemodelr 0.5.0
 
 ## New features
