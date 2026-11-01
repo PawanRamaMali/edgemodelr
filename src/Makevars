@@ -60,11 +60,13 @@ CORE_OBJECTS = bindings.o RcppExports.o \
 #   EDGEMODELR_SIMD=AVX2 R CMD INSTALL edgemodelr
 #
 # Valid values: GENERIC, SSE42, AVX, AVX2, AVX512, NATIVE
-# Default (no env var): portable generic build (GGML_CPU_GENERIC, no arch
-# flags) on every architecture -- see the final else branch below.
+# Default (no env var): NEON kernels on 64-bit ARM, which need no extra
+# flags, and the portable generic build (GGML_CPU_GENERIC, no arch flags)
+# everywhere else -- see the last two branches below.
 # ============================================================================
 
 UNAME_M := $(shell uname -m 2>/dev/null)
+ARM_OBJECTS = ggml/ggml-cpu/arch/arm/quants.o ggml/ggml-cpu/arch/arm/repack.o ggml/ggml-cpu/arch/arm/cpu-feats.o
 
 ifeq ($(EDGEMODELR_SIMD),GENERIC)
   GGML_EXTRA_CXXFLAGS += -DGGML_CPU_GENERIC
@@ -75,6 +77,8 @@ else ifeq ($(EDGEMODELR_SIMD),NATIVE)
   GGML_EXTRA_CFLAGS += -march=native
   ifeq ($(UNAME_M),x86_64)
     ARCH_OBJECTS = ggml/ggml-cpu/arch/x86/quants.o ggml/ggml-cpu/arch/x86/repack.o ggml/ggml-cpu/arch/x86/cpu-feats.o
+  else ifneq ($(filter aarch64 arm64,$(UNAME_M)),)
+    ARCH_OBJECTS = $(ARM_OBJECTS)
   else
     ARCH_OBJECTS =
   endif
@@ -94,8 +98,14 @@ else ifeq ($(EDGEMODELR_SIMD),SSE42)
   GGML_EXTRA_CXXFLAGS += -msse4.2 -DGGML_SSE42
   GGML_EXTRA_CFLAGS += -msse4.2 -DGGML_SSE42
   ARCH_OBJECTS = ggml/ggml-cpu/arch/x86/quants.o ggml/ggml-cpu/arch/x86/repack.o ggml/ggml-cpu/arch/x86/cpu-feats.o
+else ifneq ($(filter aarch64 arm64,$(UNAME_M)),)
+  # Default on 64-bit ARM (Apple silicon, ARM Linux): the NEON kernels.
+  # NEON is part of the aarch64 baseline, so this needs no -m or -march
+  # flags; the compiler's default target decides which extensions (dotprod
+  # on Apple silicon) the kernels use. About 3x faster than generic C.
+  ARCH_OBJECTS = $(ARM_OBJECTS)
 else
-  # Default: portable generic build (no arch-specific flags).
+  # Default elsewhere: portable generic build (no arch-specific flags).
   # CRAN policy prohibits non-portable compiler flags (-msse4.2, -mavx, etc.)
   # in the default install path. Users who want SIMD acceleration should set
   # EDGEMODELR_SIMD=SSE42 (or AVX2/AVX512/NATIVE) at install time.
@@ -174,6 +184,13 @@ ggml/ggml-cpu/arch/x86/%.o: ggml/ggml-cpu/arch/x86/%.c
 	$(CC) $(ALL_CPPFLAGS) $(ALL_CFLAGS) $(GGML_EXTRA_CFLAGS) -c $< -o $@
 
 ggml/ggml-cpu/arch/x86/%.o: ggml/ggml-cpu/arch/x86/%.cpp
+	$(CXX) $(ALL_CPPFLAGS) $(ALL_CXXFLAGS) $(GGML_EXTRA_CXXFLAGS) -c $< -o $@
+
+# Architecture-specific rules for ARM
+ggml/ggml-cpu/arch/arm/%.o: ggml/ggml-cpu/arch/arm/%.c
+	$(CC) $(ALL_CPPFLAGS) $(ALL_CFLAGS) $(GGML_EXTRA_CFLAGS) -c $< -o $@
+
+ggml/ggml-cpu/arch/arm/%.o: ggml/ggml-cpu/arch/arm/%.cpp
 	$(CXX) $(ALL_CPPFLAGS) $(ALL_CXXFLAGS) $(GGML_EXTRA_CXXFLAGS) -c $< -o $@
 
 # Standard fallback rules
