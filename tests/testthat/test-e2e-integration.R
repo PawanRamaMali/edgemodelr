@@ -428,3 +428,65 @@ test_that("E2E: prompt_cache gives the same answers as an empty context", {
   expect_identical(with_cache, run(plain))
   expect_identical(with_cache[3], with_cache[1])
 })
+
+test_that("E2E: jump_forward gives valid JSON with the same fields", {
+  skip_on_cran()
+  skip_if_offline()
+  skip_on_os("windows") # Windows CI has memory/segfault issues with model loading
+  skip_if_not_installed("jsonlite")
+
+  models <- edge_list_models()
+  tiny_model <- models[models$name == "TinyLlama-1.1B", ]
+  test_dir <- file.path(tempdir(), "edgemodelr_integration_tests")
+  dir.create(test_dir, showWarnings = FALSE, recursive = TRUE)
+  model_path <- file.path(test_dir, tiny_model$filename[1])
+  if (!file.exists(model_path)) {
+    edge_download_url(tiny_model$download_url[1], tiny_model$filename[1],
+                      cache_dir = test_dir)
+  }
+
+  ctx <- edge_load_model(model_path, n_ctx = 512L)
+  on.exit(edge_free_model(ctx), add = TRUE)
+
+  schema <- list(answer = c("yes", "no"), confidence = c("low", "medium", "high"))
+  q <- "Is Paris the capital of France? Reply in JSON."
+  for (compact in c(FALSE, TRUE)) {
+    g <- edge_json_grammar(schema, compact = compact)
+    on <- edge_grammar_completion(ctx, q, g, n_predict = 48L, temperature = 0)
+    off <- edge_grammar_completion(ctx, q, g, n_predict = 48L, temperature = 0,
+                                   jump_forward = FALSE)
+    # Forced text is tokenized the standard way, so the two can differ in
+    # the values the model picks, but never in the fields.
+    on_json <- jsonlite::fromJSON(on)
+    expect_identical(names(on_json), names(jsonlite::fromJSON(off)))
+    expect_true(on_json$answer %in% c("yes", "no"))
+    expect_true(on_json$confidence %in% c("low", "medium", "high"))
+  }
+})
+
+test_that("E2E: edge_embeddings gives the same vectors in a batch as one by one", {
+  skip_on_cran()
+  skip_if_offline()
+  skip_on_os("windows") # Windows CI has memory/segfault issues with model loading
+
+  models <- edge_list_models()
+  tiny_model <- models[models$name == "TinyLlama-1.1B", ]
+  test_dir <- file.path(tempdir(), "edgemodelr_integration_tests")
+  dir.create(test_dir, showWarnings = FALSE, recursive = TRUE)
+  model_path <- file.path(test_dir, tiny_model$filename[1])
+  if (!file.exists(model_path)) {
+    edge_download_url(tiny_model$download_url[1], tiny_model$filename[1],
+                      cache_dir = test_dir)
+  }
+
+  ctx <- edge_load_model(model_path, n_ctx = 512L, embeddings = TRUE)
+  on.exit(edge_free_model(ctx), add = TRUE)
+
+  texts <- c("The cat sat on the mat.", "Blood pressure, systolic",
+             "A much longer sentence about the weather in the mountains today.")
+  batch <- edge_embeddings(ctx, texts)
+  single <- do.call(rbind, lapply(texts, function(t) edge_embeddings(ctx, t)))
+  expect_equal(dim(batch), c(3L, edge_model_n_embd(ctx)))
+  # Batched matrix products round a little differently.
+  expect_true(all(rowSums(batch * single) > 0.999))
+})

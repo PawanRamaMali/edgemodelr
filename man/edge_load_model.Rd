@@ -13,8 +13,9 @@ edge_load_model(model_path, n_ctx = 2048L, n_gpu_layers = 0L,
 
 \item{n_gpu_layers}{Number of layers to offload to GPU (default: 0, CPU-only)}
 
-\item{n_threads}{Number of CPU threads for inference (default: NULL = use all
-hardware threads). Set to a lower value to leave cores free for other tasks.}
+\item{n_threads}{Number of CPU threads for inference (default: NULL = one per
+physical core). Extra hyperthreads slow generation down, often by half.
+Set to a lower value to leave cores free for other tasks.}
 
 \item{flash_attn}{Enable flash attention for faster inference (default: TRUE).
 Reduces memory usage and improves speed. Set to FALSE for maximum compatibility.}

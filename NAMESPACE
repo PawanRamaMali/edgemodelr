@@ -1,5 +1,6 @@
 useDynLib(edgemodelr, .registration = TRUE)
 importFrom(Rcpp, evalCpp)
+importFrom(parallel, detectCores)
 importFrom(utils, download.file, flush.console, tail, askYesNo, read.csv, write.csv, head)
 importFrom(tools, R_user_dir)
 export(edge_load_model)

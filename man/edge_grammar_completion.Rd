@@ -9,7 +9,8 @@ edge_grammar_completion(
   grammar_root = "root",
   n_predict = 512L,
   temperature = 0.3,
-  top_p = 0.95
+  top_p = 0.95,
+  jump_forward = TRUE
 )
 }
 \arguments{
@@ -26,6 +27,14 @@ edge_grammar_completion(
 \item{temperature}{Sampling temperature (default: 0.3, lower for structured output). 0 gives greedy decoding: the same prompt always gives the same text.}
 
 \item{top_p}{Nucleus sampling threshold (default: 0.95)}
+
+\item{jump_forward}{If TRUE (default), text that the grammar allows in only
+one way (JSON keys, separators, the rest of an enum value once it is
+unambiguous) is added without sampling, and its tokens are decoded in one
+batch, in fewer decode steps. The forced text is tokenized the standard way,
+which can differ from how the model would split it, so the output can
+differ slightly from \code{jump_forward = FALSE}. It always matches the
+grammar. Set FALSE to sample every token.}
 }
 \value{
 Character string containing only the generated text (not the prompt)
@@ -44,6 +53,13 @@ Common GBNF patterns:
   \item Enum/choices: \code{'root ::= "yes" | "no" | "maybe"'}
   \item Number: \code{'root ::= [0-9]+'}
 }
+
+Jump-forward leaves the last token of each forced stretch for the model to
+sample, since that token may merge with the text after it (a model writes
+an opening brace and quote as one token). It saves the most with long
+JSON keys and \code{edge_json_grammar(compact = TRUE)}, where the layout
+between fields is fixed and so is forced too: with four long keys a 0.6B
+model wrote the object about 3x faster. With short keys the saving is small.
 }
 \examples{
 \dontrun{

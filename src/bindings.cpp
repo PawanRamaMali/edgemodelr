@@ -14,6 +14,7 @@
 #include <cmath>
 
 #include "llama.h"
+#include "llama-grammar.h"
 #include "ggml-backend.h"
 #include "ggml-cpu.h"
 #include "r_output_redirect.h"
@@ -94,6 +95,45 @@ static void clear_kv_cache(llama_context * ctx) {
   if (mem) {
     llama_memory_clear(mem, true);
   }
+}
+
+// Owns a llama_grammar created with llama_grammar_init_impl().
+struct GrammarDeleter {
+  void operator()(llama_grammar * g) const { if (g) llama_grammar_free_impl(g); }
+};
+typedef std::unique_ptr<llama_grammar, GrammarDeleter> grammar_ptr;
+
+// The text the grammar allows next when it allows exactly one character at
+// each step: keys, separators and the rest of an enum value once it is
+// unambiguous. It stops where the grammar branches, may end, or accepts a
+// character class. The grammar's stacks are restored before returning.
+static std::string grammar_forced_text(llama_grammar & g, size_t max_chars = 64) {
+  std::string out;
+  if (g.partial_utf8.n_remain > 0) return out;
+  const llama_grammar_stacks saved = g.stacks;
+  while (out.size() < max_chars && !g.stacks.empty()) {
+    uint32_t chr = 0;
+    bool forced = true;
+    for (size_t i = 0; i < g.stacks.size() && forced; ++i) {
+      const llama_grammar_stack & st = g.stacks[i];
+      if (st.empty()) { forced = false; break; }  // the grammar may end here
+      const llama_grammar_element * pos = st.back();
+      if (pos->type != LLAMA_GRETYPE_CHAR ||
+          pos[1].type == LLAMA_GRETYPE_CHAR_ALT ||
+          pos[1].type == LLAMA_GRETYPE_CHAR_RNG_UPPER) {
+        forced = false;
+      } else if (i == 0) {
+        chr = pos->value;
+      } else if (pos->value != chr) {
+        forced = false;
+      }
+    }
+    if (!forced || chr == 0 || chr > 0x7F) break;  // ASCII only: no partial UTF-8
+    out.push_back(static_cast<char>(chr));
+    llama_grammar_accept(&g, chr);
+  }
+  g.stacks = saved;
+  return out;
 }
 
 // Frees the sampler chain on every exit path, including R errors, user
@@ -332,16 +372,27 @@ SEXP edge_load_model_internal(std::string model_path, int n_ctx = 2048, int n_gp
     }
     ctx_params.n_batch = optimal_batch;
 
-    // Thread configuration: use all hardware threads by default, allow user override
+    // Threads: R passes one per physical core by default; 0 means all hardware
+    // threads. Generating one token at a time is fastest on physical cores
+    // (hyperthreads halve it), while prompt batches still gain from every
+    // hardware thread.
     int hardware_threads = std::max(1, (int)std::thread::hardware_concurrency());
     int effective_threads = (n_threads > 0) ? std::min(n_threads, hardware_threads) : hardware_threads;
     ctx_params.n_threads = effective_threads;
-    ctx_params.n_threads_batch = hardware_threads;  // batch processing always benefits from max threads
+    ctx_params.n_threads_batch = hardware_threads;
     // flash_attn was a bool in older llama.cpp; b8179 changed to an enum
     ctx_params.flash_attn_type = flash_attn
       ? LLAMA_FLASH_ATTN_TYPE_ENABLED
       : LLAMA_FLASH_ATTN_TYPE_DISABLED;
     ctx_params.embeddings = embeddings;
+    if (embeddings) {
+      // edge_embeddings() decodes several texts at once, one sequence each.
+      // Pooled embeddings need a whole sequence in one micro-batch, and a
+      // unified KV cache lets every sequence use the whole context.
+      ctx_params.n_seq_max = 16;
+      ctx_params.kv_unified = true;
+      ctx_params.n_ubatch = ctx_params.n_batch;
+    }
     
     struct llama_context* ctx = llama_init_from_model(model, ctx_params);
     if (!ctx) {
@@ -682,7 +733,7 @@ List edge_completion_stream_internal(SEXP model_ptr, std::string prompt, Functio
 }
 
 // [[Rcpp::export]]
-std::string edge_completion_grammar_internal(SEXP model_ptr, std::string prompt, std::string grammar_str, std::string grammar_root, int n_predict = 512, double temperature = 0.3, double top_p = 0.95) {
+std::string edge_completion_grammar_internal(SEXP model_ptr, std::string prompt, std::string grammar_str, std::string grammar_root, int n_predict = 512, double temperature = 0.3, double top_p = 0.95, bool jump_forward = true) {
   try {
     if (TYPEOF(model_ptr) != EXTPTRSXP) {
       stop("Invalid model context");
@@ -740,6 +791,18 @@ std::string edge_completion_grammar_internal(SEXP model_ptr, std::string prompt,
       grammar_owner.reset(grammar_sampler);
     }
 
+    // A second copy of the grammar, kept in step with the sampler's, to look
+    // ahead for text the grammar forces. Forced text is decoded as one batch
+    // instead of one token per step: decoding k tokens together costs little
+    // more than decoding one on CPU, and JSON keys and separators make up a
+    // large share of a short structured answer.
+    grammar_ptr shadow;
+    if (grammar_sampler && jump_forward) {
+      shadow.reset(llama_grammar_init_impl(vocab, grammar_str.c_str(), grammar_root.c_str(),
+                                           false, nullptr, 0, nullptr, 0));
+    }
+    const int n_ctx_max = llama_n_ctx(edge_ctx->ctx);
+
     const int n_vocab = llama_vocab_n_tokens(vocab);
     std::vector<llama_token_data> candidates(n_vocab);
     auto all_candidates = [&]() {
@@ -754,6 +817,46 @@ std::string edge_completion_grammar_internal(SEXP model_ptr, std::string prompt,
 
     for (int i = 0; i < n_predict; ++i) {
       Rcpp::checkUserInterrupt();
+
+      if (shadow) {
+        const std::string forced = grammar_forced_text(*shadow);
+        if (!forced.empty()) {
+          std::vector<llama_token> ft(forced.size() + 1);
+          int n_ft = llama_tokenize(vocab, forced.c_str(), (int32_t)forced.size(), ft.data(),
+                                    (int32_t)ft.size(), false, false);
+          // Only when the tokens spell the forced text exactly and still fit.
+          std::string spelled;
+          // The last token is left for the model to sample: it may merge with
+          // what follows (the model writes {" as one token, not { then ").
+          // Forcing a split the model would not make changes its output.
+          if (n_ft > 0) n_ft -= 1;
+          if (n_ft > 0) {
+            ft.resize(n_ft);
+            for (llama_token tk : ft) {
+              char buf[256];
+              const int n = llama_token_to_piece(vocab, tk, buf, sizeof(buf), 0, false);
+              if (n < 0) { spelled.clear(); break; }
+              spelled.append(buf, n);
+            }
+          }
+          if (n_ft > 0 && !spelled.empty() && forced.compare(0, spelled.size(), spelled) == 0 && i + n_ft <= n_predict &&
+              static_cast<int>(edge_ctx->cached_tokens.size()) + n_ft < n_ctx_max) {
+            for (llama_token tk : ft) {
+              llama_sampler_accept(grammar_sampler, tk);
+              llama_grammar_accept_impl(*shadow, tk);
+              llama_sampler_accept(sampler, tk);
+            }
+            result += spelled;
+            edge_ctx->cache_valid = false;
+            llama_batch fb = llama_batch_get_one(ft.data(), n_ft);
+            if (llama_decode(edge_ctx->ctx, fb)) break;
+            edge_ctx->cached_tokens.insert(edge_ctx->cached_tokens.end(), ft.begin(), ft.end());
+            edge_ctx->cache_valid = true;
+            i += n_ft - 1;
+            continue;
+          }
+        }
+      }
 
       // Sample, then accept the token once into each sampler. (Accepting
       // into the grammar twice would advance its state twice.)
@@ -771,6 +874,7 @@ std::string edge_completion_grammar_internal(SEXP model_ptr, std::string prompt,
           new_token = cur.data[cur.selected].id;
         }
         llama_sampler_accept(grammar_sampler, new_token);
+        if (shadow && !llama_vocab_is_eog(vocab, new_token)) llama_grammar_accept_impl(*shadow, new_token);
       }
       llama_sampler_accept(sampler, new_token);
 
@@ -820,103 +924,95 @@ NumericMatrix edge_embeddings_internal(SEXP model_ptr, std::vector<std::string> 
     const int n_texts = static_cast<int>(texts.size());
     NumericMatrix result(n_texts, n_embd);
 
+    // Tokenize every text first. A text longer than one batch is cut to the
+    // batch size, since llama_decode() takes at most n_batch tokens.
+    const int n_batch = static_cast<int>(llama_n_batch(edge_ctx->ctx));
+    std::vector<std::vector<llama_token>> toks(n_texts);
     for (int t = 0; t < n_texts; ++t) {
-      // Clear KV cache between texts
-      llama_memory_t mem = llama_get_memory(edge_ctx->ctx);
-      if (mem) {
-        llama_memory_clear(mem, true);
-      }
-      edge_ctx->cache_valid = false;
-      edge_ctx->cached_tokens.clear();
-
-      // Tokenize
       const std::string& text = texts[t];
       const int n_tokens = -llama_tokenize(vocab, text.c_str(), (int32_t)text.size(), NULL, 0, true, true);
       if (n_tokens <= 0) {
         warning("Failed to tokenize text at index " + std::to_string(t + 1) + ", skipping");
         continue;
       }
-
-      std::vector<llama_token> tokens(n_tokens);
-      if (llama_tokenize(vocab, text.c_str(), (int32_t)text.size(), tokens.data(), (int32_t)tokens.size(), true, true) < 0) {
+      toks[t].resize(n_tokens);
+      if (llama_tokenize(vocab, text.c_str(), (int32_t)text.size(), toks[t].data(), (int32_t)n_tokens, true, true) < 0) {
         warning("Failed to tokenize text at index " + std::to_string(t + 1) + ", skipping");
+        toks[t].clear();
         continue;
       }
-
-      // Check if context size is sufficient
-      int n_ctx = llama_n_ctx(edge_ctx->ctx);
-      int tokens_to_process = std::min(n_tokens, n_ctx);
-
-      // Create batch with tokens requesting output
-      struct llama_batch batch = llama_batch_init(tokens_to_process, 0, 1);
-      batch.n_tokens = tokens_to_process;
-      for (int i = 0; i < tokens_to_process; ++i) {
-        batch.token[i] = tokens[i];
-        batch.pos[i] = i;
-        batch.n_seq_id[i] = 1;
-        batch.seq_id[i][0] = 0;
-        batch.logits[i] = 1;  // request output for all tokens (needed for embeddings)
-      }
-
-      // Use encode for encoder models, decode for decoder-only (generative) models
-      bool has_encoder = llama_model_has_encoder(edge_ctx->model);
-      int rc;
-      if (has_encoder) {
-        rc = llama_encode(edge_ctx->ctx, batch);
-      } else {
-        rc = llama_decode(edge_ctx->ctx, batch);
-      }
-      if (rc != 0) {
-        llama_batch_free(batch);
-        warning("Failed to process text at index " + std::to_string(t + 1) + ", skipping");
-        continue;
-      }
-
-      // Get embeddings - strategy depends on pooling type
-      const float* embd = nullptr;
-
-      enum llama_pooling_type pooling = llama_pooling_type(edge_ctx->ctx);
-      if (pooling != LLAMA_POOLING_TYPE_NONE) {
-        // Pooled models: get sequence-level embedding
-        embd = llama_get_embeddings_seq(edge_ctx->ctx, 0);
-      }
-      if (!embd) {
-        // Decoder-only / no pooling: get last token embedding
-        embd = llama_get_embeddings_ith(edge_ctx->ctx, tokens_to_process - 1);
-      }
-      if (!embd) {
-        // Final fallback: get all embeddings (first position)
-        embd = llama_get_embeddings(edge_ctx->ctx);
-      }
-
-      if (embd) {
-        if (normalize) {
-          // L2 normalize
-          double norm = 0.0;
-          for (int i = 0; i < n_embd; ++i) {
-            norm += static_cast<double>(embd[i]) * static_cast<double>(embd[i]);
-          }
-          norm = std::sqrt(norm);
-          if (norm > 0.0) {
-            for (int i = 0; i < n_embd; ++i) {
-              result(t, i) = static_cast<double>(embd[i]) / norm;
-            }
-          } else {
-            for (int i = 0; i < n_embd; ++i) {
-              result(t, i) = 0.0;
-            }
-          }
-        } else {
-          for (int i = 0; i < n_embd; ++i) {
-            result(t, i) = static_cast<double>(embd[i]);
-          }
-        }
-      } else {
-        warning("Failed to extract embeddings for text at index " + std::to_string(t + 1));
-      }
-
-      llama_batch_free(batch);
+      if (n_tokens > n_batch) toks[t].resize(n_batch);
     }
+
+    // Several texts go through one decode, each as its own sequence, as many
+    // as fit in a batch. One decode per text left most of the CPU idle on
+    // short texts such as codelist terms.
+    const int n_seq = std::max<int>(1, static_cast<int>(llama_n_seq_max(edge_ctx->ctx)));
+    const bool has_encoder = llama_model_has_encoder(edge_ctx->model);
+    const enum llama_pooling_type pooling = llama_pooling_type(edge_ctx->ctx);
+    llama_batch batch = llama_batch_init(n_batch, 0, 1);
+
+    auto store = [&](int t, const float * embd) {
+      double norm = 0.0;
+      if (normalize) {
+        for (int i = 0; i < n_embd; ++i) norm += static_cast<double>(embd[i]) * embd[i];
+        norm = std::sqrt(norm);
+      }
+      for (int i = 0; i < n_embd; ++i) {
+        result(t, i) = !normalize ? embd[i] : (norm > 0.0 ? embd[i] / norm : 0.0);
+      }
+    };
+
+    int t = 0;
+    while (t < n_texts) {
+      Rcpp::checkUserInterrupt();
+      llama_memory_t mem = llama_get_memory(edge_ctx->ctx);
+      if (mem) llama_memory_clear(mem, true);
+      edge_ctx->cache_valid = false;
+      edge_ctx->cached_tokens.clear();
+
+      // Fill the batch: texts t .. t + group - 1, one sequence each.
+      std::vector<int> members, last_index;
+      batch.n_tokens = 0;
+      while (t < n_texts && static_cast<int>(members.size()) < n_seq) {
+        const auto & tk = toks[t];
+        if (tk.empty()) { ++t; continue; }
+        if (!members.empty() && batch.n_tokens + static_cast<int>(tk.size()) > n_batch) break;
+        const int seq = static_cast<int>(members.size());
+        for (size_t i = 0; i < tk.size(); ++i) {
+          const int j = batch.n_tokens++;
+          batch.token[j] = tk[i];
+          batch.pos[j] = static_cast<llama_pos>(i);
+          batch.n_seq_id[j] = 1;
+          batch.seq_id[j][0] = seq;
+          batch.logits[j] = 1;
+        }
+        members.push_back(t);
+        last_index.push_back(batch.n_tokens - 1);
+        ++t;
+      }
+      if (members.empty()) break;
+
+      const int rc = has_encoder ? llama_encode(edge_ctx->ctx, batch) : llama_decode(edge_ctx->ctx, batch);
+      if (rc != 0) {
+        for (int m : members) warning("Failed to process text at index " + std::to_string(m + 1) + ", skipping");
+        continue;
+      }
+
+      for (size_t s = 0; s < members.size(); ++s) {
+        const float * embd = nullptr;
+        if (pooling != LLAMA_POOLING_TYPE_NONE) {
+          embd = llama_get_embeddings_seq(edge_ctx->ctx, static_cast<llama_seq_id>(s));
+        }
+        if (!embd) embd = llama_get_embeddings_ith(edge_ctx->ctx, last_index[s]);
+        if (embd) {
+          store(members[s], embd);
+        } else {
+          warning("Failed to extract embeddings for text at index " + std::to_string(members[s] + 1));
+        }
+      }
+    }
+    llama_batch_free(batch);
 
     return result;
 

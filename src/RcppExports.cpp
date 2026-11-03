@@ -112,8 +112,8 @@ BEGIN_RCPP
 END_RCPP
 }
 // edge_completion_grammar_internal
-std::string edge_completion_grammar_internal(SEXP model_ptr, std::string prompt, std::string grammar_str, std::string grammar_root, int n_predict, double temperature, double top_p);
-RcppExport SEXP _edgemodelr_edge_completion_grammar_internal(SEXP model_ptrSEXP, SEXP promptSEXP, SEXP grammar_strSEXP, SEXP grammar_rootSEXP, SEXP n_predictSEXP, SEXP temperatureSEXP, SEXP top_pSEXP) {
+std::string edge_completion_grammar_internal(SEXP model_ptr, std::string prompt, std::string grammar_str, std::string grammar_root, int n_predict, double temperature, double top_p, bool jump_forward);
+RcppExport SEXP _edgemodelr_edge_completion_grammar_internal(SEXP model_ptrSEXP, SEXP promptSEXP, SEXP grammar_strSEXP, SEXP grammar_rootSEXP, SEXP n_predictSEXP, SEXP temperatureSEXP, SEXP top_pSEXP, SEXP jump_forwardSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
@@ -124,7 +124,8 @@ BEGIN_RCPP
     Rcpp::traits::input_parameter< int >::type n_predict(n_predictSEXP);
     Rcpp::traits::input_parameter< double >::type temperature(temperatureSEXP);
     Rcpp::traits::input_parameter< double >::type top_p(top_pSEXP);
-    rcpp_result_gen = Rcpp::wrap(edge_completion_grammar_internal(model_ptr, prompt, grammar_str, grammar_root, n_predict, temperature, top_p));
+    Rcpp::traits::input_parameter< bool >::type jump_forward(jump_forwardSEXP);
+    rcpp_result_gen = Rcpp::wrap(edge_completion_grammar_internal(model_ptr, prompt, grammar_str, grammar_root, n_predict, temperature, top_p, jump_forward));
     return rcpp_result_gen;
 END_RCPP
 }
@@ -215,7 +216,7 @@ static const R_CallMethodDef CallEntries[] = {
     {"_edgemodelr_edge_free_model_internal", (DL_FUNC) &_edgemodelr_edge_free_model_internal, 1},
     {"_edgemodelr_is_valid_model_internal", (DL_FUNC) &_edgemodelr_is_valid_model_internal, 1},
     {"_edgemodelr_edge_completion_stream_internal", (DL_FUNC) &_edgemodelr_edge_completion_stream_internal, 6},
-    {"_edgemodelr_edge_completion_grammar_internal", (DL_FUNC) &_edgemodelr_edge_completion_grammar_internal, 7},
+    {"_edgemodelr_edge_completion_grammar_internal", (DL_FUNC) &_edgemodelr_edge_completion_grammar_internal, 8},
     {"_edgemodelr_edge_embeddings_internal", (DL_FUNC) &_edgemodelr_edge_embeddings_internal, 3},
     {"_edgemodelr_edge_model_n_embd_internal", (DL_FUNC) &_edgemodelr_edge_model_n_embd_internal, 1},
     {"_edgemodelr_edge_chat_apply_template_internal", (DL_FUNC) &_edgemodelr_edge_chat_apply_template_internal, 3},

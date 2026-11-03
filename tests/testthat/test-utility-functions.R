@@ -305,3 +305,19 @@ test_that(".chunk_text terminates and covers the whole text", {
   chunks <- edgemodelr:::.chunk_text(strrep("abcdefghij", 30), chunk_size = 100L, overlap = 100L)
   expect_true(length(chunks) > 0L)
 })
+
+test_that("edge_json_grammar(compact = TRUE) fixes the layout between fields", {
+  g <- edge_json_grammar(list(a = c("x", "y"), b = "string"), compact = TRUE)
+  expect_match(g, 'root ::= "{" ws "\\"a\\": " field-1 ", " "\\"b\\": " field-2 ws "}"',
+               fixed = TRUE)
+  expect_match(g, 'ws ::= ""', fixed = TRUE)
+  flexible <- edge_json_grammar(list(a = c("x", "y"), b = "string"))
+  expect_match(flexible, '"\\"a\\"" ws ":" ws field-1', fixed = TRUE)
+})
+
+test_that(".default_threads gives a usable thread count", {
+  n <- edgemodelr:::.default_threads()
+  expect_true(is.integer(n) && length(n) == 1 && n >= 0L)
+  logical <- parallel::detectCores(logical = TRUE)
+  if (!is.na(logical)) expect_true(n <= logical)
+})
