@@ -7,6 +7,8 @@
   February 2026, including Gemma 4, LFM3 and newer Granite and DeepSeek
   models. The CRAN patches (no stdio,
   abort or exit in compiled code, no diagnostic pragmas) are carried over.
+  Newer models also run faster: Qwen3.5 2B took 13.4 s per grammar-constrained
+  answer instead of 20.3 s on the default build, 8 threads.
 
 * `edge_install_cuda()` now downloads the CUDA backend from build b11960 to
   match, and both it and `edge_install_cuda_toolkit()` default to CUDA 13.4,
