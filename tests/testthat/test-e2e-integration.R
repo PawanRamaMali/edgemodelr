@@ -487,6 +487,10 @@ test_that("E2E: edge_embeddings gives the same vectors in a batch as one by one"
   batch <- edge_embeddings(ctx, texts)
   single <- do.call(rbind, lapply(texts, function(t) edge_embeddings(ctx, t)))
   expect_equal(dim(batch), c(3L, edge_model_n_embd(ctx)))
-  # Batched matrix products round a little differently.
-  expect_true(all(rowSums(batch * single) > 0.999))
+  # Batched matrix products round a little differently (cosine about 0.998
+  # for short texts on Linux).
+  expect_true(all(rowSums(batch * single) > 0.99))
+  # Two copies of one text in a batch must not see each other.
+  pair <- edge_embeddings(ctx, texts[c(1, 1)])
+  expect_true(all(pair %*% single[1, ] > 0.9999))
 })
