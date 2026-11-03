@@ -2122,11 +2122,12 @@ edge_cuda_default_path <- function() {
 #' edgemodelr cache. After installation, restart your R session (or call
 #' `edge_reload_cuda()`) so the GPU backend is picked up during model loading.
 #'
-#' @param cuda_version CUDA version string. One of `"12.4"` or `"13.1"` (default).
-#'   Use `"13.1"` for Blackwell GPUs (RTX 50 series, GeForce sm_120).
+#' @param cuda_version CUDA version string. One of `"12.4"` or `"13.4"` (default).
+#'   Use `"13.4"` for Blackwell GPUs (RTX 50 series, GeForce sm_120).
 #' @param force Re-download even if already installed.
 #' @param llama_build llama.cpp build number to pull the backend from
-#'   (default: `"b8179"`, the version bundled in this package).
+#'   (default: `"b11960"`, the build of llama.cpp v0.8.0 bundled in this
+#'   package).
 #' @return Invisibly returns the path to the installed CUDA backend DLL.
 #' @examples
 #' \dontrun{
@@ -2134,9 +2135,9 @@ edge_cuda_default_path <- function() {
 #' ctx <- edge_load_model("model.gguf", n_gpu_layers = 35)
 #' }
 #' @export
-edge_install_cuda <- function(cuda_version = "13.1",
+edge_install_cuda <- function(cuda_version = "13.4",
                               force = FALSE,
-                              llama_build = "b8179") {
+                              llama_build = "b11960") {
   if (!.Platform$OS.type == "windows") {
     stop("edge_install_cuda() currently supports Windows only. ",
          "On Linux/macOS, build with EDGEMODELR_CUDA=1 at install time.")
@@ -2234,7 +2235,7 @@ edge_install_cuda <- function(cuda_version = "13.1",
 #' After running this function, call \code{edge_reload_cuda()} and load a model
 #' with \code{n_gpu_layers = -1} to run on your GPU.
 #'
-#' @param cuda_version CUDA major version string, e.g. \code{"13.1"} (default).
+#' @param cuda_version CUDA major version string, e.g. \code{"13.4"} (default).
 #'   Must match the version used with \code{\link{edge_install_cuda}()}.
 #' @param force Reinstall even if the runtime DLLs are already present.
 #' @return Invisibly returns the cuda cache directory path.
@@ -2248,7 +2249,7 @@ edge_install_cuda <- function(cuda_version = "13.1",
 #' result <- edge_completion(ctx, "Hello", n_predict = 20)
 #' }
 #' @export
-edge_install_cuda_toolkit <- function(cuda_version = "13.1", force = FALSE) {
+edge_install_cuda_toolkit <- function(cuda_version = "13.4", force = FALSE) {
   if (.Platform$OS.type != "windows") {
     stop("edge_install_cuda_toolkit() is only needed on Windows. ",
          "On Linux/macOS, install the CUDA Toolkit via your package manager.")

@@ -4,16 +4,17 @@
 \alias{edge_install_cuda}
 \title{Install the CUDA backend for GPU-accelerated inference}
 \usage{
-edge_install_cuda(cuda_version = "13.1", force = FALSE, llama_build = "b8179")
+edge_install_cuda(cuda_version = "13.4", force = FALSE, llama_build = "b11960")
 }
 \arguments{
-\item{cuda_version}{CUDA version string. One of \code{"12.4"} or \code{"13.1"} (default).
-Use \code{"13.1"} for Blackwell GPUs (RTX 50 series, sm_120).}
+\item{cuda_version}{CUDA version string. One of \code{"12.4"} or \code{"13.4"} (default).
+Use \code{"13.4"} for Blackwell GPUs (RTX 50 series, sm_120).}
 
 \item{force}{Re-download even if already installed.}
 
 \item{llama_build}{llama.cpp build number to pull the backend from
-(default: \code{"b8179"}, the version bundled in this package).}
+(default: \code{"b11960"}, the build of llama.cpp v0.8.0 bundled in this
+package).}
 }
 \value{
 Invisibly returns the path to the installed CUDA backend DLL.
