@@ -30,17 +30,19 @@ ifeq ($(UNAME_S),Darwin)
   PKG_LIBS += -framework Accelerate
 endif
 
-# Model-specific objects (one file per model architecture, added in b8179)
+# Model-specific objects (one file per model architecture)
 MODEL_OBJECTS = $(patsubst llama/models/%.cpp,llama/models/%.o,$(wildcard llama/models/*.cpp))
 
 # Core object files (common to all architectures)
 CORE_OBJECTS = bindings.o RcppExports.o \
 	ggml/ggml.o ggml/ggml-alloc.o ggml/gguf.o \
-	ggml/ggml-backend.o ggml/ggml-backend-reg.o ggml/ggml-backend-dl.o \
+	ggml/ggml-backend.o ggml/ggml-backend-reg.o ggml/ggml-backend-dl.o ggml/ggml-backend-meta.o \
 	ggml/ggml-quants.o ggml/ggml-threading.o ggml/ggml-opt.o \
 	llama/llama-adapter.o llama/llama-arch.o llama/llama-batch.o llama/llama-chat.o \
 	llama/llama-context.o llama/llama-cparams.o llama/llama-grammar.o llama/llama-graph.o \
 	llama/llama-hparams.o llama/llama-impl.o llama/llama-io.o llama/llama-kv-cache-iswa.o \
+	llama/llama-kv-cache-dsa.o llama/llama-kv-cache-dsa-iswa.o llama/llama-kv-cache-dsv4.o \
+	llama/llama-kv-cache-msa.o llama/llama-memory-hybrid-idx.o llama/llama-moe-cache.o \
 	llama/llama-kv-cache.o llama/llama-memory-hybrid.o llama/llama-memory-hybrid-iswa.o \
 	llama/llama-memory-recurrent.o \
 	llama/llama-memory.o llama/llama-mmap.o llama/llama-model-loader.o llama/llama-model-saver.o llama/llama-model.o \
@@ -49,6 +51,7 @@ CORE_OBJECTS = bindings.o RcppExports.o \
 	ggml/ggml-cpu/ggml-cpu-c.o ggml/ggml-cpu/ggml-cpu-cpp.o ggml/ggml-cpu/ops.o \
 	ggml/ggml-cpu/binary-ops.o ggml/ggml-cpu/unary-ops.o ggml/ggml-cpu/vec.o \
 	ggml/ggml-cpu/traits.o ggml/ggml-cpu/repack.o ggml/ggml-cpu/quants.o \
+	ggml/ggml-cpu/tiled/tiled.o ggml/ggml-cpu/tiled/tiled-kernel.o \
 	simd_info.o
 
 # ============================================================================

@@ -4,10 +4,10 @@
 \alias{edge_install_cuda_toolkit}
 \title{Install CUDA runtime libraries required for GPU inference}
 \usage{
-edge_install_cuda_toolkit(cuda_version = "13.1", force = FALSE)
+edge_install_cuda_toolkit(cuda_version = "13.4", force = FALSE)
 }
 \arguments{
-\item{cuda_version}{CUDA major version string, e.g. \code{"13.1"} (default).
+\item{cuda_version}{CUDA major version string, e.g. \code{"13.4"} (default).
 Must match the version used with \code{\link{edge_install_cuda}()}.}
 
 \item{force}{Reinstall even if the runtime DLLs are already present.}

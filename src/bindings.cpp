@@ -380,7 +380,7 @@ SEXP edge_load_model_internal(std::string model_path, int n_ctx = 2048, int n_gp
     int effective_threads = (n_threads > 0) ? std::min(n_threads, hardware_threads) : hardware_threads;
     ctx_params.n_threads = effective_threads;
     ctx_params.n_threads_batch = hardware_threads;
-    // flash_attn was a bool in older llama.cpp; b8179 changed to an enum
+    // flash_attn was a bool in older llama.cpp; since b8179 it is an enum
     ctx_params.flash_attn_type = flash_attn
       ? LLAMA_FLASH_ATTN_TYPE_ENABLED
       : LLAMA_FLASH_ATTN_TYPE_DISABLED;
