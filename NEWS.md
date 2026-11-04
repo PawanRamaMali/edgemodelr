@@ -9,6 +9,20 @@
   `stop` ends the text at the first of the given strings. `edge_serve()`
   passes on `seed` and `stop` from requests.
 
+* Tool calling (#35). Describe tools with the new `edge_tool()` and pass
+  them to `edge_chat_completion(tools = ...)`. A grammar makes the model
+  either call one of the tools, with every argument present and of the
+  declared type, or say no tool is needed, in which case it answers in text.
+  `tool_choice` can require a call, or a call to one tool.
+
+* `edge_load_model()` has a new `n_parallel` argument. With it,
+  `edge_map()` and `edge_extract_batch()` generate for several texts at
+  once, one token for each in every decode step.
+
+* `edge_save_state()` and `edge_load_state()` save the prompt cache to a
+  file and load it back, so a long system prompt or document is processed
+  once instead of in every session.
+
 ## Changes
 
 * Sampled text (temperature above 0) is no longer the same on every call.

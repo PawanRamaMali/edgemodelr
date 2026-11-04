@@ -14,7 +14,9 @@ edge_chat_completion(
   min_p = 0,
   repeat_penalty = 1,
   seed = NULL,
-  stop = NULL
+  stop = NULL,
+  tools = NULL,
+  tool_choice = "auto"
 )
 }
 \arguments{
@@ -45,9 +47,23 @@ when \code{temperature = 0}.}
 
 \item{stop}{Optional character vector of stop strings. Generation ends
 where the first one appears; the stop string itself is not returned.}
+
+\item{tools}{Optional list of tools from \code{\link{edge_tool}} that the
+model may call. See Details.}
+
+\item{tool_choice}{With \code{tools}: "auto" (default) lets the model
+either call a tool or answer in text, "required" makes it call one of
+the tools, a tool's name makes it call that tool, and "none" makes it
+answer in text. Small models often call a tool again after its result;
+"none" for the turn after the result avoids that.}
 }
 \value{
-Character string containing only the assistant's response text.
+Without \code{tools}, a character string containing only the
+assistant's response text. With \code{tools}, a list with
+\code{content} (the text answer, or NULL when the model called a tool),
+\code{tool_calls} (a list of calls, each with \code{name} and
+\code{arguments}, a named list) and \code{message} (the assistant
+message to append to \code{messages} before the next call).
 }
 \description{
 Formats messages using the model's built-in chat template (read from GGUF
@@ -55,6 +71,17 @@ metadata), generates a completion, and returns only the assistant's response.
 This is the recommended way to do multi-turn chat, as it uses the correct
 template format for the specific model (e.g., ChatML for Qwen, Llama format
 for Llama models).
+}
+\details{
+With \code{tools}, the tools are described in the system message and
+generation is constrained by a grammar, so a tool call is always valid
+JSON naming a known tool, with every argument present and of the right
+type. The model writes a call as
+\code{{"tool": "name", "arguments": {...}}}. Run the tool yourself, append
+\code{result$message} and a message with \code{role = "tool"}, the tool's
+\code{name} and its result as \code{content}, then call again so the model
+can use the result. Tool results are passed to the model as user
+messages, since not every chat template has a tool role.
 }
 \examples{
 \dontrun{
@@ -74,9 +101,25 @@ answer <- edge_chat_completion(ctx, list(
   list(role = "user", content = "How do I filter rows?")
 ))
 
+# Tool calling
+weather <- edge_tool("get_weather", "Get the current weather for a city",
+                     list(city = "string", unit = c("celsius", "fahrenheit")))
+msgs <- list(list(role = "user", content = "Is it warm in Paris?"))
+res <- edge_chat_completion(ctx, msgs, tools = list(weather), temperature = 0)
+if (length(res$tool_calls) > 0) {
+  call <- res$tool_calls[[1]]
+  call$arguments$city  # "Paris"
+  msgs <- c(msgs, list(res$message,
+                       list(role = "tool", name = call$name, content = "24 C, sunny")))
+  res <- edge_chat_completion(ctx, msgs, tools = list(weather),
+                              tool_choice = "none", temperature = 0)
+  cat(res$content)
+}
+
 edge_free_model(ctx)
 }
 }
 \seealso{
-\code{\link{build_chat_prompt}}, \code{\link{edge_completion}}
+\code{\link{build_chat_prompt}}, \code{\link{edge_completion}},
+\code{\link{edge_tool}}
 }

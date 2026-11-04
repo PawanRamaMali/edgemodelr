@@ -11,6 +11,8 @@
 #'   Reduces memory usage and improves speed. Set to FALSE for maximum compatibility.
 #' @param embeddings Enable embedding extraction mode (default: FALSE).
 #'   Must be TRUE to use \code{\link{edge_embeddings}} with this context.
+#'   A model loaded with \code{embeddings = TRUE} can still be used for
+#'   text generation.
 #' @param prompt_cache Keep the KV cache between calls and reuse the part of a new prompt
 #'   that matches the start of the previous one, so only the rest is processed
 #'   (default: FALSE). Much faster when prompts share a long fixed beginning,
@@ -23,6 +25,13 @@
 #' @param lora_scale Scale for each adapter, recycled to the number of
 #'   adapters (default: 1). 0 turns an adapter off. Change it later with
 #'   \code{\link{edge_lora_scale}}.
+#' @param n_parallel How many prompts \code{\link{edge_map}} and
+#'   \code{\link{edge_extract_batch}} generate at once (default: 1). Each
+#'   step then decodes one token for every prompt in a single batch, which on
+#'   CPU costs little more than one token, so batches of texts finish several
+#'   times faster. The prompts share the context, so make \code{n_ctx} large
+#'   enough for all of them with their answers; fewer run at once when they
+#'   do not fit.
 #' @return External pointer to the loaded model context
 #'
 #' @examples
@@ -50,7 +59,8 @@
 #' }
 #' @export
 edge_load_model <- function(model_path, n_ctx = 2048L, n_gpu_layers = 0L, n_threads = NULL, flash_attn = TRUE, embeddings = FALSE,
-                            prompt_cache = FALSE, lora = NULL, lora_scale = 1) {
+                            prompt_cache = FALSE, lora = NULL, lora_scale = 1,
+                            n_parallel = 1L) {
   if (!file.exists(model_path)) {
     stop("Model file does not exist: ", model_path, "\n",
          "Try these options:\n",
@@ -94,6 +104,10 @@ edge_load_model <- function(model_path, n_ctx = 2048L, n_gpu_layers = 0L, n_thre
     stop("lora_scale must be a numeric vector")
   }
   lora_scale <- rep_len(as.numeric(lora_scale), length(lora))
+  if (!is.numeric(n_parallel) || length(n_parallel) != 1L || is.na(n_parallel) ||
+      n_parallel < 1 || n_parallel > 64 || n_parallel != round(n_parallel)) {
+    stop("n_parallel must be a whole number from 1 to 64")
+  }
 
   # Adaptive context size optimization based on model size
   model_size_mb <- file.info(model_path)$size / (1024^2)
@@ -129,7 +143,8 @@ edge_load_model <- function(model_path, n_ctx = 2048L, n_gpu_layers = 0L, n_thre
                              as.logical(embeddings),
                              isTRUE(prompt_cache),
                              normalizePath(lora),
-                             lora_scale)
+                             lora_scale,
+                             as.integer(n_parallel))
   }, error = function(e) {
     # Provide more context about what went wrong
     if (grepl("llama_load_model_from_file", e$message)) {
@@ -178,6 +193,64 @@ edge_lora_scale <- function(ctx, scale = NULL) {
   if (is.null(scale)) return(edge_lora_scales_internal(ctx))
   if (!is.numeric(scale) || anyNA(scale)) stop("scale must be a numeric vector")
   invisible(edge_lora_scales_internal(ctx, as.numeric(scale)))
+}
+
+#' Save or load the prompt cache
+#'
+#' With \code{prompt_cache = TRUE} a context keeps the processed tokens of the
+#' last prompt and reuses the part a new prompt shares with it.
+#' \code{edge_save_state()} writes that cache to a file and
+#' \code{edge_load_state()} reads it back, in the same or a later R session,
+#' so a long system prompt or document is processed once and not again every
+#' session.
+#'
+#' @param ctx Model context from \code{\link{edge_load_model}}, loaded with
+#'   \code{prompt_cache = TRUE}
+#' @param path File to write or read
+#' @return The number of tokens saved or loaded, invisibly
+#'
+#' @details The file holds the KV cache, so it is large: about
+#'   \code{n_tokens * n_layers * 2 * n_kv_heads * head_size * 2} bytes, for
+#'   example 22 MB for 1000 tokens of a 1B model. It can only be loaded into a
+#'   context of the same model, with the same LoRA adapters at the same
+#'   scales; anything else is an error. The saved tokens must fit in the
+#'   context's \code{n_ctx}.
+#'
+#'   To cache just a fixed beginning, run it once with a single token to
+#'   generate, then save: \code{edge_completion(ctx, prefix, n_predict = 1)}.
+#'
+#' @examples
+#' \dontrun{
+#' ctx <- edge_load_model("model.gguf", prompt_cache = TRUE)
+#' edge_completion(ctx, long_document, n_predict = 1)
+#' edge_save_state(ctx, "document.kv")
+#'
+#' # Later, in a new session:
+#' ctx <- edge_load_model("model.gguf", prompt_cache = TRUE)
+#' edge_load_state(ctx, "document.kv")
+#' edge_completion(ctx, paste0(long_document, "\nSummary:"))  # skips the document
+#' }
+#' @export
+edge_save_state <- function(ctx, path) {
+  if (!is_valid_model(ctx)) {
+    stop("Invalid model context. Load a model first with edge_load_model()")
+  }
+  if (!is.character(path) || length(path) != 1L || is.na(path) || !nzchar(path)) {
+    stop("path must be a single file path")
+  }
+  invisible(edge_save_state_internal(ctx, path.expand(path)))
+}
+
+#' @rdname edge_save_state
+#' @export
+edge_load_state <- function(ctx, path) {
+  if (!is_valid_model(ctx)) {
+    stop("Invalid model context. Load a model first with edge_load_model()")
+  }
+  if (!is.character(path) || length(path) != 1L || is.na(path) || !file.exists(path)) {
+    stop("path must be an existing state file")
+  }
+  invisible(edge_load_state_internal(ctx, path.expand(path)))
 }
 
 # Validates the sampling arguments shared by the generation functions and
@@ -1492,7 +1565,8 @@ edge_stream_completion <- function(ctx, prompt, callback, n_predict = 128L, temp
 #' }
 #' }
 #' @export
-edge_chat_stream <- function(ctx, system_prompt = NULL, max_history = 10, n_predict = 200L, temperature = 0.8, verbose = TRUE,
+edge_chat_stream <- function(ctx, system_prompt = NULL, max_history = 10, n_predict = 200L,
+                             temperature = 0.8, verbose = TRUE,
                              top_p = 0.95, top_k = 0L, min_p = 0, repeat_penalty = 1,
                              seed = NULL, stop = NULL) {
   if (!is_valid_model(ctx)) {
@@ -1616,8 +1690,31 @@ build_chat_prompt <- function(history, ctx = NULL) {
 #' @param n_predict Maximum tokens to generate (default: 256)
 #' @param temperature Sampling temperature (default: 0.7)
 #' @param top_p Nucleus sampling threshold (default: 0.95)
+#' @param tools Optional list of tools from \code{\link{edge_tool}} that the
+#'   model may call. See Details.
+#' @param tool_choice With \code{tools}: "auto" (default) lets the model
+#'   either call a tool or answer in text, "required" makes it call one of
+#'   the tools, a tool's name makes it call that tool, and "none" makes it
+#'   answer in text. Small models often call a tool again after its result;
+#'   "none" for the turn after the result avoids that.
 #' @inheritParams edge_completion
-#' @return Character string containing only the assistant's response text.
+#' @return Without \code{tools}, a character string containing only the
+#'   assistant's response text. With \code{tools}, a list with
+#'   \code{content} (the text answer, or NULL when the model called a tool),
+#'   \code{tool_calls} (a list of calls, each with \code{name} and
+#'   \code{arguments}, a named list) and \code{message} (the assistant
+#'   message to append to \code{messages} before the next call).
+#'
+#' @details
+#' With \code{tools}, the tools are described in the system message and
+#' generation is constrained by a grammar, so a tool call is always valid
+#' JSON naming a known tool, with every argument present and of the right
+#' type. The model writes a call as
+#' \code{{"tool": "name", "arguments": {...}}}. Run the tool yourself, append
+#' \code{result$message} and a message with \code{role = "tool"}, the tool's
+#' \code{name} and its result as \code{content}, then call again so the model
+#' can use the result. Tool results are passed to the model as user
+#' messages, since not every chat template has a tool role.
 #'
 #' @examples
 #' \dontrun{
@@ -1637,14 +1734,31 @@ build_chat_prompt <- function(history, ctx = NULL) {
 #'   list(role = "user", content = "How do I filter rows?")
 #' ))
 #'
+#' # Tool calling
+#' weather <- edge_tool("get_weather", "Get the current weather for a city",
+#'                      list(city = "string", unit = c("celsius", "fahrenheit")))
+#' msgs <- list(list(role = "user", content = "Is it warm in Paris?"))
+#' res <- edge_chat_completion(ctx, msgs, tools = list(weather), temperature = 0)
+#' if (length(res$tool_calls) > 0) {
+#'   call <- res$tool_calls[[1]]
+#'   call$arguments$city  # "Paris"
+#'   msgs <- c(msgs, list(res$message,
+#'                        list(role = "tool", name = call$name, content = "24 C, sunny")))
+#'   res <- edge_chat_completion(ctx, msgs, tools = list(weather),
+#'                               tool_choice = "none", temperature = 0)
+#'   cat(res$content)
+#' }
+#'
 #' edge_free_model(ctx)
 #' }
-#' @seealso \code{\link{build_chat_prompt}}, \code{\link{edge_completion}}
+#' @seealso \code{\link{build_chat_prompt}}, \code{\link{edge_completion}},
+#'   \code{\link{edge_tool}}
 #' @export
 edge_chat_completion <- function(ctx, messages, n_predict = 256L,
                                   temperature = 0.7, top_p = 0.95, top_k = 0L,
                                   min_p = 0, repeat_penalty = 1, seed = NULL,
-                                  stop = NULL) {
+                                  stop = NULL, tools = NULL,
+                                  tool_choice = "auto") {
   if (!is_valid_model(ctx)) {
     stop("Invalid model context. Load a model first with edge_load_model()")
   }
@@ -1652,16 +1766,277 @@ edge_chat_completion <- function(ctx, messages, n_predict = 256L,
     stop("messages must be a non-empty list of message objects with $role and $content")
   }
 
-  # Format prompt using model's native chat template
-  prompt <- build_chat_prompt(messages, ctx = ctx)
-
   n_predict <- max(1L, min(as.integer(n_predict), 4096L))
   temperature <- max(0.0, min(temperature, 2.0))
   top_p <- max(0.1, min(top_p, 1.0))
-
   sampling <- .sampling_options(temperature, top_p, top_k, min_p,
                                 repeat_penalty, seed, stop)
-  edge_completion_internal(ctx, prompt, as.integer(n_predict), sampling)
+
+  if (is.null(tools)) {
+    # Format prompt using model's native chat template
+    prompt <- build_chat_prompt(messages, ctx = ctx)
+    return(edge_completion_internal(ctx, prompt, as.integer(n_predict), sampling))
+  }
+
+  tools <- .check_tools(tools)
+  forced <- .check_tool_choice(tool_choice, tools)
+  if (identical(forced, character())) {
+    plain <- build_chat_prompt(.messages_with_tools(messages, NULL, NULL), ctx = ctx)
+    text <- edge_completion_internal(ctx, plain, as.integer(n_predict), sampling)
+    return(list(content = text, tool_calls = list(),
+                message = list(role = "assistant", content = text)))
+  }
+  prompt <- build_chat_prompt(.messages_with_tools(messages, tools, forced), ctx = ctx)
+  grammar <- .tool_grammar(tools, forced)
+  raw <- edge_completion_grammar_internal(ctx, prompt, grammar, "root",
+                                          as.integer(n_predict), sampling, TRUE)
+  reply <- .parse_tool_reply(raw, tools)
+  if (!isTRUE(reply$none)) return(reply)
+
+  # No tool needed: answer in text, from the conversation without the tool
+  # instructions, so the model does not write JSON again.
+  plain <- build_chat_prompt(.messages_with_tools(messages, NULL, NULL), ctx = ctx)
+  text <- edge_completion_internal(ctx, plain, as.integer(n_predict), sampling)
+  list(content = text, tool_calls = list(),
+       message = list(role = "assistant", content = text))
+}
+
+#' Define a tool the model can call
+#'
+#' A tool is a name, a description and typed arguments. Pass a list of tools
+#' to \code{\link{edge_chat_completion}} and the model can call them; the
+#' arguments always come back with the types given here.
+#'
+#' @param name Tool name: letters, digits and underscores, starting with a
+#'   letter.
+#' @param description What the tool does, in one sentence. The model reads
+#'   it to decide when to call the tool.
+#' @param parameters A named list of arguments, in the format of
+#'   \code{\link{edge_json_grammar}}: "string", "number", "integer",
+#'   "boolean" or a character vector of allowed values. An argument can also
+#'   be \code{list(type = ..., description = ...)} to tell the model what it
+#'   means. Every argument is required. Default: no arguments.
+#' @return An \code{edge_tool} object
+#'
+#' @examples
+#' weather <- edge_tool("get_weather", "Get the current weather for a city",
+#'   list(city = list(type = "string", description = "City name"),
+#'        unit = c("celsius", "fahrenheit")))
+#' weather
+#' @seealso \code{\link{edge_chat_completion}}
+#' @export
+edge_tool <- function(name, description, parameters = list()) {
+  ident <- "^[A-Za-z][A-Za-z0-9_]*$"
+  if (!is.character(name) || length(name) != 1L || !grepl(ident, name)) {
+    stop("name must be a single name of letters, digits and underscores, starting with a letter")
+  }
+  if (!is.character(description) || length(description) != 1L || is.na(description)) {
+    stop("description must be a single character string")
+  }
+  if (!is.list(parameters) || (length(parameters) > 0L && is.null(names(parameters)))) {
+    stop("parameters must be a named list")
+  }
+  arg_names <- names(parameters)
+  if (length(parameters) > 0L &&
+      (any(!grepl(ident, arg_names)) || anyDuplicated(arg_names))) {
+    stop("argument names must be unique and made of letters, digits and underscores")
+  }
+  types <- list()
+  notes <- character()
+  for (i in seq_along(parameters)) {
+    spec <- parameters[[i]]
+    note <- ""
+    if (is.list(spec)) {
+      note <- if (is.null(spec$description)) "" else as.character(spec$description)
+      spec <- spec$type
+    }
+    if (!is.character(spec) || length(spec) == 0L || anyNA(spec) ||
+        (length(spec) == 1L &&
+         !tolower(spec) %in% c("string", "number", "integer", "boolean"))) {
+      stop("argument '", arg_names[i], "' must have type 'string', 'number', ",
+           "'integer', 'boolean' or a character vector of allowed values")
+    }
+    if (length(spec) > 1L && any(grepl('["\\\n]', spec))) {
+      stop("allowed values of '", arg_names[i], "' must not contain quotes, ",
+           "backslashes or line breaks")
+    }
+    types[[arg_names[i]]] <- if (length(spec) == 1L) tolower(spec) else spec
+    notes <- c(notes, note)
+  }
+  structure(list(name = name, description = description,
+                 parameters = types, notes = notes),
+            class = "edge_tool")
+}
+
+#' @export
+print.edge_tool <- function(x, ...) {
+  cat(.describe_tool(x), "\n", sep = "")
+  invisible(x)
+}
+
+.check_tools <- function(tools) {
+  if (inherits(tools, "edge_tool")) tools <- list(tools)
+  if (!is.list(tools) || length(tools) == 0L ||
+      !all(vapply(tools, inherits, logical(1), "edge_tool"))) {
+    stop("tools must be a list of tools made with edge_tool()")
+  }
+  tool_names <- vapply(tools, function(t) t$name, character(1))
+  if (anyDuplicated(tool_names)) stop("tool names must be unique")
+  names(tools) <- tool_names
+  tools
+}
+
+# NULL lets the model choose between a call and a text answer, character()
+# means no call; otherwise the names of the tools it must choose from.
+.check_tool_choice <- function(tool_choice, tools) {
+  if (!is.character(tool_choice) || length(tool_choice) != 1L || is.na(tool_choice)) {
+    stop("tool_choice must be \"auto\", \"required\", \"none\" or the name of a tool")
+  }
+  if (tool_choice == "auto") return(NULL)
+  if (tool_choice == "none") return(character())
+  if (tool_choice == "required") return(names(tools))
+  if (tool_choice %in% names(tools)) return(tool_choice)
+  stop("tool_choice must be \"auto\", \"required\", \"none\" or the name of a tool")
+}
+
+# One tool as the model sees it: name(arg: type, ...): description.
+.describe_tool <- function(tool) {
+  args <- vapply(seq_along(tool$parameters), function(i) {
+    type <- tool$parameters[[i]]
+    type <- if (length(type) > 1L) {
+      paste0("one of ", paste0('"', type, '"', collapse = ", "))
+    } else {
+      type
+    }
+    note <- tool$notes[i]
+    paste0(names(tool$parameters)[i], ": ", type,
+           if (nzchar(note)) paste0(" (", note, ")") else "")
+  }, character(1))
+  paste0(tool$name, "(", paste(args, collapse = ", "), "): ", tool$description)
+}
+
+# Describes the tools in the system message and turns tool results into user
+# messages, since the chat templates llama.cpp applies have no tool role.
+.messages_with_tools <- function(messages, tools, forced) {
+  out <- lapply(messages, function(m) {
+    if (!is.list(m) || is.null(m$role) || is.null(m$content)) {
+      stop("messages must be a list of turns each with $role and $content fields")
+    }
+    if (identical(m$role, "tool")) {
+      who <- if (is.null(m$name)) "the tool" else m$name
+      list(role = "user", content = paste0(
+        "Result of ", who, ": ", m$content,
+        "\nUse this result to answer my question."))
+    } else {
+      list(role = m$role, content = as.character(m$content))
+    }
+  })
+  if (is.null(tools)) return(out)
+
+  # A placeholder rather than a real tool in the example: a concrete name
+  # there made small models call that tool for every request.
+  usable <- if (is.null(forced)) tools else tools[forced]
+  how <- if (length(usable) == 1L && !is.null(forced)) {
+    paste0('{"tool": "', usable[[1]]$name, '", "arguments": {...}}')
+  } else {
+    '{"tool": "<tool name>", "arguments": {...}}'
+  }
+  text <- paste0(
+    "You can call these tools:\n",
+    paste0("- ", vapply(usable, .describe_tool, character(1)), collapse = "\n"),
+    "\n\n",
+    if (is.null(forced)) {
+      paste0("Reply with only a JSON object, either\n", how,
+             " to call the tool that fits the request, or\n",
+             '{"tool": "none"} when no tool fits it, or when a tool result ',
+             "above already answers it.")
+    } else {
+      paste0("Reply with only a JSON object that calls a tool: ", how)
+    })
+
+  if (identical(out[[1]]$role, "system")) {
+    out[[1]]$content <- paste0(out[[1]]$content, "\n\n", text)
+  } else {
+    out <- c(list(list(role = "system", content = text)), out)
+  }
+  out
+}
+
+# A call is {"tool": "name", "arguments": {...}} in the compact layout, so
+# jump-forward writes the keys and the rest of a tool name once it is
+# unambiguous. Without forced tools the model may write {"tool": "none"}
+# instead, and the text answer is then generated without a grammar. Letting
+# the model start a text answer here made small models write the call inside
+# prose or a code block, where it could not be read.
+.tool_grammar <- function(tools, forced) {
+  usable <- if (is.null(forced)) tools else tools[forced]
+  alts <- character()
+  defs <- character()
+  needed <- character()
+  for (i in seq_along(usable)) {
+    t <- usable[[i]]
+    prefix <- paste0("t", i, "-")
+    obj <- .json_object_rule(t$parameters, prefix = prefix, compact = TRUE)
+    defs <- c(defs,
+              paste0(prefix, "call ::= ", '"\\"', t$name, '\\", \\"arguments\\": " ', obj$rule),
+              obj$defs)
+    needed <- c(needed, obj$needed)
+    alts <- c(alts, paste0(prefix, "call"))
+  }
+  if (is.null(forced)) alts <- c(alts, '"\\"none\\""')
+  call <- paste0('call ::= "{\\"tool\\": " (', paste(alts, collapse = " | "), ') "}"')
+  root <- "root ::= call"
+  shared <- c(
+    'ws ::= ""',
+    if ("string" %in% needed) 'string ::= "\\"" [^"\\\\\\n]* "\\""',
+    if ("number" %in% needed) 'number ::= "-"? [0-9]+ ("." [0-9]+)?',
+    if ("integer" %in% needed) 'integer ::= "-"? [0-9]+',
+    if ("boolean" %in% needed) 'boolean ::= "true" | "false"'
+  )
+  paste0(paste(c(root, call, defs, shared), collapse = "\n"), "\n")
+}
+
+# Turns generated text into the edge_chat_completion() result. The grammar
+# fixes the layout of a call, so the fields can be read in order with
+# regular expressions; string values cannot contain quotes or backslashes.
+.parse_tool_reply <- function(raw, tools) {
+  if (identical(raw, '{"tool": "none"}')) return(list(none = TRUE))
+  message <- list(role = "assistant", content = raw)
+  head <- regmatches(raw, regexec('^\\{"tool": "([A-Za-z][A-Za-z0-9_]*)", "arguments": \\{', raw))[[1]]
+  if (length(head) == 0L) {
+    return(list(content = raw, tool_calls = list(), message = message))
+  }
+  tool <- tools[[head[2]]]
+  rest <- substring(raw, nchar(head[1]))
+  args <- list()
+  ok <- TRUE
+  for (arg in names(tool$parameters)) {
+    m <- regmatches(rest, regexec(
+      paste0('"', arg, '": ("[^"]*"|-?[0-9]+(\\.[0-9]+)?|true|false)'), rest))[[1]]
+    if (length(m) == 0L) {
+      ok <- FALSE
+      break
+    }
+    v <- m[2]
+    type <- tool$parameters[[arg]]
+    args[[arg]] <- if (startsWith(v, '"')) {
+      substr(v, 2L, nchar(v) - 1L)
+    } else if (v %in% c("true", "false")) {
+      v == "true"
+    } else if (identical(type, "integer")) {
+      as.integer(v)
+    } else {
+      as.numeric(v)
+    }
+  }
+  if (!ok || !endsWith(raw, "}}")) {
+    warning("The tool call was cut off; increase n_predict. Returning the text as content.",
+            call. = FALSE)
+    return(list(content = raw, tool_calls = list(), message = message))
+  }
+  list(content = NULL,
+       tool_calls = list(list(name = tool$name, arguments = args)),
+       message = message)
 }
 
 #' Clean up cache directory and manage storage
@@ -2627,6 +3002,51 @@ edge_grammar_completion <- function(ctx, prompt, grammar, grammar_root = "root",
   )
 }
 
+# The GBNF for one JSON object with the fields of a schema (see
+# edge_json_grammar()). Returns the object's rule body, the field rules it
+# uses (named prefix + "field-" + i) and the shared rules they need
+# ("string", "number", ...). The caller adds the shared rules and ws once.
+.json_object_rule <- function(schema, prefix = "", compact = FALSE) {
+  field_rules <- character()
+  field_entries <- character()
+  needed <- character()
+  for (i in seq_along(schema)) {
+    field_name <- names(schema)[i]
+    field_spec <- schema[[i]]
+    rule_name <- paste0(prefix, "field-", i)
+
+    if (is.character(field_spec) && length(field_spec) == 1L) {
+      type <- tolower(field_spec)
+      if (!type %in% c("string", "number", "integer", "boolean")) {
+        stop("Unknown type '", type, "' for field '", field_name,
+             "'. Use 'string', 'number', 'integer', 'boolean', or a character vector for enum.")
+      }
+      field_rules <- c(field_rules, paste0(rule_name, " ::= ", type))
+      needed <- c(needed, type)
+    } else if (is.character(field_spec) && length(field_spec) > 1L) {
+      # Enum values
+      enum_options <- paste0('"\\\"', field_spec, '\\\""', collapse = " | ")
+      field_rules <- c(field_rules, paste0(rule_name, " ::= ", enum_options))
+    } else {
+      stop("Invalid schema for field '", field_name,
+           "'. Use a string type name or character vector for enum.")
+    }
+
+    # The field entry: "key": value
+    sep <- if (isTRUE(compact)) '\\": " ' else '\\"" ws ":" ws '
+    field_entries <- c(field_entries, paste0('"\\"', field_name, sep, rule_name))
+  }
+
+  fields <- paste(field_entries,
+                  collapse = if (isTRUE(compact)) ' ", " ' else ' ws "," ws ')
+  rule <- if (length(field_entries) == 0L) {
+    '"{}"'
+  } else {
+    paste0('"{" ws ', fields, ' ws "}"')
+  }
+  list(rule = rule, defs = field_rules, needed = unique(needed))
+}
+
 #' Generate a GBNF grammar for JSON output from a schema
 #'
 #' Converts a simple R list schema into a GBNF grammar string that constrains
@@ -2678,72 +3098,17 @@ edge_json_grammar <- function(schema, compact = FALSE) {
   integer_rule <- 'integer ::= "-"? [0-9]+\n'
   boolean_rule <- 'boolean ::= "true" | "false"\n'
 
-  field_rules <- character()
-  field_names_grammar <- character()
-  needed_rules <- character()
-
-  for (i in seq_along(schema)) {
-    field_name <- names(schema)[i]
-    field_spec <- schema[[i]]
-    rule_name <- paste0("field-", i)
-
-    if (is.character(field_spec) && length(field_spec) == 1L) {
-      # Type specifier
-      type <- tolower(field_spec)
-      if (type == "string") {
-        field_rules <- c(field_rules,
-          paste0(rule_name, ' ::= string'))
-        needed_rules <- c(needed_rules, "string")
-      } else if (type == "number") {
-        field_rules <- c(field_rules,
-          paste0(rule_name, ' ::= number'))
-        needed_rules <- c(needed_rules, "number")
-      } else if (type == "integer") {
-        field_rules <- c(field_rules,
-          paste0(rule_name, ' ::= integer'))
-        needed_rules <- c(needed_rules, "integer")
-      } else if (type == "boolean") {
-        field_rules <- c(field_rules,
-          paste0(rule_name, ' ::= boolean'))
-        needed_rules <- c(needed_rules, "boolean")
-      } else {
-        stop("Unknown type '", type, "' for field '", field_name,
-             "'. Use 'string', 'number', 'integer', 'boolean', or a character vector for enum.")
-      }
-    } else if (is.character(field_spec) && length(field_spec) > 1L) {
-      # Enum values
-      enum_options <- paste0('"\\\"', field_spec, '\\\""', collapse = " | ")
-      field_rules <- c(field_rules,
-        paste0(rule_name, ' ::= ', enum_options))
-    } else {
-      stop("Invalid schema for field '", field_name,
-           "'. Use a string type name or character vector for enum.")
-    }
-
-    # Build the field grammar entry: "key": value
-    sep <- if (isTRUE(compact)) '\\": " ' else '\\"" ws ":" ws '
-    field_entry <- paste0('"\\"', field_name, sep, rule_name)
-    field_names_grammar <- c(field_names_grammar, field_entry)
-  }
-
-  # Build root rule with comma-separated fields
-  if (length(field_names_grammar) == 1L) {
-    fields_combined <- field_names_grammar
-  } else {
-    fields_combined <- paste(field_names_grammar,
-                             collapse = if (isTRUE(compact)) ' ", " ' else ' ws "," ws ')
-  }
-
-  root_rule <- paste0('root ::= "{" ws ', fields_combined, ' ws "}"\n')
+  obj <- .json_object_rule(schema, compact = compact)
+  root_rule <- paste0("root ::= ", obj$rule, "\n")
 
   # Assemble grammar
   grammar_parts <- root_rule
-  grammar_parts <- c(grammar_parts, paste0(field_rules, "\n"))
+  grammar_parts <- c(grammar_parts, paste0(obj$defs, "\n"))
   grammar_parts <- c(grammar_parts, ws)
-  if ("string" %in% needed_rules) grammar_parts <- c(grammar_parts, string_rule)
-  if ("number" %in% needed_rules) grammar_parts <- c(grammar_parts, number_rule)
-  if ("integer" %in% needed_rules) grammar_parts <- c(grammar_parts, integer_rule)
-  if ("boolean" %in% needed_rules) grammar_parts <- c(grammar_parts, boolean_rule)
+  if ("string" %in% obj$needed) grammar_parts <- c(grammar_parts, string_rule)
+  if ("number" %in% obj$needed) grammar_parts <- c(grammar_parts, number_rule)
+  if ("integer" %in% obj$needed) grammar_parts <- c(grammar_parts, integer_rule)
+  if ("boolean" %in% obj$needed) grammar_parts <- c(grammar_parts, boolean_rule)
 
   paste(grammar_parts, collapse = "")
 }
@@ -2801,22 +3166,7 @@ edge_extract <- function(ctx, text, schema, instruction = NULL, n_predict = 512L
   }
 
   grammar <- edge_json_grammar(schema)
-  field_descriptions <- vapply(seq_along(schema), function(i) {
-    nm <- names(schema)[i]
-    spec <- schema[[i]]
-    if (is.character(spec) && length(spec) > 1L) {
-      paste0(nm, " (one of: ", paste(spec, collapse = ", "), ")")
-    } else {
-      paste0(nm, " (", spec, ")")
-    }
-  }, character(1))
-
-  if (is.null(instruction)) {
-    instruction <- paste0(
-      "Extract the following fields from the text: ",
-      paste(field_descriptions, collapse = ", "), "."
-    )
-  }
+  instruction <- .extract_instruction(schema, instruction)
 
   notes <- ""
   if (isTRUE(draft)) {
@@ -2833,17 +3183,41 @@ edge_extract <- function(ctx, text, schema, instruction = NULL, n_predict = 512L
     notes <- paste0("\n\n### Notes\n", trimws(draft_text))
   }
 
-  prompt <- paste0(
+  prompt <- .extract_prompt(instruction, text, notes)
+  raw_output <- edge_grammar_completion(ctx, prompt, grammar,
+                                         n_predict = n_predict,
+                                         temperature = temperature)
+  .parse_extracted(raw_output)
+}
+
+.extract_instruction <- function(schema, instruction) {
+  if (!is.null(instruction)) return(instruction)
+  field_descriptions <- vapply(seq_along(schema), function(i) {
+    nm <- names(schema)[i]
+    spec <- schema[[i]]
+    if (is.character(spec) && length(spec) > 1L) {
+      paste0(nm, " (one of: ", paste(spec, collapse = ", "), ")")
+    } else {
+      paste0(nm, " (", spec, ")")
+    }
+  }, character(1))
+  paste0(
+    "Extract the following fields from the text: ",
+    paste(field_descriptions, collapse = ", "), "."
+  )
+}
+
+.extract_prompt <- function(instruction, text, notes = "") {
+  paste0(
     "### Instruction\n", instruction,
     "\n\n### Text\n", text,
     notes,
     "\n\n### Response\n"
   )
+}
 
-  raw_output <- edge_grammar_completion(ctx, prompt, grammar,
-                                         n_predict = n_predict,
-                                         temperature = temperature)
-
+# The grammar's JSON as an R list, or the raw text if it cannot be parsed.
+.parse_extracted <- function(raw_output) {
   # Try to parse JSON
   tryCatch({
     # Find JSON object in output
@@ -3178,6 +3552,17 @@ edge_map <- function(ctx, texts, prompt_template, n_predict = 128L,
   # Checked once up front; with seed = NULL each text still gets its own seed.
   .sampling_options(temperature, top_p, top_k, min_p, repeat_penalty, seed, stop)
 
+  if (n > 1L && edge_n_parallel_internal(ctx) > 1L) {
+    if (progress) message(sprintf("Processing %d texts, up to %d at a time...",
+                                  n, edge_n_parallel_internal(ctx)))
+    prompts <- vapply(texts, build_prompt, character(1), USE.NAMES = FALSE)
+    results <- .batch_completion(ctx, prompts, n_predict, temperature, top_p,
+                                 top_k, min_p, repeat_penalty, seed, stop,
+                                 grammar = if (use_grammar) grammar else "")
+    if (progress) message(sprintf("Done. Processed %d texts.", n))
+    return(results)
+  }
+
   for (i in seq_len(n)) {
     if (progress && n > 1L) {
       message(sprintf("[%d/%d] Processing...", i, n))
@@ -3210,6 +3595,27 @@ edge_map <- function(ctx, texts, prompt_template, n_predict = 128L,
 
   if (progress && n > 1L) message(sprintf("Done. Processed %d texts.", n))
   results
+}
+
+# Runs prompts through edge_completion_batch_internal(), n_parallel at a
+# time. Each prompt gets its own seed, drawn as one call each would draw it,
+# or the given seed for all of them.
+.batch_completion <- function(ctx, prompts, n_predict, temperature, top_p,
+                              top_k = 0L, min_p = 0, repeat_penalty = 1,
+                              seed = NULL, stop = NULL, grammar = "") {
+  n_predict <- max(1L, min(as.integer(n_predict), 4096L))
+  temperature <- max(0.0, min(temperature, 2.0))
+  top_p <- max(0.1, min(top_p, 1.0))
+  sampling <- .sampling_options(temperature, top_p, top_k, min_p,
+                                repeat_penalty, seed, stop)
+  seeds <- if (is.null(seed)) {
+    vapply(prompts, function(p) .sampling_options(temperature, top_p)$seed,
+           numeric(1), USE.NAMES = FALSE)
+  } else {
+    rep(sampling$seed, length(prompts))
+  }
+  edge_completion_batch_internal(ctx, prompts, n_predict, sampling, seeds,
+                                 grammar, "root")
 }
 
 #' Extract structured data from multiple texts
@@ -3258,8 +3664,25 @@ edge_extract_batch <- function(ctx, texts, schema, instruction = NULL,
 
   n <- length(texts)
   results_list <- vector("list", n)
+  batched <- !isTRUE(draft) && n > 1L && edge_n_parallel_internal(ctx) > 1L
+  if (batched) {
+    if (progress) message(sprintf("Extracting from %d texts, up to %d at a time...",
+                                  n, edge_n_parallel_internal(ctx)))
+    instruction <- .extract_instruction(schema, instruction)
+    prompts <- vapply(texts, function(t) .extract_prompt(instruction, t), character(1),
+                      USE.NAMES = FALSE)
+    raw <- .batch_completion(ctx, prompts, n_predict, temperature, 0.95,
+                             grammar = edge_json_grammar(schema))
+    results_list <- lapply(raw, function(r) suppressWarnings(.parse_extracted(r)))
+  }
 
   for (i in seq_len(n)) {
+    if (batched) {
+      if (is.character(results_list[[i]])) {
+        results_list[[i]] <- stats::setNames(as.list(rep(NA, length(schema))), names(schema))
+      }
+      next
+    }
     if (progress && n > 1L) {
       message(sprintf("[%d/%d] Extracting...", i, n))
       flush.console()
