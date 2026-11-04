@@ -16,6 +16,13 @@
 #'   (default: FALSE). Much faster when prompts share a long fixed beginning,
 #'   such as a system prompt. Each completion still depends only on its own
 #'   prompt.
+#' @param lora Path(s) to LoRA adapters in GGUF format to apply on top of the
+#'   model (default: NULL, none). The adapters must be made for this base
+#'   model. A PEFT adapter can be converted with llama.cpp's
+#'   \code{convert_lora_to_gguf.py}.
+#' @param lora_scale Scale for each adapter, recycled to the number of
+#'   adapters (default: 1). 0 turns an adapter off. Change it later with
+#'   \code{\link{edge_lora_scale}}.
 #' @return External pointer to the loaded model context
 #'
 #' @examples
@@ -43,7 +50,7 @@
 #' }
 #' @export
 edge_load_model <- function(model_path, n_ctx = 2048L, n_gpu_layers = 0L, n_threads = NULL, flash_attn = TRUE, embeddings = FALSE,
-                            prompt_cache = FALSE) {
+                            prompt_cache = FALSE, lora = NULL, lora_scale = 1) {
   if (!file.exists(model_path)) {
     stop("Model file does not exist: ", model_path, "\n",
          "Try these options:\n",
@@ -77,6 +84,16 @@ edge_load_model <- function(model_path, n_ctx = 2048L, n_gpu_layers = 0L, n_thre
   if (!is.logical(flash_attn) || length(flash_attn) != 1) {
     stop("flash_attn must be TRUE or FALSE")
   }
+  if (is.null(lora)) lora <- character()
+  if (!is.character(lora)) stop("lora must be a character vector of adapter paths")
+  missing_lora <- lora[!file.exists(lora)]
+  if (length(missing_lora)) {
+    stop("LoRA adapter file does not exist: ", paste(missing_lora, collapse = ", "))
+  }
+  if (!is.numeric(lora_scale) || length(lora_scale) < 1 || anyNA(lora_scale)) {
+    stop("lora_scale must be a numeric vector")
+  }
+  lora_scale <- rep_len(as.numeric(lora_scale), length(lora))
 
   # Adaptive context size optimization based on model size
   model_size_mb <- file.info(model_path)$size / (1024^2)
@@ -110,7 +127,9 @@ edge_load_model <- function(model_path, n_ctx = 2048L, n_gpu_layers = 0L, n_thre
                              as.integer(if (is.null(n_threads)) .default_threads() else n_threads),
                              as.logical(flash_attn),
                              as.logical(embeddings),
-                             isTRUE(prompt_cache))
+                             isTRUE(prompt_cache),
+                             normalizePath(lora),
+                             lora_scale)
   }, error = function(e) {
     # Provide more context about what went wrong
     if (grepl("llama_load_model_from_file", e$message)) {
@@ -126,6 +145,39 @@ edge_load_model <- function(model_path, n_ctx = 2048L, n_gpu_layers = 0L, n_thre
   try(Sys.setFileTime(model_path, Sys.time()), silent = TRUE)
 
   ctx
+}
+
+#' Get or change the scale of loaded LoRA adapters
+#'
+#' Adapters are loaded with \code{edge_load_model(lora = ...)}. Changing a
+#' scale takes effect on the next call and needs no reload, so one base model
+#' can switch between adapters, or turn them off with 0, from call to call.
+#'
+#' @param ctx Model context from \code{\link{edge_load_model}}
+#' @param scale NULL to only read the scales, or one number per loaded
+#'   adapter, in the order they were given to \code{edge_load_model()}
+#' @return The adapter scales, a numeric vector (invisibly when setting)
+#'
+#' @details Changing a scale clears the context's KV cache, so with
+#'   \code{prompt_cache = TRUE} the next prompt is processed in full.
+#'
+#' @examples
+#' \dontrun{
+#' ctx <- edge_load_model("base.gguf", lora = c("terms.gguf", "labels.gguf"),
+#'                        lora_scale = c(1, 0))
+#' edge_completion(ctx, "Map 'Once daily' to a CDISC term:")
+#' edge_lora_scale(ctx, c(0, 1))   # switch to the second adapter
+#' edge_lora_scale(ctx)            # 0 1
+#' edge_free_model(ctx)
+#' }
+#' @export
+edge_lora_scale <- function(ctx, scale = NULL) {
+  if (!is_valid_model(ctx)) {
+    stop("Invalid model context. Load a model first with edge_load_model()")
+  }
+  if (is.null(scale)) return(edge_lora_scales_internal(ctx))
+  if (!is.numeric(scale) || anyNA(scale)) stop("scale must be a numeric vector")
+  invisible(edge_lora_scales_internal(ctx, as.numeric(scale)))
 }
 
 #' Generate text completion using loaded model

@@ -219,6 +219,11 @@ struct EdgeModelContext {
   bool cache_valid = false;
   std::vector<llama_token> cached_tokens;
 
+  // LoRA adapters loaded with the model, and the scale each one is applied
+  // at. The model owns the adapters and frees them with itself.
+  std::vector<llama_adapter_lora *> loras;
+  std::vector<float> lora_scales;
+
   EdgeModelContext() = default;
 
   // Copy constructor and assignment deleted to prevent double-free
@@ -255,6 +260,21 @@ struct EdgeModelContext {
     }
   }
 };
+
+// Sets the context's LoRA adapters to the loaded ones at their scales. An
+// adapter at scale 0 is left out instead of being computed for nothing.
+static bool apply_loras(EdgeModelContext & e) {
+  std::vector<llama_adapter_lora *> active;
+  std::vector<float> scales;
+  for (size_t i = 0; i < e.loras.size(); ++i) {
+    if (e.lora_scales[i] != 0.0f) {
+      active.push_back(e.loras[i]);
+      scales.push_back(e.lora_scales[i]);
+    }
+  }
+  return llama_set_adapters_lora(e.ctx, active.empty() ? nullptr : active.data(),
+                                 active.size(), active.empty() ? nullptr : scales.data()) == 0;
+}
 
 // Puts a prompt into the KV cache. With the prompt cache on, the longest
 // prefix the prompt shares with what the cache holds is kept and only the
@@ -299,7 +319,9 @@ static bool decode_token(EdgeModelContext & e, llama_token token) {
 }
 
 // [[Rcpp::export]]
-SEXP edge_load_model_internal(std::string model_path, int n_ctx = 2048, int n_gpu_layers = 0, int n_threads = 0, bool flash_attn = true, bool embeddings = false, bool prompt_cache = false) {
+SEXP edge_load_model_internal(std::string model_path, int n_ctx, int n_gpu_layers, int n_threads, bool flash_attn, bool embeddings, bool prompt_cache,
+                              std::vector<std::string> lora_paths,
+                              std::vector<double> lora_scales) {
   try {
     // Ensure llama is properly initialized
     ensure_llama_initialized();
@@ -404,7 +426,30 @@ SEXP edge_load_model_internal(std::string model_path, int n_ctx = 2048, int n_gp
     edge_ctx->model = model;
     edge_ctx->prompt_cache = prompt_cache;
     edge_ctx->ctx = ctx;
-    
+
+    // LoRA adapters. On any failure edge_ctx frees the context and the model,
+    // and the model frees the adapters loaded so far.
+    for (size_t i = 0; i < lora_paths.size(); ++i) {
+      const std::string & path = lora_paths[i];
+      std::ifstream probe(path, std::ios::binary);
+      char magic[4] = {0, 0, 0, 0};
+      probe.read(magic, 4);
+      if (!probe.good() || std::string(magic, 4) != "GGUF") {
+        stop("LoRA adapter is not a readable GGUF file: " + path);
+      }
+      llama_adapter_lora * adapter = llama_adapter_lora_init(model, path.c_str());
+      if (!adapter) {
+        stop("Failed to load LoRA adapter: " + path +
+             "\nThe adapter must be a GGUF LoRA made for this model's architecture.");
+      }
+      edge_ctx->loras.push_back(adapter);
+      edge_ctx->lora_scales.push_back(
+        static_cast<float>(i < lora_scales.size() ? lora_scales[i] : 1.0));
+    }
+    if (!edge_ctx->loras.empty() && !apply_loras(*edge_ctx)) {
+      stop("Failed to apply LoRA adapters to the context");
+    }
+
     XPtr<EdgeModelContext> ptr(edge_ctx.release(), true);
     ptr.attr("class") = "edge_model_context";
     
@@ -1019,6 +1064,28 @@ NumericMatrix edge_embeddings_internal(SEXP model_ptr, std::vector<std::string> 
   } catch (const std::exception& e) {
     stop("Error during embedding extraction: " + std::string(e.what()));
   }
+}
+
+// Changes the scales of the LoRA adapters loaded with the model. The KV
+// cache was computed with the old weights, so it is cleared.
+// [[Rcpp::export]]
+Rcpp::NumericVector edge_lora_scales_internal(SEXP model_ptr, Rcpp::Nullable<Rcpp::NumericVector> scales = R_NilValue) {
+  if (TYPEOF(model_ptr) != EXTPTRSXP) stop("Invalid model context");
+  XPtr<EdgeModelContext> edge_ctx(model_ptr);
+  if (!edge_ctx->is_valid()) stop("Invalid model context");
+  if (scales.isNotNull()) {
+    Rcpp::NumericVector s(scales);
+    if (static_cast<size_t>(s.size()) != edge_ctx->loras.size()) {
+      stop("Expected " + std::to_string(edge_ctx->loras.size()) +
+           " LoRA scale(s), one per loaded adapter, got " + std::to_string(s.size()));
+    }
+    for (R_xlen_t i = 0; i < s.size(); ++i) edge_ctx->lora_scales[i] = static_cast<float>(s[i]);
+    clear_kv_cache(edge_ctx->ctx);
+    edge_ctx->cache_valid = false;
+    edge_ctx->cached_tokens.clear();
+    if (!apply_loras(*edge_ctx)) stop("Failed to apply LoRA adapters to the context");
+  }
+  return Rcpp::NumericVector(edge_ctx->lora_scales.begin(), edge_ctx->lora_scales.end());
 }
 
 // [[Rcpp::export]]

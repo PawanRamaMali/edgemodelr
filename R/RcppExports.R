@@ -13,8 +13,8 @@ edge_cuda_backend_loaded_internal <- function() {
     .Call(`_edgemodelr_edge_cuda_backend_loaded_internal`)
 }
 
-edge_load_model_internal <- function(model_path, n_ctx = 2048L, n_gpu_layers = 0L, n_threads = 0L, flash_attn = TRUE, embeddings = FALSE, prompt_cache = FALSE) {
-    .Call(`_edgemodelr_edge_load_model_internal`, model_path, n_ctx, n_gpu_layers, n_threads, flash_attn, embeddings, prompt_cache)
+edge_load_model_internal <- function(model_path, n_ctx, n_gpu_layers, n_threads, flash_attn, embeddings, prompt_cache, lora_paths, lora_scales) {
+    .Call(`_edgemodelr_edge_load_model_internal`, model_path, n_ctx, n_gpu_layers, n_threads, flash_attn, embeddings, prompt_cache, lora_paths, lora_scales)
 }
 
 edge_completion_internal <- function(model_ptr, prompt, n_predict = 128L, temperature = 0.8, top_p = 0.95, timeout_seconds = 0.0) {
@@ -39,6 +39,10 @@ edge_completion_grammar_internal <- function(model_ptr, prompt, grammar_str, gra
 
 edge_embeddings_internal <- function(model_ptr, texts, normalize = TRUE) {
     .Call(`_edgemodelr_edge_embeddings_internal`, model_ptr, texts, normalize)
+}
+
+edge_lora_scales_internal <- function(model_ptr, scales = NULL) {
+    .Call(`_edgemodelr_edge_lora_scales_internal`, model_ptr, scales)
 }
 
 edge_model_n_embd_internal <- function(model_ptr) {

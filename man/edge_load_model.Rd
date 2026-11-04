@@ -4,7 +4,7 @@
 \usage{
 edge_load_model(model_path, n_ctx = 2048L, n_gpu_layers = 0L,
   n_threads = NULL, flash_attn = TRUE, embeddings = FALSE,
-  prompt_cache = FALSE)
+  prompt_cache = FALSE, lora = NULL, lora_scale = 1)
 }
 \arguments{
 \item{model_path}{Path to a .gguf model file}
@@ -30,6 +30,15 @@ that matches the start of the previous one, so only the rest is processed
 (default: FALSE). Much faster when prompts share a long fixed beginning,
 such as a system prompt. Each completion still depends only on its own
 prompt.}
+
+\item{lora}{Path(s) to LoRA adapters in GGUF format to apply on top of the
+model (default: NULL, none). The adapters must be made for this base
+model. A PEFT adapter can be converted with llama.cpp's
+\code{convert_lora_to_gguf.py}.}
+
+\item{lora_scale}{Scale for each adapter, recycled to the number of
+adapters (default: 1). 0 turns an adapter off. Change it later with
+\code{\link{edge_lora_scale}}.}
 }
 \value{
 External pointer to the loaded model context
