@@ -528,3 +528,65 @@ test_that("E2E: LoRA adapters load, switch and reject a wrong model", {
                "Failed to load LoRA adapter")
   expect_true(is_valid_model(ctx))
 })
+
+test_that("E2E: seed, stop strings and the repeat penalty", {
+  skip_on_cran()
+  skip_if_offline()
+  skip_on_os("windows") # Windows CI has memory/segfault issues with model loading
+
+  models <- edge_list_models()
+  tiny_model <- models[models$name == "TinyLlama-1.1B", ]
+  test_dir <- file.path(tempdir(), "edgemodelr_integration_tests")
+  dir.create(test_dir, showWarnings = FALSE, recursive = TRUE)
+  model_path <- file.path(test_dir, tiny_model$filename[1])
+  if (!file.exists(model_path)) {
+    edge_download_url(tiny_model$download_url[1], tiny_model$filename[1],
+                      cache_dir = test_dir)
+  }
+
+  ctx <- edge_load_model(model_path, n_ctx = 512L)
+  on.exit(edge_free_model(ctx), add = TRUE)
+  p <- "<|user|>\nList five fruits, one per line.</s>\n<|assistant|>\n"
+
+  # The same seed gives the same text, and so does set.seed().
+  expect_identical(edge_completion(ctx, p, n_predict = 24L, seed = 7),
+                   edge_completion(ctx, p, n_predict = 24L, seed = 7))
+  set.seed(1)
+  a <- edge_completion(ctx, p, n_predict = 24L)
+  set.seed(1)
+  expect_identical(edge_completion(ctx, p, n_predict = 24L), a)
+
+  # Text ends where a stop string starts, also when streaming, and also
+  # when the stop string spans several tokens.
+  full <- edge_completion(ctx, p, n_predict = 40L, temperature = 0)
+  skip_if(!grepl("\n", full), "greedy answer has no line break")
+  first_line <- sub("\n.*", "", full)
+  expect_identical(edge_completion(ctx, p, n_predict = 40L, temperature = 0,
+                                   stop = "\n"), first_line)
+  stop_str <- substr(full, nchar(first_line) - 2L, nchar(first_line) + 2L)
+  pieces <- character(0)
+  streamed <- edge_stream_completion(ctx, p, function(d) {
+    if (!d$is_final) pieces <<- c(pieces, d$token)
+    TRUE
+  }, n_predict = 40L, temperature = 0, stop = stop_str)
+  expect_identical(streamed$full_response, substr(full, 1L, nchar(first_line) - 3L))
+  expect_identical(paste(pieces, collapse = ""), streamed$full_response)
+
+  # Without stop strings the stream gives the same text as a completion.
+  pieces <- character(0)
+  streamed <- edge_stream_completion(ctx, p, function(d) {
+    if (!d$is_final) pieces <<- c(pieces, d$token)
+    TRUE
+  }, n_predict = 40L, temperature = 0)
+  expect_identical(paste(pieces, collapse = ""), full)
+
+  # The repeat penalty stops a loop that greedy decoding falls into.
+  loop <- "The cat sat. The cat sat. The cat sat."
+  plain <- edge_completion(ctx, loop, n_predict = 24L, temperature = 0)
+  penalised <- edge_completion(ctx, loop, n_predict = 24L, temperature = 0,
+                               repeat_penalty = 1.5)
+  expect_false(identical(plain, penalised))
+
+  expect_type(edge_completion(ctx, p, n_predict = 8L, top_k = 40L,
+                              min_p = 0.05, seed = 3), "character")
+})

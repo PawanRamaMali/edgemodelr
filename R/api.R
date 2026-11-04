@@ -180,6 +180,50 @@ edge_lora_scale <- function(ctx, scale = NULL) {
   invisible(edge_lora_scales_internal(ctx, as.numeric(scale)))
 }
 
+# Validates the sampling arguments shared by the generation functions and
+# returns them as the list the C++ code reads. With seed = NULL the seed is
+# drawn from R's random number generator, so set.seed() makes sampled text
+# reproducible. Greedy decoding (temperature 0) uses no seed and draws none.
+.sampling_options <- function(temperature, top_p, top_k = 0L, min_p = 0,
+                              repeat_penalty = 1, seed = NULL, stop = NULL) {
+  num1 <- function(x, name) {
+    if (!is.numeric(x) || length(x) != 1L || is.na(x)) {
+      stop(name, " must be a single number", call. = FALSE)
+    }
+    as.numeric(x)
+  }
+  temperature <- num1(temperature, "temperature")
+  top_p <- num1(top_p, "top_p")
+  top_k <- num1(top_k, "top_k")
+  min_p <- num1(min_p, "min_p")
+  repeat_penalty <- num1(repeat_penalty, "repeat_penalty")
+  if (top_k < 0 || top_k != round(top_k)) {
+    stop("top_k must be a whole number, 0 or more (0 turns it off)", call. = FALSE)
+  }
+  if (min_p < 0 || min_p >= 1) {
+    stop("min_p must be at least 0 and less than 1 (0 turns it off)", call. = FALSE)
+  }
+  if (repeat_penalty <= 0) {
+    stop("repeat_penalty must be positive (1 turns it off)", call. = FALSE)
+  }
+  if (!is.null(stop)) {
+    if (!is.character(stop) || anyNA(stop) || any(!nzchar(stop))) {
+      stop("stop must be a character vector of non-empty strings", call. = FALSE)
+    }
+  }
+  if (is.null(seed)) {
+    seed <- if (temperature > 0) sample.int(.Machine$integer.max, 1L) else 0
+  } else {
+    seed <- num1(seed, "seed")
+    if (seed < 0 || seed >= 2^32 - 1 || seed != round(seed)) {
+      stop("seed must be a whole number from 0 to 4294967294", call. = FALSE)
+    }
+  }
+  list(temperature = temperature, top_p = top_p, top_k = as.integer(top_k),
+       min_p = min_p, repeat_penalty = repeat_penalty, seed = as.numeric(seed),
+       stop = if (is.null(stop)) NULL else as.character(stop))
+}
+
 #' Generate text completion using loaded model
 #'
 #' @param ctx Model context from edge_load_model()
@@ -189,6 +233,18 @@ edge_lora_scale <- function(ctx, scale = NULL) {
 #'   decoding: the same prompt always gives the same text.
 #' @param top_p Top-p sampling parameter (default: 0.95)
 #' @param timeout_seconds Optional timeout in seconds for inference
+#' @param top_k Sample only from the k most likely tokens (default: 0, off).
+#'   40 is a common choice.
+#' @param min_p Drop tokens less likely than this fraction of the most likely
+#'   one (default: 0, off). 0.05 is a common choice.
+#' @param repeat_penalty Penalty for tokens used in the last 64 generated
+#'   tokens (default: 1, off). Values from 1.1 to 1.3 stop small models
+#'   from repeating themselves.
+#' @param seed Seed for sampling (default: NULL, drawn from R's random number
+#'   generator, so \code{set.seed()} makes the text reproducible). Ignored
+#'   when \code{temperature = 0}.
+#' @param stop Optional character vector of stop strings. Generation ends
+#'   where the first one appears; the stop string itself is not returned.
 #' @return Generated text as character string
 #'
 #' @examples
@@ -212,12 +268,17 @@ edge_lora_scale <- function(ctx, scale = NULL) {
 #'   )
 #'   cat("Creative result:", creative_result, "\n")
 #'
+#'   # Reproducible sampling, less repetition, stop at the first blank line
+#'   edge_completion(ctx, "List three colours:", seed = 42,
+#'                   repeat_penalty = 1.2, stop = "\n\n")
+#'
 #'   edge_free_model(ctx)
 #' }
 #' }
 #' @export
 edge_completion <- function(ctx, prompt, n_predict = 128L, temperature = 0.8, top_p = 0.95,
-                            timeout_seconds = NULL) {
+                            timeout_seconds = NULL, top_k = 0L, min_p = 0,
+                            repeat_penalty = 1, seed = NULL, stop = NULL) {
   if (!is_valid_model(ctx)) {
     stop("Invalid model context. Load a model first with edge_load_model()")
   }
@@ -237,12 +298,10 @@ edge_completion <- function(ctx, prompt, n_predict = 128L, temperature = 0.8, to
     stop("timeout_seconds must be a positive number of seconds")
   }
 
+  sampling <- .sampling_options(temperature, top_p, top_k, min_p,
+                                repeat_penalty, seed, stop)
   # The timeout is checked in the generation loop, once per token.
-  edge_completion_internal(ctx,
-                           prompt,
-                           as.integer(n_predict),
-                           as.numeric(temperature),
-                           as.numeric(top_p),
+  edge_completion_internal(ctx, prompt, as.integer(n_predict), sampling,
                            as.numeric(timeout_seconds))
 }
 
@@ -1351,9 +1410,14 @@ edge_small_model_config <- function(model_size_mb = NULL, available_ram_gb = NUL
 #' }
 #' }
 #' @param timeout_seconds Optional timeout in seconds for inference
+#' @inheritParams edge_completion
+#' @details With \code{stop} strings, text that could be the start of one is
+#'   held back until the next token decides it, so a callback can receive
+#'   several tokens' text at once and never sees the stop string.
 #' @export
 edge_stream_completion <- function(ctx, prompt, callback, n_predict = 128L, temperature = 0.8, top_p = 0.95,
-                                   timeout_seconds = NULL) {
+                                   timeout_seconds = NULL, top_k = 0L, min_p = 0,
+                                   repeat_penalty = 1, seed = NULL, stop = NULL) {
   if (!is.function(callback)) {
     stop("Callback must be a function")
   }
@@ -1397,10 +1461,10 @@ edge_stream_completion <- function(ctx, prompt, callback, n_predict = 128L, temp
     result
   }
 
+  sampling <- .sampling_options(temperature, top_p, top_k, min_p,
+                                repeat_penalty, seed, stop)
   edge_completion_stream_internal(ctx, prompt, safe_callback,
-                                 as.integer(n_predict),
-                                 as.numeric(temperature),
-                                 as.numeric(top_p))
+                                  as.integer(n_predict), sampling)
 }
 
 #' Interactive chat session with streaming responses
@@ -1411,6 +1475,7 @@ edge_stream_completion <- function(ctx, prompt, callback, n_predict = 128L, temp
 #' @param n_predict Maximum tokens per response (default: 200)
 #' @param temperature Sampling temperature (default: 0.8)
 #' @param verbose Whether to print status messages (default: TRUE)
+#' @inheritParams edge_completion
 #' @return NULL (runs interactively)
 #'
 #' @examples
@@ -1427,7 +1492,9 @@ edge_stream_completion <- function(ctx, prompt, callback, n_predict = 128L, temp
 #' }
 #' }
 #' @export
-edge_chat_stream <- function(ctx, system_prompt = NULL, max_history = 10, n_predict = 200L, temperature = 0.8, verbose = TRUE) {
+edge_chat_stream <- function(ctx, system_prompt = NULL, max_history = 10, n_predict = 200L, temperature = 0.8, verbose = TRUE,
+                             top_p = 0.95, top_k = 0L, min_p = 0, repeat_penalty = 1,
+                             seed = NULL, stop = NULL) {
   if (!is_valid_model(ctx)) {
     stop("Invalid model context. Load a model first with edge_load_model()")
   }
@@ -1485,7 +1552,9 @@ edge_chat_stream <- function(ctx, system_prompt = NULL, max_history = 10, n_pred
         }
       },
       n_predict = n_predict,
-      temperature = temperature)
+      temperature = temperature, top_p = top_p, top_k = top_k,
+      min_p = min_p, repeat_penalty = repeat_penalty, seed = seed,
+      stop = stop)
 
     # Use the response captured during streaming
     assistant_response <- current_response
@@ -1537,7 +1606,9 @@ build_chat_prompt <- function(history, ctx = NULL) {
 #'
 #' Formats messages using the model's built-in chat template (read from GGUF
 #' metadata), generates a completion, and returns only the assistant's response.
-#' This is the recommended way to do multi-turn chat.
+#' This is the recommended way to do multi-turn chat, as it uses the correct
+#' template format for the specific model (e.g., ChatML for Qwen, Llama format
+#' for Llama models).
 #'
 #' @param ctx Model context from edge_load_model()
 #' @param messages A list of message objects, each with \code{role} ("system",
@@ -1545,6 +1616,7 @@ build_chat_prompt <- function(history, ctx = NULL) {
 #' @param n_predict Maximum tokens to generate (default: 256)
 #' @param temperature Sampling temperature (default: 0.7)
 #' @param top_p Nucleus sampling threshold (default: 0.95)
+#' @inheritParams edge_completion
 #' @return Character string containing only the assistant's response text.
 #'
 #' @examples
@@ -1567,9 +1639,12 @@ build_chat_prompt <- function(history, ctx = NULL) {
 #'
 #' edge_free_model(ctx)
 #' }
+#' @seealso \code{\link{build_chat_prompt}}, \code{\link{edge_completion}}
 #' @export
 edge_chat_completion <- function(ctx, messages, n_predict = 256L,
-                                  temperature = 0.7, top_p = 0.95) {
+                                  temperature = 0.7, top_p = 0.95, top_k = 0L,
+                                  min_p = 0, repeat_penalty = 1, seed = NULL,
+                                  stop = NULL) {
   if (!is_valid_model(ctx)) {
     stop("Invalid model context. Load a model first with edge_load_model()")
   }
@@ -1584,10 +1659,9 @@ edge_chat_completion <- function(ctx, messages, n_predict = 256L,
   temperature <- max(0.0, min(temperature, 2.0))
   top_p <- max(0.1, min(top_p, 1.0))
 
-  edge_completion_internal(ctx, prompt,
-                            as.integer(n_predict),
-                            as.numeric(temperature),
-                            as.numeric(top_p))
+  sampling <- .sampling_options(temperature, top_p, top_k, min_p,
+                                repeat_penalty, seed, stop)
+  edge_completion_internal(ctx, prompt, as.integer(n_predict), sampling)
 }
 
 #' Clean up cache directory and manage storage
@@ -2485,6 +2559,7 @@ edge_cuda_info <- function() {
 #'   which can differ from how the model would split it, so the output can
 #'   differ slightly from \code{jump_forward = FALSE}. It always matches the
 #'   grammar. Set FALSE to sample every token.
+#' @inheritParams edge_completion
 #' @return Character string containing only the generated text (not the prompt)
 #'
 #' @details
@@ -2524,10 +2599,12 @@ edge_cuda_info <- function() {
 #'
 #' edge_free_model(ctx)
 #' }
+#' @seealso \code{\link{edge_json_grammar}}, \code{\link{edge_extract}}, \code{\link{edge_classify}}
 #' @export
 edge_grammar_completion <- function(ctx, prompt, grammar, grammar_root = "root",
                                      n_predict = 512L, temperature = 0.3, top_p = 0.95,
-                                     jump_forward = TRUE) {
+                                     jump_forward = TRUE, top_k = 0L, min_p = 0,
+                                     repeat_penalty = 1, seed = NULL, stop = NULL) {
   if (!is_valid_model(ctx)) {
     stop("Invalid model context. Load a model first with edge_load_model()")
   }
@@ -2542,10 +2619,11 @@ edge_grammar_completion <- function(ctx, prompt, grammar, grammar_root = "root",
   temperature <- max(0.0, min(temperature, 2.0))
   top_p <- max(0.1, min(top_p, 1.0))
 
+  sampling <- .sampling_options(temperature, top_p, top_k, min_p,
+                                repeat_penalty, seed, stop)
   edge_completion_grammar_internal(
     ctx, prompt, grammar, grammar_root,
-    as.integer(n_predict), as.numeric(temperature), as.numeric(top_p),
-    isTRUE(jump_forward)
+    as.integer(n_predict), sampling, isTRUE(jump_forward)
   )
 }
 
@@ -2863,7 +2941,8 @@ edge_classify <- function(ctx, text, categories, instruction = NULL,
       trimws(out)
     }, error = function(e) {
       # Grammar sampler can fail on some models/tokenizers; fall back
-      raw <- edge_completion_internal(ctx, prompt, 50L, temperature, 0.95)
+      raw <- edge_completion_internal(ctx, prompt, 50L,
+                                      .sampling_options(temperature, 0.95))
       if (startsWith(raw, prompt)) raw <- substring(raw, nchar(prompt) + 1L)
       raw <- trimws(raw)
       # Match to closest category
@@ -3052,6 +3131,7 @@ edge_similarity_matrix <- function(embeddings) {
 #' @param top_p Nucleus sampling threshold (default: 0.95)
 #' @param grammar Optional GBNF grammar string to constrain output
 #' @param progress Show progress messages (default: TRUE)
+#' @inheritParams edge_completion
 #' @return Character vector of completions, same length as \code{texts}
 #'
 #' @examples
@@ -3070,10 +3150,12 @@ edge_similarity_matrix <- function(embeddings) {
 #'
 #' edge_free_model(ctx)
 #' }
+#' @seealso \code{\link{edge_classify}}, \code{\link{edge_extract_batch}}
 #' @export
 edge_map <- function(ctx, texts, prompt_template, n_predict = 128L,
                       temperature = 0.7, top_p = 0.95, grammar = NULL,
-                      progress = TRUE) {
+                      progress = TRUE, top_k = 0L, min_p = 0,
+                      repeat_penalty = 1, seed = NULL, stop = NULL) {
   if (!is_valid_model(ctx)) {
     stop("Invalid model context. Load a model first with edge_load_model()")
   }
@@ -3093,6 +3175,8 @@ edge_map <- function(ctx, texts, prompt_template, n_predict = 128L,
   }
 
   use_grammar <- !is.null(grammar) && nchar(grammar) > 0L
+  # Checked once up front; with seed = NULL each text still gets its own seed.
+  .sampling_options(temperature, top_p, top_k, min_p, repeat_penalty, seed, stop)
 
   for (i in seq_len(n)) {
     if (progress && n > 1L) {
@@ -3106,12 +3190,15 @@ edge_map <- function(ctx, texts, prompt_template, n_predict = 128L,
       results[i] <- edge_grammar_completion(ctx, prompt, grammar,
                                              n_predict = n_predict,
                                              temperature = temperature,
-                                             top_p = top_p)
+                                             top_p = top_p, top_k = top_k,
+                                             min_p = min_p,
+                                             repeat_penalty = repeat_penalty,
+                                             seed = seed, stop = stop)
     } else {
-      raw <- edge_completion_internal(ctx, prompt,
-                                       as.integer(n_predict),
-                                       as.numeric(temperature),
-                                       as.numeric(top_p))
+      sampling <- .sampling_options(temperature, top_p, top_k, min_p,
+                                    repeat_penalty, seed, stop)
+      raw <- edge_completion_internal(ctx, prompt, as.integer(n_predict),
+                                      sampling)
       # Strip the prompt prefix from the result
       if (startsWith(raw, prompt)) {
         results[i] <- substring(raw, nchar(prompt) + 1L)
@@ -4013,10 +4100,8 @@ edge_ask <- function(ctx, question, index, top_k = 3L, n_predict = 256L,
   )
 
   # Generate answer
-  raw <- edge_completion_internal(ctx, prompt,
-                                   as.integer(n_predict),
-                                   as.numeric(temperature),
-                                   0.95)
+  raw <- edge_completion_internal(ctx, prompt, as.integer(n_predict),
+                                  .sampling_options(temperature, 0.95))
 
   # Strip prompt
   answer <- if (startsWith(raw, prompt)) {
@@ -4204,10 +4289,11 @@ edge_serve <- function(model_path, host = "127.0.0.1", port = 8080L,
     top_p <- body$top_p %||% 0.95
 
     tryCatch({
-      text <- edge_completion_internal(ctx, prompt,
-                                        as.integer(max_tokens),
-                                        as.numeric(temperature),
-                                        as.numeric(top_p))
+      text <- edge_completion_internal(
+        ctx, prompt, as.integer(max_tokens),
+        .sampling_options(as.numeric(temperature), as.numeric(top_p),
+                          seed = body$seed, stop = unlist(body$stop))
+      )
       list(
         id = paste0("cmpl-", format(Sys.time(), "%Y%m%d%H%M%S")),
         object = "text_completion",
@@ -4239,7 +4325,9 @@ edge_serve <- function(model_path, host = "127.0.0.1", port = 8080L,
       text <- edge_chat_completion(ctx, messages,
                                     n_predict = as.integer(max_tokens),
                                     temperature = as.numeric(temperature),
-                                    top_p = as.numeric(top_p))
+                                    top_p = as.numeric(top_p),
+                                    seed = body$seed,
+                                    stop = unlist(body$stop))
       list(
         id = paste0("chatcmpl-", format(Sys.time(), "%Y%m%d%H%M%S")),
         object = "chat.completion",

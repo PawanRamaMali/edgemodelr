@@ -1,3 +1,21 @@
+# edgemodelr (development)
+
+## New features
+
+* `edge_completion()`, `edge_stream_completion()`, `edge_chat_completion()`,
+  `edge_chat_stream()`, `edge_grammar_completion()` and `edge_map()` have new
+  sampling arguments: `top_k`, `min_p`, `repeat_penalty`, `seed` and `stop`.
+  `repeat_penalty = 1.2` keeps small models from repeating themselves, and
+  `stop` ends the text at the first of the given strings. `edge_serve()`
+  passes on `seed` and `stop` from requests.
+
+## Changes
+
+* Sampled text (temperature above 0) is no longer the same on every call.
+  The seed used to be fixed; it is now drawn from R's random number
+  generator, so `set.seed()` makes results reproducible, or pass `seed`.
+  Greedy decoding (`temperature = 0`) is unchanged.
+
 # edgemodelr 0.6.0
 
 ## New features
