@@ -4,7 +4,7 @@ The edgemodelr package includes code from several sources:
 llama.cpp and GGML Library
 ================================================================================
 Files: src/llama/*, src/ggml/*
-Copyright: (c) 2023-2024 The ggml authors
+Copyright: (c) 2023-2026 The ggml authors
 License: MIT
 URL: https://github.com/ggml-org/llama.cpp
      https://github.com/ggerganov/ggml

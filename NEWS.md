@@ -54,6 +54,8 @@
 
 # edgemodelr 0.5.0
 
+0.5.0 was not released on CRAN; its changes reach CRAN with 0.6.0.
+
 ## New features
 
 * `edge_text_to_sql()` turns a natural language question plus a CREATE TABLE
