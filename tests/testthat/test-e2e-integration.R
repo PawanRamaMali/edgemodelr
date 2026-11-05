@@ -347,9 +347,11 @@ test_that("E2E: timeout_seconds stops a long generation", {
   prompt <- "Write a very long story about a dragon."
   short <- system.time(edge_completion(ctx, prompt, n_predict = 4L))[["elapsed"]]
 
+  # Some seeds end the reply at once, so pin one that writes a long one.
   started <- proc.time()[["elapsed"]]
   expect_error(
-    edge_completion(ctx, prompt, n_predict = 1500L, timeout_seconds = 1),
+    edge_completion(ctx, prompt, n_predict = 1500L, timeout_seconds = 1,
+                    seed = 12345),
     "timed out"
   )
   expect_lt(proc.time()[["elapsed"]] - started, 30 + 10 * short)
