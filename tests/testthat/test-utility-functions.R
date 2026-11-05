@@ -321,3 +321,79 @@ test_that(".default_threads gives a usable thread count", {
   logical <- parallel::detectCores(logical = TRUE)
   if (!is.na(logical)) expect_true(n <= logical)
 })
+
+test_that("edge_tool checks names and argument types", {
+  w <- edge_tool("get_weather", "Get the weather",
+                 list(city = list(type = "string", description = "City"),
+                      unit = c("celsius", "fahrenheit")))
+  expect_s3_class(w, "edge_tool")
+  expect_identical(w$parameters$city, "string")
+  expect_output(print(w), "get_weather(city: string (City), unit: one of", fixed = TRUE)
+  expect_s3_class(edge_tool("ping", "Check"), "edge_tool")
+
+  expect_error(edge_tool("1bad", "x"), "name")
+  expect_error(edge_tool("get-weather", "x"), "name")
+  expect_error(edge_tool("f", NA_character_), "description")
+  expect_error(edge_tool("f", "x", list("string")), "named list")
+  expect_error(edge_tool("f", "x", list(a = "date")), "type")
+  expect_error(edge_tool("f", "x", list(a = c("x", 'y"'))), "quotes")
+  expect_error(edge_tool("f", "x", list(a = "string", a = "number")), "unique")
+})
+
+test_that("tool calls are read back with the declared types", {
+  tools <- edgemodelr:::.check_tools(list(
+    edge_tool("get_weather", "Weather", list(city = "string", unit = c("c", "f"))),
+    edge_tool("count", "Count", list(n = "integer", x = "number", all = "boolean")),
+    edge_tool("ping", "Ping")))
+  parse <- edgemodelr:::.parse_tool_reply
+
+  r <- parse('{"tool": "get_weather", "arguments": {"city": "Paris", "unit": "c"}}', tools)
+  expect_null(r$content)
+  expect_identical(r$tool_calls[[1]], list(name = "get_weather",
+                                           arguments = list(city = "Paris", unit = "c")))
+  expect_identical(r$message$role, "assistant")
+
+  r <- parse('{"tool": "count", "arguments": {"n": -3, "x": 2.5, "all": false}}', tools)
+  expect_identical(r$tool_calls[[1]]$arguments, list(n = -3L, x = 2.5, all = FALSE))
+  expect_identical(parse('{"tool": "ping", "arguments": {}}', tools)$tool_calls[[1]]$arguments,
+                   list())
+
+  r <- parse("Hello there", tools)
+  expect_identical(r$content, "Hello there")
+  expect_length(r$tool_calls, 0)
+  expect_warning(r <- parse('{"tool": "get_weather", "arguments": {"city": "Pa', tools),
+                 "cut off")
+  expect_length(r$tool_calls, 0)
+
+  expect_error(edgemodelr:::.check_tool_choice("nope", tools), "tool_choice")
+  expect_null(edgemodelr:::.check_tool_choice("auto", tools))
+  expect_identical(edgemodelr:::.check_tool_choice("required", tools), names(tools))
+  expect_error(edgemodelr:::.check_tools(list("x")), "edge_tool")
+})
+
+test_that("the tool grammar allows only known tools, and none only in auto mode", {
+  tools <- edgemodelr:::.check_tools(list(
+    edge_tool("get_weather", "Weather", list(city = "string"))))
+  auto <- edgemodelr:::.tool_grammar(tools, NULL)
+  expect_match(auto, '(t1-call | "\\"none\\"")', fixed = TRUE)
+  expect_match(auto, '"\\"get_weather\\", \\"arguments\\": "', fixed = TRUE)
+  required <- edgemodelr:::.tool_grammar(tools, "get_weather")
+  expect_false(grepl("none", required))
+  expect_identical(edgemodelr:::.parse_tool_reply('{"tool": "none"}', tools),
+                   list(none = TRUE))
+
+  msgs <- edgemodelr:::.messages_with_tools(
+    list(list(role = "system", content = "Be brief."),
+         list(role = "user", content = "Weather?"),
+         list(role = "tool", name = "get_weather", content = "sunny")),
+    tools, NULL)
+  expect_length(msgs, 3)
+  expect_true(startsWith(msgs[[1]]$content, "Be brief.\n\nYou can call these tools"))
+  expect_identical(msgs[[3]]$role, "user")
+  expect_true(startsWith(msgs[[3]]$content, "Result of get_weather: sunny\n"))
+})
+
+test_that("tool_choice none means no call", {
+  tools <- edgemodelr:::.check_tools(list(edge_tool("ping", "Ping")))
+  expect_identical(edgemodelr:::.check_tool_choice("none", tools), character())
+})

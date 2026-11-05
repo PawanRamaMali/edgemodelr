@@ -12,6 +12,7 @@
 #include <fstream>
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 
 #include "llama.h"
 #include "llama-grammar.h"
@@ -143,19 +144,98 @@ struct SamplerDeleter {
 };
 typedef std::unique_ptr<llama_sampler, SamplerDeleter> sampler_ptr;
 
-// The sampling steps after any grammar. temperature = 0 means greedy
-// decoding, so the same prompt always gives the same text; otherwise top-p,
-// temperature and a seeded random draw.
-static void add_sampling_steps(llama_sampler * chain, double temperature, double top_p) {
-  if (temperature <= 0.0) {
+// Sampling settings shared by the generation functions. R builds them as a
+// named list (see .sampling_options() in R/api.R); missing fields keep these
+// defaults, which switch every optional step off.
+struct SamplingOptions {
+  double temperature = 0.8;
+  double top_p = 0.95;
+  int top_k = 0;              // 0: off
+  double min_p = 0.0;         // 0: off
+  double repeat_penalty = 1.0;  // 1: off
+  int repeat_last_n = 64;
+  uint32_t seed = 12345;
+  std::vector<std::string> stop;
+};
+
+static SamplingOptions read_sampling(const List & s) {
+  SamplingOptions o;
+  if (s.containsElementNamed("temperature")) o.temperature = as<double>(s["temperature"]);
+  if (s.containsElementNamed("top_p")) o.top_p = as<double>(s["top_p"]);
+  if (s.containsElementNamed("top_k")) o.top_k = as<int>(s["top_k"]);
+  if (s.containsElementNamed("min_p")) o.min_p = as<double>(s["min_p"]);
+  if (s.containsElementNamed("repeat_penalty")) o.repeat_penalty = as<double>(s["repeat_penalty"]);
+  if (s.containsElementNamed("repeat_last_n")) o.repeat_last_n = as<int>(s["repeat_last_n"]);
+  if (s.containsElementNamed("seed")) o.seed = static_cast<uint32_t>(as<double>(s["seed"]));
+  if (s.containsElementNamed("stop") && !Rf_isNull(s["stop"])) {
+    o.stop = as<std::vector<std::string>>(s["stop"]);
+  }
+  if (o.temperature < 0.0 || o.temperature > 2.0) stop("Temperature must be between 0.0 and 2.0");
+  if (o.top_p <= 0.0 || o.top_p > 1.0) stop("top_p must be between 0.0 and 1.0");
+  if (o.top_k < 0) stop("top_k must be 0 or more");
+  if (o.min_p < 0.0 || o.min_p >= 1.0) stop("min_p must be at least 0 and less than 1");
+  if (o.repeat_penalty <= 0.0) stop("repeat_penalty must be positive");
+  for (const std::string & st : o.stop) {
+    if (st.empty()) stop("stop strings must not be empty");
+  }
+  return o;
+}
+
+// The sampling steps after any grammar, in llama.cpp's usual order. The
+// repeat penalty comes first so greedy decoding can use it too.
+// temperature = 0 means greedy decoding, so the same prompt always gives the
+// same text; otherwise top-k, top-p, min-p, temperature and a seeded draw.
+static void add_sampling_steps(llama_sampler * chain, const llama_vocab * vocab,
+                               const SamplingOptions & o) {
+  if (o.repeat_penalty != 1.0 && o.repeat_last_n != 0) {
+    llama_sampler_chain_add(chain, llama_sampler_init_penalties(
+      llama_vocab_n_tokens(vocab), o.repeat_last_n,
+      static_cast<float>(o.repeat_penalty), 0.0f, 0.0f));
+  }
+  if (o.temperature <= 0.0) {
     llama_sampler_chain_add(chain, llama_sampler_init_greedy());
     return;
   }
-  if (top_p < 1.0) {
-    llama_sampler_chain_add(chain, llama_sampler_init_top_p(static_cast<float>(top_p), 1));
+  if (o.top_k > 0) {
+    llama_sampler_chain_add(chain, llama_sampler_init_top_k(o.top_k));
   }
-  llama_sampler_chain_add(chain, llama_sampler_init_temp(static_cast<float>(temperature)));
-  llama_sampler_chain_add(chain, llama_sampler_init_dist(12345));
+  if (o.top_p < 1.0) {
+    llama_sampler_chain_add(chain, llama_sampler_init_top_p(static_cast<float>(o.top_p), 1));
+  }
+  if (o.min_p > 0.0) {
+    llama_sampler_chain_add(chain, llama_sampler_init_min_p(static_cast<float>(o.min_p), 1));
+  }
+  llama_sampler_chain_add(chain, llama_sampler_init_temp(static_cast<float>(o.temperature)));
+  llama_sampler_chain_add(chain, llama_sampler_init_dist(o.seed));
+}
+
+// Where the first stop string starts in text, searching only matches that
+// end after position `from` (text before it was checked already), or npos.
+static size_t find_stop(const std::string & text, const std::vector<std::string> & stops,
+                        size_t from) {
+  size_t best = std::string::npos;
+  for (const std::string & st : stops) {
+    const size_t start = from > st.size() ? from - st.size() : 0;
+    const size_t pos = text.find(st, start);
+    if (pos < best) best = pos;
+  }
+  return best;
+}
+
+// Length of the longest end of text that could be the start of a stop
+// string. Streaming holds that much back until the next token decides it.
+static size_t stop_holdback(const std::string & text, const std::vector<std::string> & stops) {
+  size_t hold = 0;
+  for (const std::string & st : stops) {
+    const size_t max_len = std::min(text.size(), st.size() - 1);
+    for (size_t len = max_len; len > hold; --len) {
+      if (text.compare(text.size() - len, len, st, 0, len) == 0) {
+        hold = len;
+        break;
+      }
+    }
+  }
+  return hold;
 }
 
 // Helper function to ensure initialization is done
@@ -223,6 +303,9 @@ struct EdgeModelContext {
   // at. The model owns the adapters and frees them with itself.
   std::vector<llama_adapter_lora *> loras;
   std::vector<float> lora_scales;
+
+  // Prompts edge_completion_batch_internal() may run at once (n_parallel).
+  int n_parallel = 1;
 
   EdgeModelContext() = default;
 
@@ -321,7 +404,8 @@ static bool decode_token(EdgeModelContext & e, llama_token token) {
 // [[Rcpp::export]]
 SEXP edge_load_model_internal(std::string model_path, int n_ctx, int n_gpu_layers, int n_threads, bool flash_attn, bool embeddings, bool prompt_cache,
                               std::vector<std::string> lora_paths,
-                              std::vector<double> lora_scales) {
+                              std::vector<double> lora_scales,
+                              int n_parallel) {
   try {
     // Ensure llama is properly initialized
     ensure_llama_initialized();
@@ -415,6 +499,13 @@ SEXP edge_load_model_internal(std::string model_path, int n_ctx, int n_gpu_layer
       ctx_params.kv_unified = true;
       ctx_params.n_ubatch = ctx_params.n_batch;
     }
+    if (n_parallel > 1) {
+      // edge_completion_batch_internal() runs up to n_parallel prompts as
+      // separate sequences. A unified KV cache lets them share the whole
+      // context instead of n_ctx / n_parallel each.
+      ctx_params.n_seq_max = std::max<uint32_t>(ctx_params.n_seq_max, static_cast<uint32_t>(n_parallel));
+      ctx_params.kv_unified = true;
+    }
     
     struct llama_context* ctx = llama_init_from_model(model, ctx_params);
     if (!ctx) {
@@ -426,6 +517,7 @@ SEXP edge_load_model_internal(std::string model_path, int n_ctx, int n_gpu_layer
     edge_ctx->model = model;
     edge_ctx->prompt_cache = prompt_cache;
     edge_ctx->ctx = ctx;
+    edge_ctx->n_parallel = std::max(1, n_parallel);
 
     // LoRA adapters. On any failure edge_ctx frees the context and the model,
     // and the model frees the adapters loaded so far.
@@ -460,7 +552,7 @@ SEXP edge_load_model_internal(std::string model_path, int n_ctx, int n_gpu_layer
 }
 
 // [[Rcpp::export]]
-std::string edge_completion_internal(SEXP model_ptr, std::string prompt, int n_predict = 128, double temperature = 0.8, double top_p = 0.95, double timeout_seconds = 0.0) {
+std::string edge_completion_internal(SEXP model_ptr, std::string prompt, int n_predict, List sampling, double timeout_seconds = 0.0) {
   const auto started = std::chrono::steady_clock::now();
   try {
     if (TYPEOF(model_ptr) != EXTPTRSXP) {
@@ -477,19 +569,14 @@ std::string edge_completion_internal(SEXP model_ptr, std::string prompt, int n_p
     if (n_predict <= 0) {
       stop("n_predict must be positive");
     }
-    if (temperature < 0.0 || temperature > 2.0) {
-      stop("Temperature must be between 0.0 and 2.0");
-    }
-    if (top_p <= 0.0 || top_p > 1.0) {
-      stop("top_p must be between 0.0 and 1.0");
-    }
+    const SamplingOptions opts = read_sampling(sampling);
 
     // Get vocabulary from model
     const struct llama_vocab* vocab = llama_model_get_vocab(edge_ctx->model);
     if (!vocab) {
       stop("Failed to get vocabulary from model");
     }
-    
+
     // Tokenize the prompt - first get the number of tokens needed
     const int n_prompt_tokens = -llama_tokenize(vocab, prompt.c_str(), (int32_t)prompt.size(), NULL, 0, true, true);
     
@@ -523,7 +610,7 @@ std::string edge_completion_internal(SEXP model_ptr, std::string prompt, int n_p
     sampler_ptr sampler_owner(llama_sampler_chain_init(sampler_chain_params));
     llama_sampler * sampler = sampler_owner.get();
 
-    add_sampling_steps(sampler, temperature, top_p);
+    add_sampling_steps(sampler, vocab, opts);
 
     // Generate tokens using the new sampler API
     for (int i = 0; i < n_predict; ++i) {
@@ -557,13 +644,22 @@ std::string edge_completion_internal(SEXP model_ptr, std::string prompt, int n_p
       }
 
       if (n_chars > 0) {
+        const size_t before = result.size();
         result.append(piece.data(), n_chars);
+        // A stop string ends the text where it starts; it is not returned.
+        if (!opts.stop.empty()) {
+          const size_t at = find_stop(result, opts.stop, before);
+          if (at != std::string::npos) {
+            result.resize(at);
+            break;
+          }
+        }
       } else if (n_chars < 0) {
         // If still failing, log warning and skip this token
         warning("Failed to convert token to text, skipping token");
         continue;
       }
-      
+
       // llama_sampler_sample already called accept — do not call it again.
 
       // Prepare next batch with the new token
@@ -611,7 +707,7 @@ bool is_valid_model_internal(SEXP model_ptr) {
 }
 
 // [[Rcpp::export]]
-List edge_completion_stream_internal(SEXP model_ptr, std::string prompt, Function callback, int n_predict = 128, double temperature = 0.8, double top_p = 0.95) {
+List edge_completion_stream_internal(SEXP model_ptr, std::string prompt, Function callback, int n_predict, List sampling) {
   try {
     if (TYPEOF(model_ptr) != EXTPTRSXP) {
       stop("Invalid model context");
@@ -627,12 +723,7 @@ List edge_completion_stream_internal(SEXP model_ptr, std::string prompt, Functio
     if (n_predict <= 0) {
       stop("n_predict must be positive");
     }
-    if (temperature < 0.0 || temperature > 2.0) {
-      stop("Temperature must be between 0.0 and 2.0");
-    }
-    if (top_p <= 0.0 || top_p > 1.0) {
-      stop("top_p must be between 0.0 and 1.0");
-    }
+    const SamplingOptions opts = read_sampling(sampling);
 
     // Get vocabulary from model
     const struct llama_vocab* vocab = llama_model_get_vocab(edge_ctx->model);
@@ -675,12 +766,43 @@ List edge_completion_stream_internal(SEXP model_ptr, std::string prompt, Functio
     sampler_ptr sampler_owner(llama_sampler_chain_init(sampler_chain_params));
     llama_sampler * sampler = sampler_owner.get();
 
-    add_sampling_steps(sampler, temperature, top_p);
+    add_sampling_steps(sampler, vocab, opts);
+
+    // Text is passed to the callback once no stop string can start in it.
+    // Without stop strings that is every token as soon as it is generated.
+    size_t sent = 0;
+    auto send = [&](size_t upto, int position) -> bool {
+      if (upto <= sent) return true;
+      const std::string text = full_response.substr(sent, upto - sent);
+      sent = upto;
+      tokens_generated.push_back(text);
+      tokens_count++;
+      try {
+        List callback_data = List::create(
+          Named("token") = text,
+          Named("position") = position,
+          Named("is_final") = false,
+          Named("total_tokens") = tokens_count
+        );
+        SEXP result = callback(callback_data);
+        // Check if callback wants to stop early
+        if (is<LogicalVector>(result)) {
+          LogicalVector stop_signal = as<LogicalVector>(result);
+          if (stop_signal.length() > 0 && stop_signal[0] == false) return false;
+        }
+      } catch (const std::exception& e) {
+        warning("Callback error: " + std::string(e.what()));
+      }
+      return true;
+    };
 
     // Generate tokens one by one and stream them with proper sampling
+    int position = 0;
+    bool callback_stopped = false;
     for (int i = 0; i < n_predict; ++i) {
       // Lets Esc/Ctrl-C stop a long generation.
       Rcpp::checkUserInterrupt();
+      position = i + 1;
 
       // Sample next token using the sampler chain
       llama_token new_token = llama_sampler_sample(sampler, edge_ctx->ctx, -1);
@@ -701,34 +823,23 @@ List edge_completion_stream_internal(SEXP model_ptr, std::string prompt, Functio
         n_chars = llama_token_to_piece(vocab, new_token, piece.data(), static_cast<int32_t>(piece.size()), 0, true);
       }
 
-      std::string token_text = "";
       if (n_chars > 0) {
-        token_text = std::string(piece.data(), n_chars);
-        full_response += token_text;
-        tokens_generated.push_back(token_text);
-        tokens_count++;
-        
-        // Call the R callback function with current token
-        try {
-          List callback_data = List::create(
-            Named("token") = token_text,
-            Named("position") = i + 1,
-            Named("is_final") = false,
-            Named("total_tokens") = tokens_count
-          );
-          
-          SEXP result = callback(callback_data);
-          
-          // Check if callback wants to stop early
-          if (is<LogicalVector>(result)) {
-            LogicalVector stop_signal = as<LogicalVector>(result);
-            if (stop_signal.length() > 0 && stop_signal[0] == false) {
-              stopped_early = true;
-              break;
-            }
+        const size_t before = full_response.size();
+        full_response.append(piece.data(), n_chars);
+        if (!opts.stop.empty()) {
+          const size_t at = find_stop(full_response, opts.stop, before);
+          if (at != std::string::npos) {
+            full_response.resize(at);
+            send(at, position);
+            stopped_early = true;
+            break;
           }
-        } catch (const std::exception& e) {
-          warning("Callback error: " + std::string(e.what()));
+        }
+        const size_t hold = opts.stop.empty() ? 0 : stop_holdback(full_response, opts.stop);
+        if (!send(full_response.size() - hold, position)) {
+          stopped_early = true;
+          callback_stopped = true;
+          break;
         }
       } else if (n_chars < 0) {
         // If still failing, log warning and skip this token
@@ -738,14 +849,14 @@ List edge_completion_stream_internal(SEXP model_ptr, std::string prompt, Functio
 
       // llama_sampler_sample already called accept — do not call it again.
 
-      // Prepare next batch with the new token
-
       // Process the new token
       if (!decode_token(*edge_ctx, new_token)) {
         stopped_early = true;
         break;
       }
     }
+    // Text held back for a stop string that never came.
+    if (!callback_stopped) send(full_response.size(), position);
 
     // Send final callback
     try {
@@ -778,7 +889,7 @@ List edge_completion_stream_internal(SEXP model_ptr, std::string prompt, Functio
 }
 
 // [[Rcpp::export]]
-std::string edge_completion_grammar_internal(SEXP model_ptr, std::string prompt, std::string grammar_str, std::string grammar_root, int n_predict = 512, double temperature = 0.3, double top_p = 0.95, bool jump_forward = true) {
+std::string edge_completion_grammar_internal(SEXP model_ptr, std::string prompt, std::string grammar_str, std::string grammar_root, int n_predict, List sampling, bool jump_forward = true) {
   try {
     if (TYPEOF(model_ptr) != EXTPTRSXP) {
       stop("Invalid model context");
@@ -791,8 +902,7 @@ std::string edge_completion_grammar_internal(SEXP model_ptr, std::string prompt,
     }
 
     if (n_predict <= 0) stop("n_predict must be positive");
-    if (temperature < 0.0 || temperature > 2.0) stop("Temperature must be between 0.0 and 2.0");
-    if (top_p <= 0.0 || top_p > 1.0) stop("top_p must be between 0.0 and 1.0");
+    const SamplingOptions opts = read_sampling(sampling);
 
     const struct llama_vocab* vocab = llama_model_get_vocab(edge_ctx->model);
     if (!vocab) stop("Failed to get vocabulary from model");
@@ -824,7 +934,7 @@ std::string edge_completion_grammar_internal(SEXP model_ptr, std::string prompt,
     auto sampler_chain_params = llama_sampler_chain_default_params();
     sampler_ptr sampler_owner(llama_sampler_chain_init(sampler_chain_params));
     llama_sampler * sampler = sampler_owner.get();
-    add_sampling_steps(sampler, temperature, top_p);
+    add_sampling_steps(sampler, vocab, opts);
 
     sampler_ptr grammar_owner;
     llama_sampler * grammar_sampler = nullptr;
@@ -891,7 +1001,12 @@ std::string edge_completion_grammar_internal(SEXP model_ptr, std::string prompt,
               llama_grammar_accept_impl(*shadow, tk);
               llama_sampler_accept(sampler, tk);
             }
+            const size_t before = result.size();
             result += spelled;
+            if (!opts.stop.empty()) {
+              const size_t at = find_stop(result, opts.stop, before);
+              if (at != std::string::npos) { result.resize(at); break; }
+            }
             edge_ctx->cache_valid = false;
             llama_batch fb = llama_batch_get_one(ft.data(), n_ft);
             if (llama_decode(edge_ctx->ctx, fb)) break;
@@ -932,7 +1047,12 @@ std::string edge_completion_grammar_internal(SEXP model_ptr, std::string prompt,
         n_chars = llama_token_to_piece(vocab, new_token, piece.data(), static_cast<int32_t>(piece.size()), 0, true);
       }
       if (n_chars > 0) {
+        const size_t before = result.size();
         result.append(piece.data(), n_chars);
+        if (!opts.stop.empty()) {
+          const size_t at = find_stop(result, opts.stop, before);
+          if (at != std::string::npos) { result.resize(at); break; }
+        }
       }
 
       if (!decode_token(*edge_ctx, new_token)) break;
@@ -943,6 +1063,326 @@ std::string edge_completion_grammar_internal(SEXP model_ptr, std::string prompt,
   } catch (const std::exception& e) {
     stop("Error during grammar completion: " + std::string(e.what()));
   }
+}
+
+// Owns a llama_batch from llama_batch_init(), freed on every exit path.
+struct BatchOwner {
+  llama_batch b;
+  BatchOwner(int32_t n_tokens, int32_t n_seq) : b(llama_batch_init(n_tokens, 0, n_seq)) {}
+  ~BatchOwner() { llama_batch_free(b); }
+  BatchOwner(const BatchOwner &) = delete;
+  BatchOwner & operator=(const BatchOwner &) = delete;
+};
+
+static void batch_add(llama_batch & b, llama_token token, llama_pos pos, llama_seq_id seq, bool logits) {
+  const int j = b.n_tokens++;
+  b.token[j] = token;
+  b.pos[j] = pos;
+  b.n_seq_id[j] = 1;
+  b.seq_id[j][0] = seq;
+  b.logits[j] = logits ? 1 : 0;
+}
+
+// One prompt being generated in a batch.
+struct BatchSeq {
+  size_t index = 0;           // position in the prompts vector
+  sampler_ptr chain;
+  sampler_ptr grammar;
+  llama_token last = 0;       // sampled, not yet decoded
+  llama_pos pos = 0;          // position of `last`
+  int generated = 0;
+  bool done = false;
+  std::string text;
+};
+
+// Samples from output `idx` of the last decode. With a grammar, the token the
+// chain picks is checked alone first and the whole vocabulary is filtered
+// only when the grammar rejects it, as in edge_completion_grammar_internal().
+static llama_token batch_sample(BatchSeq & s, llama_context * ctx, int32_t idx,
+                                std::vector<llama_token_data> & candidates) {
+  if (!s.grammar) return llama_sampler_sample(s.chain.get(), ctx, idx);
+  const float * logits = llama_get_logits_ith(ctx, idx);
+  const int n_vocab = static_cast<int>(candidates.size());
+  auto fill = [&]() {
+    for (int t = 0; t < n_vocab; ++t) candidates[t] = llama_token_data{t, logits[t], 0.0f};
+    return llama_token_data_array{candidates.data(), static_cast<size_t>(n_vocab), -1, false};
+  };
+  llama_token_data_array cur = fill();
+  llama_sampler_apply(s.chain.get(), &cur);
+  llama_token token = cur.data[cur.selected].id;
+  llama_token_data single = {token, 1.0f, 0.0f};
+  llama_token_data_array one = {&single, 1, -1, false};
+  llama_sampler_apply(s.grammar.get(), &one);
+  if (std::isinf(single.logit) && single.logit < 0) {
+    cur = fill();
+    llama_sampler_apply(s.grammar.get(), &cur);
+    llama_sampler_apply(s.chain.get(), &cur);
+    token = cur.data[cur.selected].id;
+  }
+  llama_sampler_accept(s.grammar.get(), token);
+  llama_sampler_accept(s.chain.get(), token);
+  return token;
+}
+
+// Adds a sampled token to a sequence's text. Returns false once the
+// sequence is finished: end of generation, a stop string or n_predict.
+static bool batch_take(BatchSeq & s, llama_token token, const llama_vocab * vocab,
+                       const SamplingOptions & opts, int n_predict) {
+  s.generated++;
+  if (llama_vocab_is_eog(vocab, token)) return false;
+  std::vector<char> piece(512);
+  int n_chars = llama_token_to_piece(vocab, token, piece.data(), static_cast<int32_t>(piece.size()), 0, true);
+  if (n_chars < 0) {
+    piece.resize(static_cast<size_t>(std::abs(n_chars)) + 1);
+    n_chars = llama_token_to_piece(vocab, token, piece.data(), static_cast<int32_t>(piece.size()), 0, true);
+  }
+  if (n_chars > 0) {
+    const size_t before = s.text.size();
+    s.text.append(piece.data(), n_chars);
+    if (!opts.stop.empty()) {
+      const size_t at = find_stop(s.text, opts.stop, before);
+      if (at != std::string::npos) {
+        s.text.resize(at);
+        return false;
+      }
+    }
+  }
+  if (s.generated >= n_predict) return false;
+  s.last = token;
+  return true;
+}
+
+// Generates a completion for each prompt, several at a time: each prompt is
+// its own sequence in the KV cache, and every step decodes one token for
+// each unfinished sequence in a single batch. A step for k sequences costs
+// little more than a step for one on CPU, since generation is limited by
+// reading the weights. Needs a context made with n_parallel > 1; as many
+// prompts run together as fit in n_parallel and in the context (prompt plus
+// n_predict tokens each).
+// [[Rcpp::export]]
+std::vector<std::string> edge_completion_batch_internal(SEXP model_ptr, std::vector<std::string> prompts,
+                                                        int n_predict, List sampling,
+                                                        std::vector<double> seeds,
+                                                        std::string grammar_str,
+                                                        std::string grammar_root) {
+  try {
+    if (TYPEOF(model_ptr) != EXTPTRSXP) stop("Invalid model context");
+    XPtr<EdgeModelContext> edge_ctx(model_ptr);
+    if (!edge_ctx->is_valid()) stop("Invalid model context or null pointers");
+    if (n_predict <= 0) stop("n_predict must be positive");
+    SamplingOptions opts = read_sampling(sampling);
+    if (seeds.size() != prompts.size()) stop("Expected one seed per prompt");
+
+    llama_context * ctx = edge_ctx->ctx;
+    const llama_vocab * vocab = llama_model_get_vocab(edge_ctx->model);
+    const int n_ctx = static_cast<int>(llama_n_ctx(ctx));
+    const int n_batch = std::max<int>(1, static_cast<int>(llama_n_batch(ctx)));
+    const int n_seq_max = std::max(1, std::min(edge_ctx->n_parallel,
+                                               static_cast<int>(llama_n_seq_max(ctx))));
+
+    std::vector<std::vector<llama_token>> toks(prompts.size());
+    for (size_t p = 0; p < prompts.size(); ++p) {
+      const std::string & text = prompts[p];
+      const int n = -llama_tokenize(vocab, text.c_str(), (int32_t)text.size(), NULL, 0, true, true);
+      if (n <= 0) stop("Failed to determine prompt token count");
+      toks[p].resize(n);
+      if (llama_tokenize(vocab, text.c_str(), (int32_t)text.size(), toks[p].data(), n, true, true) < 0) {
+        stop("Failed to tokenize prompt");
+      }
+      if (n >= n_ctx) {
+        stop("Prompt " + std::to_string(p + 1) + " is too long (" + std::to_string(n) +
+             " tokens) for context size (" + std::to_string(n_ctx) +
+             "). Shorten the prompt or increase n_ctx in edge_load_model().");
+      }
+    }
+
+    // The sequences share the KV cache, so what the prompt cache held is gone.
+    edge_ctx->cache_valid = false;
+    edge_ctx->cached_tokens.clear();
+
+    std::vector<std::string> results(prompts.size());
+    std::vector<llama_token_data> candidates;
+    if (!grammar_str.empty()) candidates.resize(llama_vocab_n_tokens(vocab));
+    BatchOwner owner(std::max(n_batch, n_seq_max), 1);
+    llama_batch & batch = owner.b;
+
+    size_t next = 0;
+    while (next < prompts.size()) {
+      // As many prompts as fit, each with room for its whole answer.
+      std::vector<BatchSeq> seqs;
+      int budget = 0;
+      while (next < prompts.size() && static_cast<int>(seqs.size()) < n_seq_max) {
+        const int need = static_cast<int>(toks[next].size()) + n_predict;
+        if (!seqs.empty() && budget + need > n_ctx) break;
+        budget += need;
+        seqs.emplace_back();
+        seqs.back().index = next++;
+      }
+      clear_kv_cache(ctx);
+
+      // Each prompt is decoded on its own sequence, and its first token is
+      // sampled straight away, before the next decode replaces the logits.
+      for (size_t s = 0; s < seqs.size(); ++s) {
+        BatchSeq & q = seqs[s];
+        Rcpp::checkUserInterrupt();
+        SamplingOptions o = opts;
+        o.seed = static_cast<uint32_t>(seeds[q.index]);
+        q.chain.reset(llama_sampler_chain_init(llama_sampler_chain_default_params()));
+        add_sampling_steps(q.chain.get(), vocab, o);
+        if (!grammar_str.empty()) {
+          q.grammar.reset(llama_sampler_init_grammar(vocab, grammar_str.c_str(), grammar_root.c_str()));
+          if (!q.grammar) stop("Failed to parse GBNF grammar. Check grammar syntax.");
+        }
+        const std::vector<llama_token> & tk = toks[q.index];
+        for (size_t i = 0; i < tk.size(); i += n_batch) {
+          const size_t n = std::min(static_cast<size_t>(n_batch), tk.size() - i);
+          batch.n_tokens = 0;
+          for (size_t k = 0; k < n; ++k) {
+            batch_add(batch, tk[i + k], static_cast<llama_pos>(i + k),
+                      static_cast<llama_seq_id>(s), i + k == tk.size() - 1);
+          }
+          if (llama_decode(ctx, batch)) stop("Failed to process prompt");
+        }
+        q.pos = static_cast<llama_pos>(tk.size());
+        const llama_token first = batch_sample(q, ctx, batch.n_tokens - 1, candidates);
+        q.done = !batch_take(q, first, vocab, opts, n_predict);
+      }
+
+      // Then one token per unfinished sequence per decode.
+      std::vector<size_t> active;
+      while (true) {
+        Rcpp::checkUserInterrupt();
+        active.clear();
+        batch.n_tokens = 0;
+        for (size_t s = 0; s < seqs.size(); ++s) {
+          if (seqs[s].done) continue;
+          batch_add(batch, seqs[s].last, seqs[s].pos, static_cast<llama_seq_id>(s), true);
+          seqs[s].pos++;
+          active.push_back(s);
+        }
+        if (active.empty()) break;
+        if (llama_decode(ctx, batch)) break;  // out of room: keep what was generated
+        for (size_t j = 0; j < active.size(); ++j) {
+          BatchSeq & q = seqs[active[j]];
+          const llama_token token = batch_sample(q, ctx, static_cast<int32_t>(j), candidates);
+          q.done = !batch_take(q, token, vocab, opts, n_predict);
+        }
+      }
+      for (BatchSeq & q : seqs) results[q.index] = q.text;
+    }
+    clear_kv_cache(ctx);
+    return results;
+  } catch (const std::exception & e) {
+    stop("Error during batch completion: " + std::string(e.what()));
+  }
+}
+
+// What a saved state depends on: the model, and the LoRA adapters at their
+// scales, since they change every layer's keys and values.
+static std::string state_fingerprint(const EdgeModelContext & e) {
+  char desc[256] = {0};
+  llama_model_desc(e.model, desc, sizeof(desc));
+  std::ostringstream fp;
+  fp << desc << "|params=" << llama_model_n_params(e.model)
+     << "|embd=" << llama_model_n_embd(e.model)
+     << "|layers=" << llama_model_n_layer(e.model)
+     << "|vocab=" << llama_vocab_n_tokens(llama_model_get_vocab(e.model));
+  for (size_t i = 0; i < e.loras.size(); ++i) fp << "|lora" << i << "=" << e.lora_scales[i];
+  return fp.str();
+}
+
+static const char STATE_MAGIC[8] = {'E', 'D', 'G', 'E', 'K', 'V', '0', '1'};
+
+// Saves the prompt cache (the KV cache of sequence 0 and its tokens) to a
+// file. Returns the number of tokens saved.
+// [[Rcpp::export]]
+int edge_save_state_internal(SEXP model_ptr, std::string path) {
+  if (TYPEOF(model_ptr) != EXTPTRSXP) stop("Invalid model context");
+  XPtr<EdgeModelContext> edge_ctx(model_ptr);
+  if (!edge_ctx->is_valid()) stop("Invalid model context");
+  if (!edge_ctx->prompt_cache) {
+    stop("Saving the state needs a model loaded with prompt_cache = TRUE");
+  }
+  if (!edge_ctx->cache_valid || edge_ctx->cached_tokens.empty()) {
+    stop("Nothing to save: the cache is empty. Run a completion first.");
+  }
+  const size_t size = llama_state_seq_get_size(edge_ctx->ctx, 0);
+  std::vector<uint8_t> data(size);
+  const size_t written = llama_state_seq_get_data(edge_ctx->ctx, data.data(), size, 0);
+  if (written == 0) stop("Failed to copy the KV cache");
+
+  const std::string fp = state_fingerprint(*edge_ctx);
+  const uint32_t fp_len = static_cast<uint32_t>(fp.size());
+  const uint32_t n_tokens = static_cast<uint32_t>(edge_ctx->cached_tokens.size());
+  const uint64_t n_data = static_cast<uint64_t>(written);
+
+  std::ofstream out(path, std::ios::binary | std::ios::trunc);
+  if (!out.good()) stop("Cannot write to " + path);
+  out.write(STATE_MAGIC, sizeof(STATE_MAGIC));
+  out.write(reinterpret_cast<const char *>(&fp_len), sizeof(fp_len));
+  out.write(fp.data(), fp_len);
+  out.write(reinterpret_cast<const char *>(&n_tokens), sizeof(n_tokens));
+  out.write(reinterpret_cast<const char *>(edge_ctx->cached_tokens.data()),
+            static_cast<std::streamsize>(n_tokens * sizeof(llama_token)));
+  out.write(reinterpret_cast<const char *>(&n_data), sizeof(n_data));
+  out.write(reinterpret_cast<const char *>(data.data()), static_cast<std::streamsize>(written));
+  out.close();
+  if (!out.good()) stop("Failed to write " + path);
+  return static_cast<int>(n_tokens);
+}
+
+// Loads a state saved with edge_save_state_internal() into the prompt cache,
+// so the next prompt that starts with the saved tokens skips them. Returns
+// the number of tokens loaded.
+// [[Rcpp::export]]
+int edge_load_state_internal(SEXP model_ptr, std::string path) {
+  if (TYPEOF(model_ptr) != EXTPTRSXP) stop("Invalid model context");
+  XPtr<EdgeModelContext> edge_ctx(model_ptr);
+  if (!edge_ctx->is_valid()) stop("Invalid model context");
+  if (!edge_ctx->prompt_cache) {
+    stop("Loading a state needs a model loaded with prompt_cache = TRUE");
+  }
+
+  std::ifstream in(path, std::ios::binary);
+  if (!in.good()) stop("Cannot read " + path);
+  char magic[8] = {0};
+  in.read(magic, sizeof(magic));
+  if (!in.good() || std::memcmp(magic, STATE_MAGIC, sizeof(magic)) != 0) {
+    stop("Not a state file saved by edge_save_state(): " + path);
+  }
+  uint32_t fp_len = 0;
+  in.read(reinterpret_cast<char *>(&fp_len), sizeof(fp_len));
+  if (!in.good() || fp_len > 4096) stop("Corrupt state file: " + path);
+  std::string fp(fp_len, '\0');
+  in.read(&fp[0], fp_len);
+  if (fp != state_fingerprint(*edge_ctx)) {
+    stop("The state was saved with a different model or different LoRA scales: " + path);
+  }
+  uint32_t n_tokens = 0;
+  in.read(reinterpret_cast<char *>(&n_tokens), sizeof(n_tokens));
+  if (!in.good() || n_tokens == 0 || n_tokens >= llama_n_ctx(edge_ctx->ctx)) {
+    stop("The saved state does not fit in this context (n_ctx = " +
+         std::to_string(llama_n_ctx(edge_ctx->ctx)) + "): " + path);
+  }
+  std::vector<llama_token> tokens(n_tokens);
+  in.read(reinterpret_cast<char *>(tokens.data()), static_cast<std::streamsize>(n_tokens * sizeof(llama_token)));
+  uint64_t n_data = 0;
+  in.read(reinterpret_cast<char *>(&n_data), sizeof(n_data));
+  if (!in.good() || n_data == 0 || n_data > (uint64_t(1) << 36)) stop("Corrupt state file: " + path);
+  std::vector<uint8_t> data(static_cast<size_t>(n_data));
+  in.read(reinterpret_cast<char *>(data.data()), static_cast<std::streamsize>(n_data));
+  if (!in.good()) stop("Corrupt state file: " + path);
+
+  clear_kv_cache(edge_ctx->ctx);
+  edge_ctx->cache_valid = false;
+  edge_ctx->cached_tokens.clear();
+  if (llama_state_seq_set_data(edge_ctx->ctx, data.data(), data.size(), 0) == 0) {
+    clear_kv_cache(edge_ctx->ctx);
+    stop("Failed to load the state into the context: " + path);
+  }
+  edge_ctx->cached_tokens = tokens;
+  edge_ctx->cache_valid = true;
+  return static_cast<int>(n_tokens);
 }
 
 // [[Rcpp::export]]
@@ -1086,6 +1526,14 @@ Rcpp::NumericVector edge_lora_scales_internal(SEXP model_ptr, Rcpp::Nullable<Rcp
     if (!apply_loras(*edge_ctx)) stop("Failed to apply LoRA adapters to the context");
   }
   return Rcpp::NumericVector(edge_ctx->lora_scales.begin(), edge_ctx->lora_scales.end());
+}
+
+// [[Rcpp::export]]
+int edge_n_parallel_internal(SEXP model_ptr) {
+  if (TYPEOF(model_ptr) != EXTPTRSXP) stop("Invalid model context");
+  XPtr<EdgeModelContext> edge_ctx(model_ptr);
+  if (!edge_ctx->is_valid()) stop("Invalid model context");
+  return edge_ctx->n_parallel;
 }
 
 // [[Rcpp::export]]

@@ -347,9 +347,11 @@ test_that("E2E: timeout_seconds stops a long generation", {
   prompt <- "Write a very long story about a dragon."
   short <- system.time(edge_completion(ctx, prompt, n_predict = 4L))[["elapsed"]]
 
+  # Some seeds end the reply at once, so pin one that writes a long one.
   started <- proc.time()[["elapsed"]]
   expect_error(
-    edge_completion(ctx, prompt, n_predict = 1500L, timeout_seconds = 1),
+    edge_completion(ctx, prompt, n_predict = 1500L, timeout_seconds = 1,
+                    seed = 12345),
     "timed out"
   )
   expect_lt(proc.time()[["elapsed"]] - started, 30 + 10 * short)
@@ -527,4 +529,197 @@ test_that("E2E: LoRA adapters load, switch and reject a wrong model", {
   expect_error(edge_load_model(model_path, n_ctx = 512L, lora = model_path),
                "Failed to load LoRA adapter")
   expect_true(is_valid_model(ctx))
+})
+
+test_that("E2E: seed, stop strings and the repeat penalty", {
+  skip_on_cran()
+  skip_if_offline()
+  skip_on_os("windows") # Windows CI has memory/segfault issues with model loading
+
+  models <- edge_list_models()
+  tiny_model <- models[models$name == "TinyLlama-1.1B", ]
+  test_dir <- file.path(tempdir(), "edgemodelr_integration_tests")
+  dir.create(test_dir, showWarnings = FALSE, recursive = TRUE)
+  model_path <- file.path(test_dir, tiny_model$filename[1])
+  if (!file.exists(model_path)) {
+    edge_download_url(tiny_model$download_url[1], tiny_model$filename[1],
+                      cache_dir = test_dir)
+  }
+
+  ctx <- edge_load_model(model_path, n_ctx = 512L)
+  on.exit(edge_free_model(ctx), add = TRUE)
+  p <- "<|user|>\nList five fruits, one per line.</s>\n<|assistant|>\n"
+
+  # The same seed gives the same text, and so does set.seed().
+  expect_identical(edge_completion(ctx, p, n_predict = 24L, seed = 7),
+                   edge_completion(ctx, p, n_predict = 24L, seed = 7))
+  set.seed(1)
+  a <- edge_completion(ctx, p, n_predict = 24L)
+  set.seed(1)
+  expect_identical(edge_completion(ctx, p, n_predict = 24L), a)
+
+  # Text ends where a stop string starts, also when streaming, and also
+  # when the stop string spans several tokens.
+  full <- edge_completion(ctx, p, n_predict = 40L, temperature = 0)
+  skip_if(!grepl("\n", full), "greedy answer has no line break")
+  first_line <- sub("\n.*", "", full)
+  expect_identical(edge_completion(ctx, p, n_predict = 40L, temperature = 0,
+                                   stop = "\n"), first_line)
+  stop_str <- substr(full, nchar(first_line) - 2L, nchar(first_line) + 2L)
+  pieces <- character(0)
+  streamed <- edge_stream_completion(ctx, p, function(d) {
+    if (!d$is_final) pieces <<- c(pieces, d$token)
+    TRUE
+  }, n_predict = 40L, temperature = 0, stop = stop_str)
+  expect_identical(streamed$full_response, substr(full, 1L, nchar(first_line) - 3L))
+  expect_identical(paste(pieces, collapse = ""), streamed$full_response)
+
+  # Without stop strings the stream gives the same text as a completion.
+  pieces <- character(0)
+  streamed <- edge_stream_completion(ctx, p, function(d) {
+    if (!d$is_final) pieces <<- c(pieces, d$token)
+    TRUE
+  }, n_predict = 40L, temperature = 0)
+  expect_identical(paste(pieces, collapse = ""), full)
+
+  # The repeat penalty stops a loop that greedy decoding falls into.
+  loop <- "The cat sat. The cat sat. The cat sat."
+  plain <- edge_completion(ctx, loop, n_predict = 24L, temperature = 0)
+  penalised <- edge_completion(ctx, loop, n_predict = 24L, temperature = 0,
+                               repeat_penalty = 1.5)
+  expect_false(identical(plain, penalised))
+
+  expect_type(edge_completion(ctx, p, n_predict = 8L, top_k = 40L,
+                              min_p = 0.05, seed = 3), "character")
+})
+
+test_that("E2E: tool calls come back with the declared types", {
+  skip_on_cran()
+  skip_if_offline()
+  skip_on_os("windows") # Windows CI has memory/segfault issues with model loading
+
+  models <- edge_list_models()
+  tiny_model <- models[models$name == "TinyLlama-1.1B", ]
+  test_dir <- file.path(tempdir(), "edgemodelr_integration_tests")
+  dir.create(test_dir, showWarnings = FALSE, recursive = TRUE)
+  model_path <- file.path(test_dir, tiny_model$filename[1])
+  if (!file.exists(model_path)) {
+    edge_download_url(tiny_model$download_url[1], tiny_model$filename[1],
+                      cache_dir = test_dir)
+  }
+
+  ctx <- edge_load_model(model_path, n_ctx = 1024L)
+  on.exit(edge_free_model(ctx), add = TRUE)
+  tools <- list(
+    edge_tool("get_weather", "Get the current weather for a city",
+              list(city = "string", unit = c("celsius", "fahrenheit"))),
+    edge_tool("add_numbers", "Add two numbers", list(a = "number", b = "number")))
+  msgs <- list(list(role = "user", content = "What's the weather like in Paris?"))
+
+  # A forced call is always one of the tools, with every argument typed.
+  r <- edge_chat_completion(ctx, msgs, tools = tools, tool_choice = "required",
+                            temperature = 0, n_predict = 64L)
+  expect_null(r$content)
+  expect_length(r$tool_calls, 1)
+  call <- r$tool_calls[[1]]
+  expect_true(call$name %in% c("get_weather", "add_numbers"))
+  if (call$name == "get_weather") {
+    expect_type(call$arguments$city, "character")
+    expect_true(call$arguments$unit %in% c("celsius", "fahrenheit"))
+  }
+  r <- edge_chat_completion(ctx, msgs, tools = tools, tool_choice = "add_numbers",
+                            temperature = 0, n_predict = 64L)
+  expect_identical(r$tool_calls[[1]]$name, "add_numbers")
+  expect_type(r$tool_calls[[1]]$arguments$a, "double")
+
+  # In auto mode the result is a call or text, never both.
+  r <- edge_chat_completion(ctx, msgs, tools = tools, temperature = 0, n_predict = 64L)
+  expect_true(xor(is.null(r$content), length(r$tool_calls) == 0L))
+  expect_identical(r$message$role, "assistant")
+})
+
+test_that("E2E: n_parallel runs a batch of prompts together", {
+  skip_on_cran()
+  skip_if_offline()
+  skip_on_os("windows") # Windows CI has memory/segfault issues with model loading
+
+  models <- edge_list_models()
+  tiny_model <- models[models$name == "TinyLlama-1.1B", ]
+  test_dir <- file.path(tempdir(), "edgemodelr_integration_tests")
+  dir.create(test_dir, showWarnings = FALSE, recursive = TRUE)
+  model_path <- file.path(test_dir, tiny_model$filename[1])
+  if (!file.exists(model_path)) {
+    edge_download_url(tiny_model$download_url[1], tiny_model$filename[1],
+                      cache_dir = test_dir)
+  }
+
+  words <- c("apple", "car", "river", "piano", "winter", "coffee")
+  tmpl <- "<|user|>\nWrite one short sentence about {text}.</s>\n<|assistant|>\n"
+  # A small context, so not every prompt fits at once.
+  ctx <- edge_load_model(model_path, n_ctx = 256L, n_parallel = 4L)
+  on.exit(edge_free_model(ctx), add = TRUE)
+  out <- edge_map(ctx, c(words, words), tmpl, n_predict = 16L, temperature = 0,
+                  progress = FALSE)
+  expect_length(out, 12)
+  expect_true(all(nzchar(out)))
+  # Greedy answers do not depend on which prompts ran alongside. Batched
+  # kernels round differently, so only the start is compared.
+  expect_identical(substr(out[1:6], 1, 12), substr(out[7:12], 1, 12))
+
+  s <- edge_map(ctx, words, tmpl, n_predict = 16L, seed = 3, stop = " ",
+                progress = FALSE)
+  expect_false(any(grepl(" ", s)))
+  expect_identical(edge_map(ctx, words, tmpl, n_predict = 16L, seed = 3,
+                            stop = " ", progress = FALSE), s)
+
+  df <- edge_extract_batch(ctx, c("I love it!", "This is awful."),
+                           list(sentiment = c("positive", "negative")),
+                           n_predict = 16L, progress = FALSE)
+  expect_identical(nrow(df), 2L)
+  expect_true(all(df$sentiment %in% c("positive", "negative")))
+  expect_type(edge_completion(ctx, "Hello", n_predict = 4L), "character")
+})
+
+test_that("E2E: the prompt cache can be saved and loaded", {
+  skip_on_cran()
+  skip_if_offline()
+  skip_on_os("windows") # Windows CI has memory/segfault issues with model loading
+
+  models <- edge_list_models()
+  tiny_model <- models[models$name == "TinyLlama-1.1B", ]
+  test_dir <- file.path(tempdir(), "edgemodelr_integration_tests")
+  dir.create(test_dir, showWarnings = FALSE, recursive = TRUE)
+  model_path <- file.path(test_dir, tiny_model$filename[1])
+  if (!file.exists(model_path)) {
+    edge_download_url(tiny_model$download_url[1], tiny_model$filename[1],
+                      cache_dir = test_dir)
+  }
+
+  prefix <- paste0("<|system|>\nYou answer geography questions with one short ",
+                   "sentence.</s>\n<|user|>\n")
+  p <- paste0(prefix, "What is the capital of France?</s>\n<|assistant|>\n")
+  f <- tempfile(fileext = ".kv")
+  on.exit(unlink(f), add = TRUE)
+
+  a <- edge_load_model(model_path, n_ctx = 512L, prompt_cache = TRUE)
+  first <- edge_completion(a, p, n_predict = 12L, temperature = 0)
+  n <- edge_save_state(a, f)
+  edge_free_model(a)
+  expect_gt(n, 20)
+
+  b <- edge_load_model(model_path, n_ctx = 512L, prompt_cache = TRUE)
+  on.exit(edge_free_model(b), add = TRUE)
+  expect_identical(edge_load_state(b, f), n)
+  expect_identical(edge_completion(b, p, n_predict = 12L, temperature = 0), first)
+  expect_match(edge_completion(b, paste0(prefix, "What is the capital of Japan?",
+                                         "</s>\n<|assistant|>\n"),
+                               n_predict = 12L, temperature = 0), "Tokyo")
+
+  plain <- edge_load_model(model_path, n_ctx = 512L)
+  on.exit(edge_free_model(plain), add = TRUE)
+  expect_error(edge_load_state(plain, f), "prompt_cache = TRUE")
+  bad <- tempfile()
+  on.exit(unlink(bad), add = TRUE)
+  writeBin(charToRaw("not a state file"), bad)
+  expect_error(edge_load_state(b, bad), "Not a state file")
 })
