@@ -1,5 +1,14 @@
 # edgemodelr 0.6.0
 
+## New features
+
+* `edge_load_model()` has new `lora` and `lora_scale` arguments to apply
+  LoRA adapters in GGUF format on top of a base model (#38). The new
+  `edge_lora_scale()` reads or changes the adapter scales without reloading,
+  so one base model can switch between adapters from call to call; 0 turns
+  an adapter off. An adapter for a 0.6B model is about 20 MB, against
+  640 MB for a merged copy of the model.
+
 ## llama.cpp
 
 * Updated the bundled llama.cpp from b8179 (GGML 0.9.7) to v0.8.0, build
@@ -44,6 +53,8 @@
   separator is forced and jump-forward skips over it.
 
 # edgemodelr 0.5.0
+
+0.5.0 was not released on CRAN; its changes reach CRAN with 0.6.0.
 
 ## New features
 

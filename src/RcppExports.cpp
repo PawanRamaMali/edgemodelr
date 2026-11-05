@@ -42,8 +42,8 @@ BEGIN_RCPP
 END_RCPP
 }
 // edge_load_model_internal
-SEXP edge_load_model_internal(std::string model_path, int n_ctx, int n_gpu_layers, int n_threads, bool flash_attn, bool embeddings, bool prompt_cache);
-RcppExport SEXP _edgemodelr_edge_load_model_internal(SEXP model_pathSEXP, SEXP n_ctxSEXP, SEXP n_gpu_layersSEXP, SEXP n_threadsSEXP, SEXP flash_attnSEXP, SEXP embeddingsSEXP, SEXP prompt_cacheSEXP) {
+SEXP edge_load_model_internal(std::string model_path, int n_ctx, int n_gpu_layers, int n_threads, bool flash_attn, bool embeddings, bool prompt_cache, std::vector<std::string> lora_paths, std::vector<double> lora_scales);
+RcppExport SEXP _edgemodelr_edge_load_model_internal(SEXP model_pathSEXP, SEXP n_ctxSEXP, SEXP n_gpu_layersSEXP, SEXP n_threadsSEXP, SEXP flash_attnSEXP, SEXP embeddingsSEXP, SEXP prompt_cacheSEXP, SEXP lora_pathsSEXP, SEXP lora_scalesSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
@@ -54,7 +54,9 @@ BEGIN_RCPP
     Rcpp::traits::input_parameter< bool >::type flash_attn(flash_attnSEXP);
     Rcpp::traits::input_parameter< bool >::type embeddings(embeddingsSEXP);
     Rcpp::traits::input_parameter< bool >::type prompt_cache(prompt_cacheSEXP);
-    rcpp_result_gen = Rcpp::wrap(edge_load_model_internal(model_path, n_ctx, n_gpu_layers, n_threads, flash_attn, embeddings, prompt_cache));
+    Rcpp::traits::input_parameter< std::vector<std::string> >::type lora_paths(lora_pathsSEXP);
+    Rcpp::traits::input_parameter< std::vector<double> >::type lora_scales(lora_scalesSEXP);
+    rcpp_result_gen = Rcpp::wrap(edge_load_model_internal(model_path, n_ctx, n_gpu_layers, n_threads, flash_attn, embeddings, prompt_cache, lora_paths, lora_scales));
     return rcpp_result_gen;
 END_RCPP
 }
@@ -142,6 +144,18 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
+// edge_lora_scales_internal
+Rcpp::NumericVector edge_lora_scales_internal(SEXP model_ptr, Rcpp::Nullable<Rcpp::NumericVector> scales);
+RcppExport SEXP _edgemodelr_edge_lora_scales_internal(SEXP model_ptrSEXP, SEXP scalesSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< SEXP >::type model_ptr(model_ptrSEXP);
+    Rcpp::traits::input_parameter< Rcpp::Nullable<Rcpp::NumericVector> >::type scales(scalesSEXP);
+    rcpp_result_gen = Rcpp::wrap(edge_lora_scales_internal(model_ptr, scales));
+    return rcpp_result_gen;
+END_RCPP
+}
 // edge_model_n_embd_internal
 int edge_model_n_embd_internal(SEXP model_ptr);
 RcppExport SEXP _edgemodelr_edge_model_n_embd_internal(SEXP model_ptrSEXP) {
@@ -211,13 +225,14 @@ static const R_CallMethodDef CallEntries[] = {
     {"_edgemodelr_edge_use_cuda_backend_internal", (DL_FUNC) &_edgemodelr_edge_use_cuda_backend_internal, 1},
     {"_edgemodelr_edge_cuda_backend_path_internal", (DL_FUNC) &_edgemodelr_edge_cuda_backend_path_internal, 0},
     {"_edgemodelr_edge_cuda_backend_loaded_internal", (DL_FUNC) &_edgemodelr_edge_cuda_backend_loaded_internal, 0},
-    {"_edgemodelr_edge_load_model_internal", (DL_FUNC) &_edgemodelr_edge_load_model_internal, 7},
+    {"_edgemodelr_edge_load_model_internal", (DL_FUNC) &_edgemodelr_edge_load_model_internal, 9},
     {"_edgemodelr_edge_completion_internal", (DL_FUNC) &_edgemodelr_edge_completion_internal, 6},
     {"_edgemodelr_edge_free_model_internal", (DL_FUNC) &_edgemodelr_edge_free_model_internal, 1},
     {"_edgemodelr_is_valid_model_internal", (DL_FUNC) &_edgemodelr_is_valid_model_internal, 1},
     {"_edgemodelr_edge_completion_stream_internal", (DL_FUNC) &_edgemodelr_edge_completion_stream_internal, 6},
     {"_edgemodelr_edge_completion_grammar_internal", (DL_FUNC) &_edgemodelr_edge_completion_grammar_internal, 8},
     {"_edgemodelr_edge_embeddings_internal", (DL_FUNC) &_edgemodelr_edge_embeddings_internal, 3},
+    {"_edgemodelr_edge_lora_scales_internal", (DL_FUNC) &_edgemodelr_edge_lora_scales_internal, 2},
     {"_edgemodelr_edge_model_n_embd_internal", (DL_FUNC) &_edgemodelr_edge_model_n_embd_internal, 1},
     {"_edgemodelr_edge_chat_apply_template_internal", (DL_FUNC) &_edgemodelr_edge_chat_apply_template_internal, 3},
     {"_edgemodelr_edge_model_chat_template_internal", (DL_FUNC) &_edgemodelr_edge_model_chat_template_internal, 1},

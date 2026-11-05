@@ -502,3 +502,29 @@ test_that("E2E: edge_embeddings gives the same vectors in a batch as one by one"
   pair <- edge_embeddings(ctx, texts[c(1, 1)])
   expect_true(all(pair %*% single[1, ] > 0.9999))
 })
+
+test_that("E2E: LoRA adapters load, switch and reject a wrong model", {
+  skip_on_cran()
+  skip_if_offline()
+  skip_on_os("windows") # Windows CI has memory/segfault issues with model loading
+
+  models <- edge_list_models()
+  tiny_model <- models[models$name == "TinyLlama-1.1B", ]
+  test_dir <- file.path(tempdir(), "edgemodelr_integration_tests")
+  dir.create(test_dir, showWarnings = FALSE, recursive = TRUE)
+  model_path <- file.path(test_dir, tiny_model$filename[1])
+  if (!file.exists(model_path)) {
+    edge_download_url(tiny_model$download_url[1], tiny_model$filename[1],
+                      cache_dir = test_dir)
+  }
+
+  ctx <- edge_load_model(model_path, n_ctx = 512L)
+  on.exit(edge_free_model(ctx), add = TRUE)
+  expect_identical(edge_lora_scale(ctx), numeric(0))
+  expect_error(edge_lora_scale(ctx, 1), "one per loaded adapter")
+
+  # A model file is not a LoRA adapter: an R error, not a crash.
+  expect_error(edge_load_model(model_path, n_ctx = 512L, lora = model_path),
+               "Failed to load LoRA adapter")
+  expect_true(is_valid_model(ctx))
+})
