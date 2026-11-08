@@ -636,6 +636,19 @@ test_that("E2E: tool calls come back with the declared types", {
   r <- edge_chat_completion(ctx, msgs, tools = tools, temperature = 0, n_predict = 64L)
   expect_true(xor(is.null(r$content), length(r$tool_calls) == 0L))
   expect_identical(r$message$role, "assistant")
+
+  # After the result, the same call again is turned into a text answer.
+  r <- edge_chat_completion(ctx, msgs, tools = tools, tool_choice = "get_weather",
+                            temperature = 0, n_predict = 64L)
+  msgs <- c(msgs, list(r$message, list(role = "tool", name = "get_weather",
+                                       content = "24 C and sunny")))
+  r2 <- edge_chat_completion(ctx, msgs, tools = tools, temperature = 0,
+                             n_predict = 48L)
+  if (length(r2$tool_calls) > 0L) {
+    expect_false(identical(r2$tool_calls[[1]], r$tool_calls[[1]]))
+  } else {
+    expect_type(r2$content, "character")
+  }
 })
 
 test_that("E2E: n_parallel runs a batch of prompts together", {

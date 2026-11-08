@@ -54,8 +54,9 @@ model may call. See Details.}
 \item{tool_choice}{With \code{tools}: "auto" (default) lets the model
 either call a tool or answer in text, "required" makes it call one of
 the tools, a tool's name makes it call that tool, and "none" makes it
-answer in text. Small models often call a tool again after its result;
-"none" for the turn after the result avoids that.}
+answer in text. With "auto", a call identical to the last one, whose
+result is already in \code{messages}, is not returned; the model
+answers in text instead.}
 }
 \value{
 Without \code{tools}, a character string containing only the
@@ -82,6 +83,9 @@ type. The model writes a call as
 \code{name} and its result as \code{content}, then call again so the model
 can use the result. Tool results are passed to the model as user
 messages, since not every chat template has a tool role.
+
+The tool call is always generated greedily; \code{temperature} and the
+other sampling arguments apply to the text answer.
 }
 \examples{
 \dontrun{
@@ -111,8 +115,7 @@ if (length(res$tool_calls) > 0) {
   call$arguments$city  # "Paris"
   msgs <- c(msgs, list(res$message,
                        list(role = "tool", name = call$name, content = "24 C, sunny")))
-  res <- edge_chat_completion(ctx, msgs, tools = list(weather),
-                              tool_choice = "none", temperature = 0)
+  res <- edge_chat_completion(ctx, msgs, tools = list(weather), temperature = 0)
   cat(res$content)
 }
 

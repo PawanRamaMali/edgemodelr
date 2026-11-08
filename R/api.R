@@ -1695,8 +1695,9 @@ build_chat_prompt <- function(history, ctx = NULL) {
 #' @param tool_choice With \code{tools}: "auto" (default) lets the model
 #'   either call a tool or answer in text, "required" makes it call one of
 #'   the tools, a tool's name makes it call that tool, and "none" makes it
-#'   answer in text. Small models often call a tool again after its result;
-#'   "none" for the turn after the result avoids that.
+#'   answer in text. With "auto", a call identical to the last one, whose
+#'   result is already in \code{messages}, is not returned; the model
+#'   answers in text instead.
 #' @inheritParams edge_completion
 #' @return Without \code{tools}, a character string containing only the
 #'   assistant's response text. With \code{tools}, a list with
@@ -1715,6 +1716,9 @@ build_chat_prompt <- function(history, ctx = NULL) {
 #' \code{name} and its result as \code{content}, then call again so the model
 #' can use the result. Tool results are passed to the model as user
 #' messages, since not every chat template has a tool role.
+#'
+#' The tool call is always generated greedily; \code{temperature} and the
+#' other sampling arguments apply to the text answer.
 #'
 #' @examples
 #' \dontrun{
@@ -1744,8 +1748,7 @@ build_chat_prompt <- function(history, ctx = NULL) {
 #'   call$arguments$city  # "Paris"
 #'   msgs <- c(msgs, list(res$message,
 #'                        list(role = "tool", name = call$name, content = "24 C, sunny")))
-#'   res <- edge_chat_completion(ctx, msgs, tools = list(weather),
-#'                               tool_choice = "none", temperature = 0)
+#'   res <- edge_chat_completion(ctx, msgs, tools = list(weather), temperature = 0)
 #'   cat(res$content)
 #' }
 #'
@@ -1788,13 +1791,20 @@ edge_chat_completion <- function(ctx, messages, n_predict = 256L,
   }
   prompt <- build_chat_prompt(.messages_with_tools(messages, tools, forced), ctx = ctx)
   grammar <- .tool_grammar(tools, forced)
+  # The call itself is chosen greedily: sampling there only adds wrong tools
+  # and arguments. The user's sampling applies to the text answer.
+  call_sampling <- .sampling_options(0, top_p)
   raw <- edge_completion_grammar_internal(ctx, prompt, grammar, "root",
-                                          as.integer(n_predict), sampling, TRUE)
+                                          as.integer(n_predict), call_sampling, TRUE)
   reply <- .parse_tool_reply(raw, tools)
-  if (!isTRUE(reply$none)) return(reply)
+  if (!isTRUE(reply$none) &&
+      !(is.null(forced) && .repeats_last_call(reply, messages, tools))) {
+    return(reply)
+  }
 
-  # No tool needed: answer in text, from the conversation without the tool
-  # instructions, so the model does not write JSON again.
+  # No tool needed, or the model asked again for the result it already has:
+  # answer in text, from the conversation without the tool instructions, so
+  # the model does not write JSON again.
   plain <- build_chat_prompt(.messages_with_tools(messages, NULL, NULL), ctx = ctx)
   text <- edge_completion_internal(ctx, plain, as.integer(n_predict), sampling)
   list(content = text, tool_calls = list(),
@@ -2037,6 +2047,26 @@ print.edge_tool <- function(x, ...) {
   list(content = NULL,
        tool_calls = list(list(name = tool$name, arguments = args)),
        message = message)
+}
+
+# TRUE when reply makes the same call as the last assistant call in messages
+# and that call's result is already in the conversation. Small models often
+# repeat a call instead of using its result.
+.repeats_last_call <- function(reply, messages, tools) {
+  if (length(reply$tool_calls) == 0L) return(FALSE)
+  seen_result <- FALSE
+  for (m in rev(messages)) {
+    if (!is.list(m)) next
+    if (identical(m$role, "tool")) {
+      seen_result <- TRUE
+    } else if (identical(m$role, "assistant")) {
+      if (!seen_result) return(FALSE)
+      last <- suppressWarnings(.parse_tool_reply(as.character(m$content), tools))
+      if (length(last$tool_calls) == 0L) return(FALSE)
+      return(identical(last$tool_calls[[1]], reply$tool_calls[[1]]))
+    }
+  }
+  FALSE
 }
 
 #' Clean up cache directory and manage storage

@@ -393,6 +393,27 @@ test_that("the tool grammar allows only known tools, and none only in auto mode"
   expect_true(startsWith(msgs[[3]]$content, "Result of get_weather: sunny\n"))
 })
 
+test_that("a repeat of the last call after its result is detected", {
+  tools <- edgemodelr:::.check_tools(list(
+    edge_tool("get_weather", "Weather", list(city = "string"))))
+  parse <- function(x) edgemodelr:::.parse_tool_reply(x, tools)
+  repeats <- edgemodelr:::.repeats_last_call
+  paris <- '{"tool": "get_weather", "arguments": {"city": "Paris"}}'
+  rome <- '{"tool": "get_weather", "arguments": {"city": "Rome"}}'
+  user <- list(role = "user", content = "Weather in Paris?")
+  call <- list(role = "assistant", content = paris)
+  result <- list(role = "tool", name = "get_weather", content = "sunny")
+
+  expect_true(repeats(parse(paris), list(user, call, result), tools))
+  expect_false(repeats(parse(rome), list(user, call, result), tools))
+  # Without the result yet, or with a later text turn, it is not a repeat.
+  expect_false(repeats(parse(paris), list(user, call), tools))
+  expect_false(repeats(parse(paris), list(user), tools))
+  expect_false(repeats(parse(paris),
+                       list(user, list(role = "assistant", content = "Hi")), tools))
+  expect_false(repeats(list(none = TRUE), list(user, call, result), tools))
+})
+
 test_that("tool_choice none means no call", {
   tools <- edgemodelr:::.check_tools(list(edge_tool("ping", "Ping")))
   expect_identical(edgemodelr:::.check_tool_choice("none", tools), character())
