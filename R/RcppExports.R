@@ -13,12 +13,12 @@ edge_cuda_backend_loaded_internal <- function() {
     .Call(`_edgemodelr_edge_cuda_backend_loaded_internal`)
 }
 
-edge_load_model_internal <- function(model_path, n_ctx, n_gpu_layers, n_threads, flash_attn, embeddings, prompt_cache, lora_paths, lora_scales) {
-    .Call(`_edgemodelr_edge_load_model_internal`, model_path, n_ctx, n_gpu_layers, n_threads, flash_attn, embeddings, prompt_cache, lora_paths, lora_scales)
+edge_load_model_internal <- function(model_path, n_ctx, n_gpu_layers, n_threads, flash_attn, embeddings, prompt_cache, lora_paths, lora_scales, n_parallel) {
+    .Call(`_edgemodelr_edge_load_model_internal`, model_path, n_ctx, n_gpu_layers, n_threads, flash_attn, embeddings, prompt_cache, lora_paths, lora_scales, n_parallel)
 }
 
-edge_completion_internal <- function(model_ptr, prompt, n_predict = 128L, temperature = 0.8, top_p = 0.95, timeout_seconds = 0.0) {
-    .Call(`_edgemodelr_edge_completion_internal`, model_ptr, prompt, n_predict, temperature, top_p, timeout_seconds)
+edge_completion_internal <- function(model_ptr, prompt, n_predict, sampling, timeout_seconds = 0.0) {
+    .Call(`_edgemodelr_edge_completion_internal`, model_ptr, prompt, n_predict, sampling, timeout_seconds)
 }
 
 edge_free_model_internal <- function(model_ptr) {
@@ -29,12 +29,24 @@ is_valid_model_internal <- function(model_ptr) {
     .Call(`_edgemodelr_is_valid_model_internal`, model_ptr)
 }
 
-edge_completion_stream_internal <- function(model_ptr, prompt, callback, n_predict = 128L, temperature = 0.8, top_p = 0.95) {
-    .Call(`_edgemodelr_edge_completion_stream_internal`, model_ptr, prompt, callback, n_predict, temperature, top_p)
+edge_completion_stream_internal <- function(model_ptr, prompt, callback, n_predict, sampling) {
+    .Call(`_edgemodelr_edge_completion_stream_internal`, model_ptr, prompt, callback, n_predict, sampling)
 }
 
-edge_completion_grammar_internal <- function(model_ptr, prompt, grammar_str, grammar_root, n_predict = 512L, temperature = 0.3, top_p = 0.95, jump_forward = TRUE) {
-    .Call(`_edgemodelr_edge_completion_grammar_internal`, model_ptr, prompt, grammar_str, grammar_root, n_predict, temperature, top_p, jump_forward)
+edge_completion_grammar_internal <- function(model_ptr, prompt, grammar_str, grammar_root, n_predict, sampling, jump_forward = TRUE) {
+    .Call(`_edgemodelr_edge_completion_grammar_internal`, model_ptr, prompt, grammar_str, grammar_root, n_predict, sampling, jump_forward)
+}
+
+edge_completion_batch_internal <- function(model_ptr, prompts, n_predict, sampling, seeds, grammar_str, grammar_root) {
+    .Call(`_edgemodelr_edge_completion_batch_internal`, model_ptr, prompts, n_predict, sampling, seeds, grammar_str, grammar_root)
+}
+
+edge_save_state_internal <- function(model_ptr, path) {
+    .Call(`_edgemodelr_edge_save_state_internal`, model_ptr, path)
+}
+
+edge_load_state_internal <- function(model_ptr, path) {
+    .Call(`_edgemodelr_edge_load_state_internal`, model_ptr, path)
 }
 
 edge_embeddings_internal <- function(model_ptr, texts, normalize = TRUE) {
@@ -43,6 +55,10 @@ edge_embeddings_internal <- function(model_ptr, texts, normalize = TRUE) {
 
 edge_lora_scales_internal <- function(model_ptr, scales = NULL) {
     .Call(`_edgemodelr_edge_lora_scales_internal`, model_ptr, scales)
+}
+
+edge_n_parallel_internal <- function(model_ptr) {
+    .Call(`_edgemodelr_edge_n_parallel_internal`, model_ptr)
 }
 
 edge_model_n_embd_internal <- function(model_ptr) {

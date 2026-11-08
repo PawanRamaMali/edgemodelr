@@ -42,8 +42,8 @@ BEGIN_RCPP
 END_RCPP
 }
 // edge_load_model_internal
-SEXP edge_load_model_internal(std::string model_path, int n_ctx, int n_gpu_layers, int n_threads, bool flash_attn, bool embeddings, bool prompt_cache, std::vector<std::string> lora_paths, std::vector<double> lora_scales);
-RcppExport SEXP _edgemodelr_edge_load_model_internal(SEXP model_pathSEXP, SEXP n_ctxSEXP, SEXP n_gpu_layersSEXP, SEXP n_threadsSEXP, SEXP flash_attnSEXP, SEXP embeddingsSEXP, SEXP prompt_cacheSEXP, SEXP lora_pathsSEXP, SEXP lora_scalesSEXP) {
+SEXP edge_load_model_internal(std::string model_path, int n_ctx, int n_gpu_layers, int n_threads, bool flash_attn, bool embeddings, bool prompt_cache, std::vector<std::string> lora_paths, std::vector<double> lora_scales, int n_parallel);
+RcppExport SEXP _edgemodelr_edge_load_model_internal(SEXP model_pathSEXP, SEXP n_ctxSEXP, SEXP n_gpu_layersSEXP, SEXP n_threadsSEXP, SEXP flash_attnSEXP, SEXP embeddingsSEXP, SEXP prompt_cacheSEXP, SEXP lora_pathsSEXP, SEXP lora_scalesSEXP, SEXP n_parallelSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
@@ -56,23 +56,23 @@ BEGIN_RCPP
     Rcpp::traits::input_parameter< bool >::type prompt_cache(prompt_cacheSEXP);
     Rcpp::traits::input_parameter< std::vector<std::string> >::type lora_paths(lora_pathsSEXP);
     Rcpp::traits::input_parameter< std::vector<double> >::type lora_scales(lora_scalesSEXP);
-    rcpp_result_gen = Rcpp::wrap(edge_load_model_internal(model_path, n_ctx, n_gpu_layers, n_threads, flash_attn, embeddings, prompt_cache, lora_paths, lora_scales));
+    Rcpp::traits::input_parameter< int >::type n_parallel(n_parallelSEXP);
+    rcpp_result_gen = Rcpp::wrap(edge_load_model_internal(model_path, n_ctx, n_gpu_layers, n_threads, flash_attn, embeddings, prompt_cache, lora_paths, lora_scales, n_parallel));
     return rcpp_result_gen;
 END_RCPP
 }
 // edge_completion_internal
-std::string edge_completion_internal(SEXP model_ptr, std::string prompt, int n_predict, double temperature, double top_p, double timeout_seconds);
-RcppExport SEXP _edgemodelr_edge_completion_internal(SEXP model_ptrSEXP, SEXP promptSEXP, SEXP n_predictSEXP, SEXP temperatureSEXP, SEXP top_pSEXP, SEXP timeout_secondsSEXP) {
+std::string edge_completion_internal(SEXP model_ptr, std::string prompt, int n_predict, List sampling, double timeout_seconds);
+RcppExport SEXP _edgemodelr_edge_completion_internal(SEXP model_ptrSEXP, SEXP promptSEXP, SEXP n_predictSEXP, SEXP samplingSEXP, SEXP timeout_secondsSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
     Rcpp::traits::input_parameter< SEXP >::type model_ptr(model_ptrSEXP);
     Rcpp::traits::input_parameter< std::string >::type prompt(promptSEXP);
     Rcpp::traits::input_parameter< int >::type n_predict(n_predictSEXP);
-    Rcpp::traits::input_parameter< double >::type temperature(temperatureSEXP);
-    Rcpp::traits::input_parameter< double >::type top_p(top_pSEXP);
+    Rcpp::traits::input_parameter< List >::type sampling(samplingSEXP);
     Rcpp::traits::input_parameter< double >::type timeout_seconds(timeout_secondsSEXP);
-    rcpp_result_gen = Rcpp::wrap(edge_completion_internal(model_ptr, prompt, n_predict, temperature, top_p, timeout_seconds));
+    rcpp_result_gen = Rcpp::wrap(edge_completion_internal(model_ptr, prompt, n_predict, sampling, timeout_seconds));
     return rcpp_result_gen;
 END_RCPP
 }
@@ -98,8 +98,8 @@ BEGIN_RCPP
 END_RCPP
 }
 // edge_completion_stream_internal
-List edge_completion_stream_internal(SEXP model_ptr, std::string prompt, Function callback, int n_predict, double temperature, double top_p);
-RcppExport SEXP _edgemodelr_edge_completion_stream_internal(SEXP model_ptrSEXP, SEXP promptSEXP, SEXP callbackSEXP, SEXP n_predictSEXP, SEXP temperatureSEXP, SEXP top_pSEXP) {
+List edge_completion_stream_internal(SEXP model_ptr, std::string prompt, Function callback, int n_predict, List sampling);
+RcppExport SEXP _edgemodelr_edge_completion_stream_internal(SEXP model_ptrSEXP, SEXP promptSEXP, SEXP callbackSEXP, SEXP n_predictSEXP, SEXP samplingSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
@@ -107,15 +107,14 @@ BEGIN_RCPP
     Rcpp::traits::input_parameter< std::string >::type prompt(promptSEXP);
     Rcpp::traits::input_parameter< Function >::type callback(callbackSEXP);
     Rcpp::traits::input_parameter< int >::type n_predict(n_predictSEXP);
-    Rcpp::traits::input_parameter< double >::type temperature(temperatureSEXP);
-    Rcpp::traits::input_parameter< double >::type top_p(top_pSEXP);
-    rcpp_result_gen = Rcpp::wrap(edge_completion_stream_internal(model_ptr, prompt, callback, n_predict, temperature, top_p));
+    Rcpp::traits::input_parameter< List >::type sampling(samplingSEXP);
+    rcpp_result_gen = Rcpp::wrap(edge_completion_stream_internal(model_ptr, prompt, callback, n_predict, sampling));
     return rcpp_result_gen;
 END_RCPP
 }
 // edge_completion_grammar_internal
-std::string edge_completion_grammar_internal(SEXP model_ptr, std::string prompt, std::string grammar_str, std::string grammar_root, int n_predict, double temperature, double top_p, bool jump_forward);
-RcppExport SEXP _edgemodelr_edge_completion_grammar_internal(SEXP model_ptrSEXP, SEXP promptSEXP, SEXP grammar_strSEXP, SEXP grammar_rootSEXP, SEXP n_predictSEXP, SEXP temperatureSEXP, SEXP top_pSEXP, SEXP jump_forwardSEXP) {
+std::string edge_completion_grammar_internal(SEXP model_ptr, std::string prompt, std::string grammar_str, std::string grammar_root, int n_predict, List sampling, bool jump_forward);
+RcppExport SEXP _edgemodelr_edge_completion_grammar_internal(SEXP model_ptrSEXP, SEXP promptSEXP, SEXP grammar_strSEXP, SEXP grammar_rootSEXP, SEXP n_predictSEXP, SEXP samplingSEXP, SEXP jump_forwardSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
@@ -124,10 +123,50 @@ BEGIN_RCPP
     Rcpp::traits::input_parameter< std::string >::type grammar_str(grammar_strSEXP);
     Rcpp::traits::input_parameter< std::string >::type grammar_root(grammar_rootSEXP);
     Rcpp::traits::input_parameter< int >::type n_predict(n_predictSEXP);
-    Rcpp::traits::input_parameter< double >::type temperature(temperatureSEXP);
-    Rcpp::traits::input_parameter< double >::type top_p(top_pSEXP);
+    Rcpp::traits::input_parameter< List >::type sampling(samplingSEXP);
     Rcpp::traits::input_parameter< bool >::type jump_forward(jump_forwardSEXP);
-    rcpp_result_gen = Rcpp::wrap(edge_completion_grammar_internal(model_ptr, prompt, grammar_str, grammar_root, n_predict, temperature, top_p, jump_forward));
+    rcpp_result_gen = Rcpp::wrap(edge_completion_grammar_internal(model_ptr, prompt, grammar_str, grammar_root, n_predict, sampling, jump_forward));
+    return rcpp_result_gen;
+END_RCPP
+}
+// edge_completion_batch_internal
+std::vector<std::string> edge_completion_batch_internal(SEXP model_ptr, std::vector<std::string> prompts, int n_predict, List sampling, std::vector<double> seeds, std::string grammar_str, std::string grammar_root);
+RcppExport SEXP _edgemodelr_edge_completion_batch_internal(SEXP model_ptrSEXP, SEXP promptsSEXP, SEXP n_predictSEXP, SEXP samplingSEXP, SEXP seedsSEXP, SEXP grammar_strSEXP, SEXP grammar_rootSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< SEXP >::type model_ptr(model_ptrSEXP);
+    Rcpp::traits::input_parameter< std::vector<std::string> >::type prompts(promptsSEXP);
+    Rcpp::traits::input_parameter< int >::type n_predict(n_predictSEXP);
+    Rcpp::traits::input_parameter< List >::type sampling(samplingSEXP);
+    Rcpp::traits::input_parameter< std::vector<double> >::type seeds(seedsSEXP);
+    Rcpp::traits::input_parameter< std::string >::type grammar_str(grammar_strSEXP);
+    Rcpp::traits::input_parameter< std::string >::type grammar_root(grammar_rootSEXP);
+    rcpp_result_gen = Rcpp::wrap(edge_completion_batch_internal(model_ptr, prompts, n_predict, sampling, seeds, grammar_str, grammar_root));
+    return rcpp_result_gen;
+END_RCPP
+}
+// edge_save_state_internal
+int edge_save_state_internal(SEXP model_ptr, std::string path);
+RcppExport SEXP _edgemodelr_edge_save_state_internal(SEXP model_ptrSEXP, SEXP pathSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< SEXP >::type model_ptr(model_ptrSEXP);
+    Rcpp::traits::input_parameter< std::string >::type path(pathSEXP);
+    rcpp_result_gen = Rcpp::wrap(edge_save_state_internal(model_ptr, path));
+    return rcpp_result_gen;
+END_RCPP
+}
+// edge_load_state_internal
+int edge_load_state_internal(SEXP model_ptr, std::string path);
+RcppExport SEXP _edgemodelr_edge_load_state_internal(SEXP model_ptrSEXP, SEXP pathSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< SEXP >::type model_ptr(model_ptrSEXP);
+    Rcpp::traits::input_parameter< std::string >::type path(pathSEXP);
+    rcpp_result_gen = Rcpp::wrap(edge_load_state_internal(model_ptr, path));
     return rcpp_result_gen;
 END_RCPP
 }
@@ -153,6 +192,17 @@ BEGIN_RCPP
     Rcpp::traits::input_parameter< SEXP >::type model_ptr(model_ptrSEXP);
     Rcpp::traits::input_parameter< Rcpp::Nullable<Rcpp::NumericVector> >::type scales(scalesSEXP);
     rcpp_result_gen = Rcpp::wrap(edge_lora_scales_internal(model_ptr, scales));
+    return rcpp_result_gen;
+END_RCPP
+}
+// edge_n_parallel_internal
+int edge_n_parallel_internal(SEXP model_ptr);
+RcppExport SEXP _edgemodelr_edge_n_parallel_internal(SEXP model_ptrSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< SEXP >::type model_ptr(model_ptrSEXP);
+    rcpp_result_gen = Rcpp::wrap(edge_n_parallel_internal(model_ptr));
     return rcpp_result_gen;
 END_RCPP
 }
@@ -225,14 +275,18 @@ static const R_CallMethodDef CallEntries[] = {
     {"_edgemodelr_edge_use_cuda_backend_internal", (DL_FUNC) &_edgemodelr_edge_use_cuda_backend_internal, 1},
     {"_edgemodelr_edge_cuda_backend_path_internal", (DL_FUNC) &_edgemodelr_edge_cuda_backend_path_internal, 0},
     {"_edgemodelr_edge_cuda_backend_loaded_internal", (DL_FUNC) &_edgemodelr_edge_cuda_backend_loaded_internal, 0},
-    {"_edgemodelr_edge_load_model_internal", (DL_FUNC) &_edgemodelr_edge_load_model_internal, 9},
-    {"_edgemodelr_edge_completion_internal", (DL_FUNC) &_edgemodelr_edge_completion_internal, 6},
+    {"_edgemodelr_edge_load_model_internal", (DL_FUNC) &_edgemodelr_edge_load_model_internal, 10},
+    {"_edgemodelr_edge_completion_internal", (DL_FUNC) &_edgemodelr_edge_completion_internal, 5},
     {"_edgemodelr_edge_free_model_internal", (DL_FUNC) &_edgemodelr_edge_free_model_internal, 1},
     {"_edgemodelr_is_valid_model_internal", (DL_FUNC) &_edgemodelr_is_valid_model_internal, 1},
-    {"_edgemodelr_edge_completion_stream_internal", (DL_FUNC) &_edgemodelr_edge_completion_stream_internal, 6},
-    {"_edgemodelr_edge_completion_grammar_internal", (DL_FUNC) &_edgemodelr_edge_completion_grammar_internal, 8},
+    {"_edgemodelr_edge_completion_stream_internal", (DL_FUNC) &_edgemodelr_edge_completion_stream_internal, 5},
+    {"_edgemodelr_edge_completion_grammar_internal", (DL_FUNC) &_edgemodelr_edge_completion_grammar_internal, 7},
+    {"_edgemodelr_edge_completion_batch_internal", (DL_FUNC) &_edgemodelr_edge_completion_batch_internal, 7},
+    {"_edgemodelr_edge_save_state_internal", (DL_FUNC) &_edgemodelr_edge_save_state_internal, 2},
+    {"_edgemodelr_edge_load_state_internal", (DL_FUNC) &_edgemodelr_edge_load_state_internal, 2},
     {"_edgemodelr_edge_embeddings_internal", (DL_FUNC) &_edgemodelr_edge_embeddings_internal, 3},
     {"_edgemodelr_edge_lora_scales_internal", (DL_FUNC) &_edgemodelr_edge_lora_scales_internal, 2},
+    {"_edgemodelr_edge_n_parallel_internal", (DL_FUNC) &_edgemodelr_edge_n_parallel_internal, 1},
     {"_edgemodelr_edge_model_n_embd_internal", (DL_FUNC) &_edgemodelr_edge_model_n_embd_internal, 1},
     {"_edgemodelr_edge_chat_apply_template_internal", (DL_FUNC) &_edgemodelr_edge_chat_apply_template_internal, 3},
     {"_edgemodelr_edge_model_chat_template_internal", (DL_FUNC) &_edgemodelr_edge_model_chat_template_internal, 1},

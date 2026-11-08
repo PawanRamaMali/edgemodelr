@@ -54,13 +54,13 @@ test_that("a batch of prompts matches the same prompts on fresh contexts", {
   ctx <- edge_load_model(model, n_ctx = 512L)
   on.exit(edge_free_model(ctx), add = TRUE)
   batched <- vapply(qs, function(q) {
-    edge_completion(ctx, q, n_predict = 10L, temperature = 0.8)
+    edge_completion(ctx, q, n_predict = 10L, temperature = 0.8, seed = 1)
   }, character(1), USE.NAMES = FALSE)
 
   isolated <- vapply(qs, function(q) {
     c2 <- edge_load_model(model, n_ctx = 512L)
     on.exit(edge_free_model(c2), add = TRUE)
-    edge_completion(c2, q, n_predict = 10L, temperature = 0.8)
+    edge_completion(c2, q, n_predict = 10L, temperature = 0.8, seed = 1)
   }, character(1), USE.NAMES = FALSE)
 
   expect_identical(batched, isolated)
@@ -79,13 +79,13 @@ test_that("repeating a prompt in a used context gives the same answer", {
   on.exit(edge_free_model(ctx), add = TRUE)
 
   probe <- "The capital of France is"
-  first <- edge_completion(ctx, probe, n_predict = 12L, temperature = 0.8)
+  first <- edge_completion(ctx, probe, n_predict = 12L, temperature = 0.8, seed = 1)
 
   for (p in c("Write one word about oceans:", "Name a colour:", "Say hello:")) {
-    invisible(edge_completion(ctx, p, n_predict = 12L, temperature = 0.8))
+    invisible(edge_completion(ctx, p, n_predict = 12L, temperature = 0.8, seed = 1))
   }
 
-  again <- edge_completion(ctx, probe, n_predict = 12L, temperature = 0.8)
+  again <- edge_completion(ctx, probe, n_predict = 12L, temperature = 0.8, seed = 1)
   expect_identical(first, again)
 })
 
@@ -106,7 +106,7 @@ test_that("many sequential completions do not exhaust the context", {
 
   for (i in 1:12) {
     out <- edge_completion(ctx, paste0("Say the number ", i, ":"),
-                           n_predict = 8L, temperature = 0.8)
+                           n_predict = 8L, temperature = 0.8, seed = 1)
     expect_type(out, "character")
   }
 })
