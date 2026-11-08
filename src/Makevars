@@ -168,7 +168,7 @@ endif
 # The AVX2 kernels of the generic build: compiled without GGML_CPU_GENERIC so
 # that arch/x86/quants.c takes its AVX2 paths (see edgemodelr-avx2.c).
 ggml/ggml-cpu/edgemodelr-avx2.o: ggml/ggml-cpu/edgemodelr-avx2.c
-	$(CC) $(ALL_CPPFLAGS) $(ALL_CFLAGS) $(filter-out -DGGML_CPU_GENERIC,$(GGML_EXTRA_CFLAGS)) $(DISPATCH_EXTRA_CFLAGS) -c $< -o $@
+	$(CC) $(ALL_CPPFLAGS) $(ALL_CFLAGS) $(filter-out -DGGML_CPU_GENERIC,$(GGML_EXTRA_CFLAGS)) -c $< -o $@
 
 ggml/ggml-cpu/quants.o: ggml/ggml-cpu/quants.c
 	$(CC) $(ALL_CPPFLAGS) $(ALL_CFLAGS) $(GENERIC_EXTRA_CFLAGS) -c $< -o $@

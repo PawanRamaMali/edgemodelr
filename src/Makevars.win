@@ -93,8 +93,10 @@ else
   # switches to them at run time on CPUs that have AVX2.
   DISPATCH_OBJECTS = ggml/ggml-cpu/edgemodelr-avx2.o
   GGML_EXTRA_CFLAGS += -DEDGEMODELR_CPU_DISPATCH
-  # Unaligned vector moves for the AVX2 kernels, as for the SIMD builds.
-  DISPATCH_EXTRA_CFLAGS = -Wa,-muse-unaligned-vector-move
+  # Unlike the SIMD builds, this needs no -Wa,-muse-unaligned-vector-move:
+  # the AVX2 kernels never spill a 32-byte register to the stack, the case
+  # Windows GCC gets wrong (checked with objdump, GCC 14), and R CMD check
+  # flags that option as non-portable.
 endif
 
 # 64-bit Windows GCC cannot keep the stack 32-byte aligned for AVX, so an
@@ -151,7 +153,7 @@ endif
 # The AVX2 kernels of the generic build: compiled without GGML_CPU_GENERIC so
 # that arch/x86/quants.c takes its AVX2 paths (see edgemodelr-avx2.c).
 ggml/ggml-cpu/edgemodelr-avx2.o: ggml/ggml-cpu/edgemodelr-avx2.c
-	$(CC) $(ALL_CPPFLAGS) $(ALL_CFLAGS) $(filter-out -DGGML_CPU_GENERIC,$(GGML_EXTRA_CFLAGS)) $(DISPATCH_EXTRA_CFLAGS) -c $< -o $@
+	$(CC) $(ALL_CPPFLAGS) $(ALL_CFLAGS) $(filter-out -DGGML_CPU_GENERIC,$(GGML_EXTRA_CFLAGS)) -c $< -o $@
 
 ggml/ggml-cpu/quants.o: ggml/ggml-cpu/quants.c
 	$(CC) $(ALL_CPPFLAGS) $(ALL_CFLAGS) $(GENERIC_EXTRA_CFLAGS) -c $< -o $@
