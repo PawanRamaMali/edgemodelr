@@ -237,7 +237,16 @@ typedef pthread_t ggml_thread_t;
 #include <TargetConditionals.h>
 #endif
 
-static const struct ggml_type_traits_cpu type_traits_cpu[GGML_TYPE_COUNT] = {
+// edgemodelr: the table is writable when the portable build can switch to
+// the AVX2 kernels at run time (edgemodelr-avx2.c).
+#include "edgemodelr-dispatch.h"
+#if EDGEMODELR_AVX2_DISPATCH
+#define EDGE_TRAITS_CONST
+#else
+#define EDGE_TRAITS_CONST const
+#endif
+
+static EDGE_TRAITS_CONST struct ggml_type_traits_cpu type_traits_cpu[GGML_TYPE_COUNT] = {
     [GGML_TYPE_F32] = {
         .from_float               = (ggml_from_float_t) ggml_cpu_fp32_to_fp32,
         .vec_dot                  = (ggml_vec_dot_t) ggml_vec_dot_f32,
@@ -3900,6 +3909,40 @@ int ggml_cpu_has_sme2(void) {
 #endif
 }
 
+#if EDGEMODELR_AVX2_DISPATCH
+#define EDGE_DECLARE_VEC_DOT(name)     void name##_avx2(int, float * GGML_RESTRICT, size_t, const void * GGML_RESTRICT,                      size_t, const void * GGML_RESTRICT, size_t, int);
+#define EDGE_DECLARE_QUANTIZER(name)     void name##_avx2(const float * GGML_RESTRICT, void * GGML_RESTRICT, int64_t);
+EDGE_AVX2_VEC_DOTS(EDGE_DECLARE_VEC_DOT)
+EDGE_AVX2_QUANTIZERS(EDGE_DECLARE_QUANTIZER)
+
+static int edgemodelr_avx2_selected = 0;
+
+// Switches every kernel in the traits table that has an AVX2 build, when the
+// CPU and OS support AVX2, FMA, F16C and BMI2. EDGEMODELR_KERNELS=generic in
+// the environment keeps the generic kernels.
+static void edgemodelr_select_kernels(void) {
+    const char * env = getenv("EDGEMODELR_KERNELS");
+    if (env != NULL && strcmp(env, "generic") == 0) {
+        return;
+    }
+    __builtin_cpu_init();
+    if (!(__builtin_cpu_supports("avx2") && __builtin_cpu_supports("fma") &&
+          __builtin_cpu_supports("f16c") && __builtin_cpu_supports("bmi2"))) {
+        return;
+    }
+    for (int t = 0; t < GGML_TYPE_COUNT; ++t) {
+        struct ggml_type_traits_cpu * tr = &type_traits_cpu[t];
+#define EDGE_SWAP_VEC_DOT(name)         if (tr->vec_dot == name) tr->vec_dot = name##_avx2;
+#define EDGE_SWAP_QUANTIZER(name)         if (tr->from_float == (ggml_from_float_t) name) tr->from_float = (ggml_from_float_t) name##_avx2;
+        EDGE_AVX2_VEC_DOTS(EDGE_SWAP_VEC_DOT)
+        EDGE_AVX2_QUANTIZERS(EDGE_SWAP_QUANTIZER)
+#undef EDGE_SWAP_VEC_DOT
+#undef EDGE_SWAP_QUANTIZER
+    }
+    edgemodelr_avx2_selected = 1;
+}
+#endif
+
 void ggml_cpu_init(void) {
     // needed to initialize ggml_time
     {
@@ -3973,8 +4016,21 @@ void ggml_cpu_init(void) {
             ggml_cpu_disable_fusion = (env != NULL && atoi(env) == 1);
         }
 
+#if EDGEMODELR_AVX2_DISPATCH
+        edgemodelr_select_kernels();
+#endif
+
         is_first_call = false;
     }
 
     ggml_critical_section_end();
+}
+
+// edgemodelr: 1 when the AVX2 kernels are in use, 0 for the generic ones.
+int edgemodelr_cpu_avx2_kernels(void) {
+#if EDGEMODELR_AVX2_DISPATCH
+    return edgemodelr_avx2_selected;
+#else
+    return 0;
+#endif
 }

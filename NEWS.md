@@ -27,6 +27,15 @@
 
 ## Changes
 
+* The default build is faster on x86-64 CPUs with AVX2: it now also carries
+  the AVX2 versions of the quantized dot-product kernels and switches to
+  them at run time, so no `EDGEMODELR_SIMD` reinstall is needed. TinyLlama
+  generates about 2.7 times faster on a Windows laptop. CPUs without AVX2
+  keep the generic kernels, and `EDGEMODELR_KERNELS=generic` in the
+  environment keeps them too. `edge_simd_info()$kernels` reports which are
+  in use. For now this covers GCC builds (Linux and Windows); clang builds,
+  such as macOS on Intel, keep the generic kernels.
+
 * Sampled text (temperature above 0) is no longer the same on every call.
   The seed used to be fixed; it is now drawn from R's random number
   generator, so `set.seed()` makes results reproducible, or pass `seed`.

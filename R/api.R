@@ -2297,15 +2297,18 @@ edge_benchmark <- function(ctx, prompt = "The quick brown fox", n_predict = 50, 
 #'   \item{compiler_features}{Character vector of compiler-detected SIMD features}
 #'   \item{ggml_features}{Character vector of GGML-level optimization flags}
 #'   \item{is_generic}{Logical; TRUE if compiled with generic (scalar) fallback}
+#'   \item{kernels}{The quantized kernels in use: "avx2" when a generic
+#'     build found AVX2 on this CPU and switched to its AVX2 kernels,
+#'     "generic", or "native" for a build made with \code{EDGEMODELR_SIMD}.
+#'     Set the environment variable \code{EDGEMODELR_KERNELS=generic}
+#'     before loading the package to keep the generic kernels.}
 #' }
 #'
 #' @examples
 #' info <- edge_simd_info()
 #' cat("Architecture:", info$architecture, "\n")
 #' cat("SIMD features:", paste(info$compiler_features, collapse = ", "), "\n")
-#' if (info$is_generic) {
-#'   cat("Running in generic mode. Reinstall with EDGEMODELR_SIMD=AVX2 for better performance.\n")
-#' }
+#' cat("Kernels:", info$kernels, "\n")
 #' @export
 edge_simd_info <- function() {
   edge_simd_info_internal()

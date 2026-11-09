@@ -5,6 +5,11 @@
 // This file MUST be compiled with GGML_CXXFLAGS (not standard R CXXFLAGS)
 // to correctly detect SIMD features enabled for the GGML engine.
 
+extern "C" {
+void ggml_cpu_init(void);
+int edgemodelr_cpu_avx2_kernels(void);
+}
+
 // [[Rcpp::export]]
 Rcpp::List edge_simd_info_internal() {
   std::vector<std::string> features;
@@ -77,6 +82,11 @@ Rcpp::List edge_simd_info_internal() {
   is_generic = true;
 #endif
 
+  // The kernels chosen at run time: a generic build switches to its AVX2
+  // kernels when the CPU has AVX2.
+  ggml_cpu_init();
+  std::string kernels = edgemodelr_cpu_avx2_kernels() ? "avx2" : (is_generic ? "generic" : "native");
+
   std::vector<std::string> ggml_features;
 #ifdef GGML_SSE42
   ggml_features.push_back("GGML_SSE42");
@@ -104,6 +114,7 @@ Rcpp::List edge_simd_info_internal() {
     Rcpp::Named("architecture") = arch,
     Rcpp::Named("compiler_features") = features,
     Rcpp::Named("ggml_features") = ggml_features,
-    Rcpp::Named("is_generic") = is_generic
+    Rcpp::Named("is_generic") = is_generic,
+    Rcpp::Named("kernels") = kernels
   );
 }
