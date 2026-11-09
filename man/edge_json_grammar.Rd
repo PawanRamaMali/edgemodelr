@@ -11,7 +11,8 @@ edge_json_grammar(schema, compact = FALSE)
     \item \code{"number"} - a numeric value (integer or decimal)
     \item \code{"integer"} - an integer value
     \item \code{"boolean"} - true or false
-    \item A character vector - enum of allowed values
+    \item A character vector - enum of allowed values, or \code{I("x")}
+      for a single allowed value
   }}
 
 \item{compact}{If TRUE, the layout is fixed to \code{{"key": value, "key": value}},

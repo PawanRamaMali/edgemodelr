@@ -25,7 +25,28 @@
   file and load it back, so a long system prompt or document is processed
   once instead of in every session.
 
+* `edge_serve()` is closer to the OpenAI API. `usage` counts tokens with
+  the model's tokenizer, `finish_reason` is "length" when `max_tokens` ran
+  out, `stream = true` sends OpenAI chunks as server-sent events (all at the
+  end of generation, since plumber cannot send a response in parts), and
+  chat requests take `tools`, `tool_choice` and `response_format` with a
+  JSON schema. Tool calls come back in `message$tool_calls`. The official
+  OpenAI Python client works with it.
+
+* New `chat_edge()` returns an ellmer chat backed by a local GGUF model,
+  served by `edge_serve()` in a background R process. Chat, streaming,
+  tool calling and `chat_structured()` work.
+
+* New `edge_tokenize()` returns a text's tokens with the model's tokenizer.
+
 ## Changes
+
+* `edge_stream_completion()` no longer splits a character across two
+  callback calls when it spans several tokens, as emojis often do, so every
+  streamed piece is valid UTF-8.
+
+* `edge_tool()` and `edge_json_grammar()` take `I("x")` for a field with a
+  single allowed value, which would otherwise read as a type name.
 
 * The default build is faster on x86-64 CPUs with AVX2: it now also carries
   the AVX2 versions of the quantized dot-product kernels and switches to

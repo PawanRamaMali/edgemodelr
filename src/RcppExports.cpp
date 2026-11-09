@@ -217,6 +217,19 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
+// edge_tokenize_internal
+IntegerVector edge_tokenize_internal(SEXP model_ptr, std::string text, bool add_special);
+RcppExport SEXP _edgemodelr_edge_tokenize_internal(SEXP model_ptrSEXP, SEXP textSEXP, SEXP add_specialSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< SEXP >::type model_ptr(model_ptrSEXP);
+    Rcpp::traits::input_parameter< std::string >::type text(textSEXP);
+    Rcpp::traits::input_parameter< bool >::type add_special(add_specialSEXP);
+    rcpp_result_gen = Rcpp::wrap(edge_tokenize_internal(model_ptr, text, add_special));
+    return rcpp_result_gen;
+END_RCPP
+}
 // edge_chat_apply_template_internal
 std::string edge_chat_apply_template_internal(SEXP model_ptr, List messages, bool add_generation_prompt);
 RcppExport SEXP _edgemodelr_edge_chat_apply_template_internal(SEXP model_ptrSEXP, SEXP messagesSEXP, SEXP add_generation_promptSEXP) {
@@ -288,6 +301,7 @@ static const R_CallMethodDef CallEntries[] = {
     {"_edgemodelr_edge_lora_scales_internal", (DL_FUNC) &_edgemodelr_edge_lora_scales_internal, 2},
     {"_edgemodelr_edge_n_parallel_internal", (DL_FUNC) &_edgemodelr_edge_n_parallel_internal, 1},
     {"_edgemodelr_edge_model_n_embd_internal", (DL_FUNC) &_edgemodelr_edge_model_n_embd_internal, 1},
+    {"_edgemodelr_edge_tokenize_internal", (DL_FUNC) &_edgemodelr_edge_tokenize_internal, 3},
     {"_edgemodelr_edge_chat_apply_template_internal", (DL_FUNC) &_edgemodelr_edge_chat_apply_template_internal, 3},
     {"_edgemodelr_edge_model_chat_template_internal", (DL_FUNC) &_edgemodelr_edge_model_chat_template_internal, 1},
     {"_edgemodelr_set_llama_logging", (DL_FUNC) &_edgemodelr_set_llama_logging, 1},

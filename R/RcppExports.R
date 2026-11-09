@@ -65,6 +65,10 @@ edge_model_n_embd_internal <- function(model_ptr) {
     .Call(`_edgemodelr_edge_model_n_embd_internal`, model_ptr)
 }
 
+edge_tokenize_internal <- function(model_ptr, text, add_special = TRUE) {
+    .Call(`_edgemodelr_edge_tokenize_internal`, model_ptr, text, add_special)
+}
+
 edge_chat_apply_template_internal <- function(model_ptr, messages, add_generation_prompt = TRUE) {
     .Call(`_edgemodelr_edge_chat_apply_template_internal`, model_ptr, messages, add_generation_prompt)
 }

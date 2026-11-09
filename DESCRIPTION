@@ -40,7 +40,10 @@ Suggests:
     httr,
     plumber,
     DBI,
-    RSQLite
+    RSQLite,
+    callr,
+    ellmer,
+    httpuv
 SystemRequirements: GNU make or equivalent for building
 Note: Package includes a self-contained 'llama.cpp' implementation
   for complete functionality without external dependencies.

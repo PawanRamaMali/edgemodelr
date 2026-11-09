@@ -15,8 +15,9 @@ it to decide when to call the tool.}
 
 \item{parameters}{A named list of arguments, in the format of
 \code{\link{edge_json_grammar}}: "string", "number", "integer",
-"boolean" or a character vector of allowed values. An argument can also
-be \code{list(type = ..., description = ...)} to tell the model what it
+"boolean" or a character vector of allowed values (use \code{I("x")}
+for a single allowed value). An argument can also be
+\code{list(type = ..., description = ...)} to tell the model what it
 means. Every argument is required. Default: no arguments.}
 }
 \value{
