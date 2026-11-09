@@ -1548,6 +1548,24 @@ int edge_model_n_embd_internal(SEXP model_ptr) {
   }
 }
 
+// Tokens of text with the model's tokenizer, parsing special tokens the way
+// the completion functions do.
+// [[Rcpp::export]]
+IntegerVector edge_tokenize_internal(SEXP model_ptr, std::string text, bool add_special = true) {
+  if (TYPEOF(model_ptr) != EXTPTRSXP) stop("Invalid model context");
+  XPtr<EdgeModelContext> edge_ctx(model_ptr);
+  if (!edge_ctx->is_valid() || edge_ctx->model == nullptr) stop("Invalid model context");
+  const struct llama_vocab* vocab = llama_model_get_vocab(edge_ctx->model);
+  if (!vocab) stop("Failed to get vocabulary from model");
+  const int n = -llama_tokenize(vocab, text.c_str(), (int32_t)text.size(), NULL, 0, add_special, true);
+  if (n <= 0) return IntegerVector(0);
+  std::vector<llama_token> tokens(n);
+  if (llama_tokenize(vocab, text.c_str(), (int32_t)text.size(), tokens.data(), n, add_special, true) < 0) {
+    stop("Failed to tokenize text");
+  }
+  return IntegerVector(tokens.begin(), tokens.end());
+}
+
 // [[Rcpp::export]]
 std::string edge_chat_apply_template_internal(SEXP model_ptr, List messages, bool add_generation_prompt = true) {
   try {

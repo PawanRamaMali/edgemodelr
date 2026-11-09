@@ -3491,6 +3491,38 @@ edge_model_n_embd <- function(ctx) {
   edge_model_n_embd_internal(ctx)
 }
 
+#' Tokenize text with a model's tokenizer
+#'
+#' Splits text into the model's tokens, the same way the completion
+#' functions read a prompt, so \code{length(edge_tokenize(ctx, prompt))} is
+#' the number of tokens the prompt takes in the context.
+#'
+#' @param ctx Model context from \code{\link{edge_load_model}}
+#' @param text A single character string
+#' @param add_special Add the model's start-of-text token, as the completion
+#'   functions do (default: TRUE)
+#' @return An integer vector of token ids
+#'
+#' @examples
+#' \dontrun{
+#' ctx <- edge_load_model("model.gguf")
+#' length(edge_tokenize(ctx, "The quick brown fox"))
+#' edge_free_model(ctx)
+#' }
+#' @export
+edge_tokenize <- function(ctx, text, add_special = TRUE) {
+  if (!is_valid_model(ctx)) {
+    stop("Invalid model context. Load a model first with edge_load_model()")
+  }
+  if (!is.character(text) || length(text) != 1L || is.na(text)) {
+    stop("text must be a single character string")
+  }
+  if (!is.logical(add_special) || length(add_special) != 1L || is.na(add_special)) {
+    stop("add_special must be TRUE or FALSE")
+  }
+  edge_tokenize_internal(ctx, text, add_special)
+}
+
 #' Compute a similarity matrix for a set of embeddings
 #'
 #' @param embeddings A numeric matrix where each row is an embedding vector
@@ -4638,22 +4670,346 @@ print.edge_index <- function(x, ...) {
 # Plumber API Wrapper (Model-as-a-Service)
 # ============================================================================
 
-# plumber parses a JSON array of messages into a data.frame; turn it back
-# into a list of turns, each a list with role and content.
-.as_chat_turns <- function(messages) {
-  if (is.data.frame(messages)) {
-    messages <- lapply(seq_len(nrow(messages)), function(i) {
-      as.list(messages[i, , drop = FALSE])
-    })
+# An error that edge_serve() answers with status 400 instead of 500.
+.bad_request <- function(...) {
+  stop(structure(class = c("edge_bad_request", "error", "condition"),
+                 list(message = paste0(...), call = NULL)))
+}
+
+# The request body as plain lists. plumber's own parsing turns arrays of
+# objects into data.frames, which loses nested fields such as tool_calls.
+.oa_body <- function(req) {
+  raw <- req$postBody
+  if (is.null(raw) || !nzchar(raw)) return(list())
+  body <- tryCatch(jsonlite::fromJSON(raw, simplifyVector = FALSE),
+                   error = function(e) .bad_request("The request body is not valid JSON"))
+  if (!is.list(body)) .bad_request("The request body must be a JSON object")
+  body
+}
+
+# Message content: a string, null, or a list of parts of which the text
+# parts are used.
+.oa_text <- function(content) {
+  if (is.null(content)) return("")
+  if (is.character(content)) return(paste(content, collapse = ""))
+  if (is.list(content)) {
+    parts <- vapply(content, function(p) {
+      if (is.character(p)) {
+        paste(p, collapse = "")
+      } else if (is.list(p) && identical(p$type, "text") && is.character(p$text)) {
+        p$text
+      } else {
+        ""
+      }
+    }, character(1))
+    return(paste(parts, collapse = ""))
   }
-  messages
+  as.character(content)
+}
+
+# A call as the model writes it in edge_chat_completion(), so a call sent
+# back in the conversation looks the same as one the model made.
+.oa_call_text <- function(name, args) {
+  vals <- vapply(args, function(v) {
+    as.character(jsonlite::toJSON(v, auto_unbox = TRUE))
+  }, character(1))
+  inner <- if (length(args)) paste0('"', names(args), '": ', vals, collapse = ", ") else ""
+  paste0('{"tool": "', name, '", "arguments": {', inner, "}}")
+}
+
+# OpenAI chat messages to edge_chat_completion() messages. Assistant tool
+# calls become the call text, and tool results get the tool's name from the
+# call they answer.
+.oa_messages <- function(messages) {
+  if (!is.list(messages) || length(messages) == 0L) .bad_request("messages is required")
+  call_names <- character()
+  lapply(messages, function(m) {
+    if (!is.list(m) || !is.character(m$role)) {
+      .bad_request("each message must be an object with a role")
+    }
+    role <- if (identical(m$role, "developer")) "system" else m$role
+    if (identical(role, "assistant") && length(m$tool_calls) > 0L) {
+      call <- m$tool_calls[[1]]
+      fn <- call[["function"]]
+      args <- if (is.character(fn$arguments)) {
+        tryCatch(jsonlite::fromJSON(fn$arguments, simplifyVector = FALSE),
+                 error = function(e) .bad_request("tool call arguments are not valid JSON"))
+      } else {
+        fn$arguments
+      }
+      if (!is.null(call$id)) call_names[[call$id]] <<- fn$name
+      return(list(role = "assistant", content = .oa_call_text(fn$name, args)))
+    }
+    if (identical(role, "tool")) {
+      id <- m$tool_call_id
+      name <- m$name %||% (if (!is.null(id) && id %in% names(call_names)) call_names[[id]])
+      return(list(role = "tool", name = name, content = .oa_text(m$content)))
+    }
+    list(role = role, content = .oa_text(m$content))
+  })
+}
+
+# The properties of a flat JSON schema object as edge_tool() and
+# edge_json_grammar() fields: strings, numbers, integers, booleans or enums
+# of strings. With descriptions, a field is list(type, description).
+.oa_schema_fields <- function(schema, what, descriptions = TRUE) {
+  props <- schema$properties %||% list()
+  fields <- lapply(names(props), function(arg) {
+    p <- props[[arg]]
+    type <- p$type
+    if (is.list(type) || length(type) > 1L) {
+      type <- setdiff(unlist(type), "null")[1]
+    }
+    spec <- if (!is.null(p$enum)) {
+      as.character(unlist(p$enum))
+    } else if (is.character(type) && type %in% c("string", "number", "integer", "boolean")) {
+      type
+    } else {
+      .bad_request("field '", arg, "' of ", what, " has an unsupported type; ",
+                   "use string, number, integer, boolean or an enum")
+    }
+    if (!descriptions || is.null(p$description)) spec else list(type = spec, description = p$description)
+  })
+  names(fields) <- names(props)
+  fields
+}
+
+# OpenAI function tools to edge_tool() objects. Every argument is required.
+.oa_tools <- function(tools) {
+  if (is.null(tools) || length(tools) == 0L) return(NULL)
+  lapply(tools, function(t) {
+    fn <- t[["function"]]
+    if (!identical(t$type %||% "function", "function") || !is.list(fn) || is.null(fn$name)) {
+      .bad_request("only tools of type \"function\" with a name are supported")
+    }
+    params <- .oa_schema_fields(fn$parameters, paste0("tool '", fn$name, "'"))
+    tryCatch(edge_tool(fn$name, fn$description %||% "", params),
+             error = function(e) .bad_request(conditionMessage(e)))
+  })
+}
+
+# The grammar for response_format = json_schema, or NULL for plain text.
+# The schema must be a flat object; json_object without a schema is not
+# supported, since the reply could not be constrained.
+.oa_response_grammar <- function(response_format) {
+  type <- response_format$type %||% "text"
+  if (identical(type, "text")) return(NULL)
+  if (!identical(type, "json_schema")) {
+    .bad_request("response_format must be \"text\" or \"json_schema\"")
+  }
+  schema <- response_format$json_schema$schema
+  if (!is.list(schema) || !identical(schema$type, "object") || length(schema$properties) == 0L) {
+    .bad_request("response_format json_schema must describe an object with properties")
+  }
+  edge_json_grammar(.oa_schema_fields(schema, "response_format", descriptions = FALSE))
+}
+
+.oa_tool_choice <- function(tool_choice) {
+  if (is.null(tool_choice)) return("auto")
+  if (is.character(tool_choice)) return(tool_choice)
+  name <- tool_choice[["function"]]$name
+  if (is.null(name)) .bad_request("tool_choice must be a string or name a function")
+  name
+}
+
+.oa_id <- function(prefix) {
+  paste0(prefix, paste(sample(c(letters, 0:9), 24L, replace = TRUE), collapse = ""))
+}
+
+# Serializes like the API's JSON serializer: no boxing, NULL and NA as null.
+.oa_json <- function(x) {
+  as.character(jsonlite::toJSON(x, auto_unbox = TRUE, null = "null", na = "null",
+                                digits = NA))
+}
+
+.oa_empty_object <- function() structure(list(), names = character())
+
+# A whole response as server-sent events. The tokens are produced one by one
+# but sent together when generation ends, since plumber cannot write a
+# response in parts.
+.oa_sse <- function(chunks) {
+  paste0(paste0("data: ", vapply(chunks, .oa_json, character(1)), "\n\n", collapse = ""),
+         "data: [DONE]\n\n")
+}
+
+.oa_sse_response <- function(res, chunks) {
+  res$status <- 200L
+  res$setHeader("Content-Type", "text/event-stream")
+  res$setHeader("Cache-Control", "no-cache")
+  res$body <- .oa_sse(chunks)
+  res
+}
+
+.oa_sampling <- function(body) {
+  stop <- unlist(body$stop)
+  tryCatch(
+    .sampling_options(as.numeric(body$temperature %||% 0.7),
+                      as.numeric(body$top_p %||% 0.95),
+                      as.integer(body$top_k %||% 0L),
+                      as.numeric(body$min_p %||% 0),
+                      as.numeric(body$repeat_penalty %||% 1),
+                      body$seed, stop),
+    error = function(e) .bad_request(conditionMessage(e)))
+}
+
+.oa_max_tokens <- function(body, default) {
+  n <- body$max_completion_tokens %||% body$max_tokens %||% default
+  n <- suppressWarnings(as.integer(n))
+  if (length(n) != 1L || is.na(n) || n < 1L) .bad_request("max_tokens must be a positive integer")
+  min(n, 4096L)
+}
+
+# Generates text token by token, so the pieces can be streamed and the
+# completion tokens counted.
+.oa_generate <- function(ctx, prompt, n_predict, sampling) {
+  out <- edge_completion_stream_internal(ctx, prompt, function(data) TRUE,
+                                         as.integer(n_predict), sampling)
+  pieces <- as.character(out$tokens_generated)
+  n <- as.integer(out$total_tokens)
+  list(text = out$full_response, pieces = pieces[nzchar(pieces)],
+       completion_tokens = n,
+       finish_reason = if (n >= n_predict) "length" else "stop")
+}
+
+.oa_usage <- function(prompt_tokens, completion_tokens) {
+  list(prompt_tokens = prompt_tokens, completion_tokens = completion_tokens,
+       total_tokens = prompt_tokens + completion_tokens)
+}
+
+# POST /v1/chat/completions without the HTTP layer. Returns the response
+# object and, for stream = true, the chunks to send instead.
+.oa_chat <- function(ctx, body, model_name) {
+  messages <- .oa_messages(body$messages)
+  tools <- .oa_tools(body$tools)
+  tool_choice <- .oa_tool_choice(body$tool_choice)
+  n_predict <- .oa_max_tokens(body, 256L)
+  sampling <- .oa_sampling(body)
+  id <- .oa_id("chatcmpl-")
+  created <- as.integer(Sys.time())
+  tool_calls <- list()
+
+  grammar <- .oa_response_grammar(body$response_format)
+  if (!is.null(grammar) && !is.null(tools) && !identical(tool_choice, "none")) {
+    .bad_request("response_format json_schema cannot be combined with tools")
+  }
+
+  if (!is.null(grammar)) {
+    prompt <- build_chat_prompt(.messages_with_tools(messages, NULL, NULL), ctx = ctx)
+    content <- edge_completion_grammar_internal(ctx, prompt, grammar, "root",
+                                                as.integer(n_predict), sampling, TRUE)
+    pieces <- if (nzchar(content)) content else character()
+    completion_tokens <- length(edge_tokenize_internal(ctx, content, FALSE))
+    finish <- if (completion_tokens >= n_predict) "length" else "stop"
+  } else if (is.null(tools) || identical(tool_choice, "none")) {
+    prompt <- build_chat_prompt(.messages_with_tools(messages, NULL, NULL), ctx = ctx)
+    gen <- .oa_generate(ctx, prompt, n_predict, sampling)
+    content <- gen$text
+    pieces <- gen$pieces
+    completion_tokens <- gen$completion_tokens
+    finish <- gen$finish_reason
+  } else {
+    forced <- tryCatch(.check_tool_choice(tool_choice, .check_tools(tools)),
+                       error = function(e) .bad_request(conditionMessage(e)))
+    prompt <- build_chat_prompt(.messages_with_tools(messages, .check_tools(tools), forced),
+                                ctx = ctx)
+    reply <- edge_chat_completion(ctx, messages, n_predict = n_predict,
+                                  temperature = sampling$temperature, top_p = sampling$top_p,
+                                  top_k = sampling$top_k, min_p = sampling$min_p,
+                                  repeat_penalty = sampling$repeat_penalty,
+                                  seed = sampling$seed, stop = sampling$stop,
+                                  tools = tools, tool_choice = tool_choice)
+    completion_tokens <- length(edge_tokenize_internal(ctx, reply$message$content, FALSE))
+    if (length(reply$tool_calls) > 0L) {
+      call <- reply$tool_calls[[1]]
+      args <- if (length(call$arguments)) call$arguments else .oa_empty_object()
+      tool_calls <- list(list(id = .oa_id("call_"), type = "function",
+                              `function` = list(name = call$name,
+                                                arguments = .oa_json(args))))
+      content <- NULL
+      pieces <- character()
+      finish <- "tool_calls"
+    } else {
+      content <- reply$content
+      pieces <- if (nzchar(content)) content else character()
+      finish <- if (completion_tokens >= n_predict) "length" else "stop"
+    }
+  }
+  usage <- .oa_usage(length(edge_tokenize_internal(ctx, prompt, TRUE)), completion_tokens)
+
+  message <- list(role = "assistant", content = content)
+  if (length(tool_calls)) message$tool_calls <- tool_calls
+  response <- list(id = id, object = "chat.completion", created = created,
+                   model = model_name,
+                   choices = list(list(index = 0L, message = message,
+                                       finish_reason = finish)),
+                   usage = usage)
+  if (!isTRUE(body$stream)) return(list(response = response))
+
+  chunk <- function(delta, finish_reason = NA) {
+    list(id = id, object = "chat.completion.chunk", created = created, model = model_name,
+         choices = list(list(index = 0L, delta = delta, finish_reason = finish_reason)))
+  }
+  chunks <- c(list(chunk(list(role = "assistant", content = ""))),
+              lapply(pieces, function(p) chunk(list(content = p))))
+  if (length(tool_calls)) {
+    tc <- tool_calls[[1]]
+    chunks <- c(chunks, list(chunk(list(tool_calls = list(c(list(index = 0L), tc))))))
+  }
+  chunks <- c(chunks, list(chunk(.oa_empty_object(), finish)))
+  if (isTRUE(body$stream_options$include_usage)) {
+    chunks <- c(chunks, list(list(id = id, object = "chat.completion.chunk",
+                                  created = created, model = model_name,
+                                  choices = list(), usage = usage)))
+  }
+  list(response = response, chunks = chunks)
+}
+
+# POST /v1/completions without the HTTP layer.
+.oa_completion <- function(ctx, body, model_name) {
+  prompt <- .oa_text(body$prompt)
+  n_predict <- .oa_max_tokens(body, 128L)
+  gen <- .oa_generate(ctx, prompt, n_predict, .oa_sampling(body))
+  id <- .oa_id("cmpl-")
+  created <- as.integer(Sys.time())
+  usage <- .oa_usage(length(edge_tokenize_internal(ctx, prompt, TRUE)), gen$completion_tokens)
+  response <- list(id = id, object = "text_completion", created = created, model = model_name,
+                   choices = list(list(text = gen$text, index = 0L,
+                                       finish_reason = gen$finish_reason)),
+                   usage = usage)
+  if (!isTRUE(body$stream)) return(list(response = response))
+  chunk <- function(text, finish_reason = NA) {
+    list(id = id, object = "text_completion", created = created, model = model_name,
+         choices = list(list(text = text, index = 0L, finish_reason = finish_reason)))
+  }
+  chunks <- c(lapply(gen$pieces, chunk), list(chunk("", gen$finish_reason)))
+  if (isTRUE(body$stream_options$include_usage)) {
+    chunks <- c(chunks, list(list(id = id, object = "text_completion", created = created,
+                                  model = model_name, choices = list(), usage = usage)))
+  }
+  list(response = response, chunks = chunks)
+}
+
+# Runs one endpoint: 400 for a bad request, 500 for anything else.
+.oa_handle <- function(res, fun) {
+  out <- tryCatch(fun(), edge_bad_request = function(e) {
+    res$status <- 400L
+    list(response = list(error = list(message = conditionMessage(e),
+                                      type = "invalid_request_error")))
+  }, error = function(e) {
+    res$status <- 500L
+    list(response = list(error = list(message = conditionMessage(e), type = "server_error")))
+  })
+  if (!is.null(out$chunks)) return(.oa_sse_response(res, out$chunks))
+  out$response
 }
 
 #' Serve a model as a local OpenAI-compatible API
 #'
 #' Starts a local Plumber API server that exposes the loaded model through
 #' endpoints compatible with the OpenAI API format. This allows other
-#' applications (Python, JavaScript, curl) to use the model over HTTP.
+#' applications (Python, JavaScript, curl) and OpenAI client libraries to
+#' use the model over HTTP. \code{\link{chat_edge}} uses it to connect the
+#' model to ellmer.
 #'
 #' @param model_path Path to a .gguf model file
 #' @param host Host to bind to (default: "127.0.0.1" for local only)
@@ -4674,8 +5030,33 @@ print.edge_index <- function(x, ...) {
 #'   \item \code{GET /health}: Health check
 #' }
 #'
-#' The server runs in the foreground. Press Ctrl+C / Esc to stop.
+#' Requests take \code{max_tokens} (or \code{max_completion_tokens}),
+#' \code{temperature}, \code{top_p}, \code{seed} and \code{stop}, and also
+#' \code{top_k}, \code{min_p} and \code{repeat_penalty}. \code{usage} counts
+#' tokens with the model's tokenizer.
 #'
+#' Chat requests can pass \code{tools} and \code{tool_choice} in the OpenAI
+#' format. Tool arguments may be strings, numbers, integers, booleans or
+#' enums, and every argument is treated as required. A call comes back in
+#' \code{message$tool_calls} with \code{finish_reason = "tool_calls"}; send
+#' the result back as a message with \code{role = "tool"} and the call's
+#' \code{tool_call_id}. The model makes at most one call per reply. See
+#' \code{\link{edge_chat_completion}} for how calls are generated.
+#'
+#' \code{response_format} may be \code{{"type": "json_schema"}} with a
+#' flat object schema of the same argument types; the reply is then
+#' constrained to JSON of that shape by a grammar.
+#'
+#' With \code{stream = true} the response is sent as server-sent events in
+#' the OpenAI chunk format, ending with \code{data: [DONE]}, and
+#' \code{stream_options = {"include_usage": true}} adds a usage chunk. The
+#' chunks are produced token by token but sent together when generation
+#' ends, so clients get the format but not the text as it is written.
+#'
+#' The server handles one request at a time and runs in the foreground.
+#' Press Ctrl+C / Esc to stop.
+#'
+#' @return Does not return while the server runs.
 #' @examples
 #' \dontrun{
 #' # Serve a model locally
@@ -4686,6 +5067,7 @@ print.edge_index <- function(x, ...) {
 #' #   -H "Content-Type: application/json" \
 #' #   -d '{"messages": [{"role": "user", "content": "Hello!"}]}'
 #' }
+#' @seealso \code{\link{chat_edge}}
 #' @export
 edge_serve <- function(model_path, host = "127.0.0.1", port = 8080L,
                         n_ctx = 2048L, n_gpu_layers = 0L, embeddings = FALSE,
@@ -4694,6 +5076,10 @@ edge_serve <- function(model_path, host = "127.0.0.1", port = 8080L,
   if (!requireNamespace("plumber", quietly = TRUE)) {
     stop("The 'plumber' package is required for edge_serve().\n",
          "Install it with: install.packages('plumber')")
+  }
+  if (!requireNamespace("jsonlite", quietly = TRUE)) {
+    stop("The 'jsonlite' package is required for edge_serve().\n",
+         "Install it with: install.packages('jsonlite')")
   }
 
   if (!file.exists(model_path)) {
@@ -4706,13 +5092,13 @@ edge_serve <- function(model_path, host = "127.0.0.1", port = 8080L,
                           embeddings = embeddings)
 
   model_name <- tools::file_path_sans_ext(basename(model_path))
-  n_embd <- if (embeddings) edge_model_n_embd(ctx) else 0L
 
   # Build plumber API programmatically. The unboxed JSON serializer must be
   # set before the routes are added, or they keep the boxed default and
   # every single value is sent as an array.
   pr <- plumber::pr()
-  pr <- plumber::pr_set_serializer(pr, plumber::serializer_unboxed_json())
+  pr <- plumber::pr_set_serializer(
+    pr, plumber::serializer_unboxed_json(null = "null", na = "null", digits = NA))
 
   # Auth filter
   if (!is.null(api_key) && nchar(api_key) > 0) {
@@ -4752,99 +5138,30 @@ edge_serve <- function(model_path, host = "127.0.0.1", port = 8080L,
 
   # POST /v1/completions
   pr <- plumber::pr_post(pr, "/v1/completions", function(req, res) {
-    body <- req$body
-    prompt <- body$prompt %||% ""
-    max_tokens <- body$max_tokens %||% 128L
-    temperature <- body$temperature %||% 0.7
-    top_p <- body$top_p %||% 0.95
-
-    tryCatch({
-      text <- edge_completion_internal(
-        ctx, prompt, as.integer(max_tokens),
-        .sampling_options(as.numeric(temperature), as.numeric(top_p),
-                          seed = body$seed, stop = unlist(body$stop))
-      )
-      list(
-        id = paste0("cmpl-", format(Sys.time(), "%Y%m%d%H%M%S")),
-        object = "text_completion",
-        model = model_name,
-        choices = list(list(text = text, index = 0L, finish_reason = "stop")),
-        usage = list(prompt_tokens = nchar(prompt) %/% 4L,
-                      completion_tokens = nchar(text) %/% 4L)
-      )
-    }, error = function(e) {
-      res$status <- 500L
-      list(error = list(message = e$message, type = "server_error"))
-    })
+    .oa_handle(res, function() .oa_completion(ctx, .oa_body(req), model_name))
   })
 
   # POST /v1/chat/completions
   pr <- plumber::pr_post(pr, "/v1/chat/completions", function(req, res) {
-    body <- req$body
-    messages <- .as_chat_turns(body$messages)
-    max_tokens <- body$max_tokens %||% 256L
-    temperature <- body$temperature %||% 0.7
-    top_p <- body$top_p %||% 0.95
-
-    if (is.null(messages) || length(messages) == 0) {
-      res$status <- 400L
-      return(list(error = list(message = "messages is required", type = "invalid_request")))
-    }
-
-    tryCatch({
-      text <- edge_chat_completion(ctx, messages,
-                                    n_predict = as.integer(max_tokens),
-                                    temperature = as.numeric(temperature),
-                                    top_p = as.numeric(top_p),
-                                    seed = body$seed,
-                                    stop = unlist(body$stop))
-      list(
-        id = paste0("chatcmpl-", format(Sys.time(), "%Y%m%d%H%M%S")),
-        object = "chat.completion",
-        model = model_name,
-        choices = list(list(
-          index = 0L,
-          message = list(role = "assistant", content = text),
-          finish_reason = "stop"
-        )),
-        usage = list(prompt_tokens = NA_integer_,
-                      completion_tokens = nchar(text) %/% 4L)
-      )
-    }, error = function(e) {
-      res$status <- 500L
-      list(error = list(message = e$message, type = "server_error"))
-    })
+    .oa_handle(res, function() .oa_chat(ctx, .oa_body(req), model_name))
   })
 
   # POST /v1/embeddings (only if enabled)
   if (embeddings) {
     pr <- plumber::pr_post(pr, "/v1/embeddings", function(req, res) {
-      body <- req$body
-      input <- body$input
-      if (is.null(input)) {
-        res$status <- 400L
-        return(list(error = list(message = "input is required", type = "invalid_request")))
-      }
-      if (is.character(input) && length(input) == 1L) input <- list(input)
-
-      tryCatch({
-        texts <- as.character(unlist(input))
+      .oa_handle(res, function() {
+        body <- .oa_body(req)
+        if (is.null(body$input)) .bad_request("input is required")
+        texts <- as.character(unlist(body$input))
         emb_matrix <- edge_embeddings(ctx, texts)
-
         data_list <- lapply(seq_len(nrow(emb_matrix)), function(i) {
           list(object = "embedding", embedding = as.numeric(emb_matrix[i, ]),
                index = i - 1L)
         })
-
-        list(
-          object = "list",
-          data = data_list,
-          model = model_name,
-          usage = list(prompt_tokens = sum(nchar(texts)) %/% 4L)
-        )
-      }, error = function(e) {
-        res$status <- 500L
-        list(error = list(message = e$message, type = "server_error"))
+        n_tokens <- sum(vapply(texts, function(t) length(edge_tokenize_internal(ctx, t, TRUE)),
+                               integer(1)))
+        list(response = list(object = "list", data = data_list, model = model_name,
+                             usage = list(prompt_tokens = n_tokens, total_tokens = n_tokens)))
       })
     })
   }
@@ -4867,6 +5184,139 @@ edge_serve <- function(model_path, host = "127.0.0.1", port = 8080L,
   })
 
   plumber::pr_run(pr, host = host, port = as.integer(port))
+}
+
+# Servers started by chat_edge(), by model path, so a second chat on the
+# same model reuses the running server.
+.edge_servers <- new.env(parent = emptyenv())
+
+#' Chat with a local model through ellmer
+#'
+#' Returns an ellmer chat object backed by a local GGUF model, so the
+#' model works with ellmer's chat, streaming, tool calling and structured
+#' data functions. With \code{model_path}, the model is served by
+#' \code{\link{edge_serve}} in a background R process, which keeps running
+#' until the R session ends and is reused by later calls with the same
+#' model. With \code{base_url}, the chat connects to a server you started
+#' yourself.
+#'
+#' @param model_path Path to a .gguf model file. Either this or
+#'   \code{base_url} must be given.
+#' @param system_prompt Optional system prompt for the chat.
+#' @param base_url URL of a running \code{\link{edge_serve}} server, such as
+#'   \code{"http://127.0.0.1:8080"}.
+#' @param n_ctx Context size for a server started here (default: 4096).
+#' @param n_gpu_layers GPU layers for a server started here (default: 0).
+#' @param port Port for a server started here (default: a free one).
+#' @param params Optional \code{ellmer::params()} with sampling settings such
+#'   as \code{temperature}.
+#' @param echo Passed to \code{ellmer::chat_openai_compatible()}.
+#' @return An ellmer \code{Chat} object.
+#'
+#' @details
+#' Tool calling goes through \code{\link{edge_chat_completion}}: tool
+#' arguments may be strings, numbers, integers, booleans or enums, and the
+#' model makes one call per reply. Structured data works for flat objects
+#' of those types. Streamed replies arrive in one piece when
+#' generation ends (see \code{\link{edge_serve}}).
+#'
+#' @examples
+#' \dontrun{
+#' chat <- chat_edge("gemma-3-1b-it-Q4_K_M.gguf",
+#'                   system_prompt = "Answer in one sentence.")
+#' chat$chat("What is the capital of France?")
+#'
+#' # Tool calling with ellmer
+#' get_weather <- ellmer::tool(
+#'   function(city) "24 C and sunny",
+#'   description = "Get the current weather for a city",
+#'   arguments = list(city = ellmer::type_string("City name"))
+#' )
+#' chat$register_tool(get_weather)
+#' chat$chat("What is the weather in Paris?")
+#' }
+#' @seealso \code{\link{edge_serve}}
+#' @export
+chat_edge <- function(model_path = NULL, system_prompt = NULL, base_url = NULL,
+                      n_ctx = 4096L, n_gpu_layers = 0L, port = NULL,
+                      params = NULL, echo = "none") {
+  if (!requireNamespace("ellmer", quietly = TRUE)) {
+    stop("The 'ellmer' package is required for chat_edge().\n",
+         "Install it with: install.packages('ellmer')")
+  }
+  if (is.null(model_path) == is.null(base_url)) {
+    stop("give either model_path or base_url")
+  }
+  if (is.null(base_url)) {
+    base_url <- .edge_start_server(model_path, n_ctx = n_ctx,
+                                   n_gpu_layers = n_gpu_layers, port = port)
+  }
+  base_url <- sub("/+$", "", base_url)
+  base_url <- sub("/v1$", "", base_url)
+  model_name <- if (is.null(model_path)) {
+    "local"
+  } else {
+    tools::file_path_sans_ext(basename(model_path))
+  }
+  ellmer::chat_openai_compatible(
+    base_url = paste0(base_url, "/v1"),
+    name = "edgemodelr",
+    system_prompt = system_prompt,
+    credentials = function() "edgemodelr",
+    model = model_name,
+    params = params,
+    echo = echo
+  )
+}
+
+# Starts edge_serve() in a background R process, or reuses the one already
+# serving this model, and waits until it answers /health.
+.edge_start_server <- function(model_path, n_ctx, n_gpu_layers, port) {
+  if (!requireNamespace("callr", quietly = TRUE)) {
+    stop("The 'callr' package is required to start a server for chat_edge().\n",
+         "Install it with: install.packages('callr'), or pass base_url.")
+  }
+  if (!requireNamespace("plumber", quietly = TRUE)) {
+    stop("The 'plumber' package is required to start a server for chat_edge().\n",
+         "Install it with: install.packages('plumber'), or pass base_url.")
+  }
+  if (!file.exists(model_path)) stop("Model file not found: ", model_path)
+  key <- normalizePath(model_path, winslash = "/")
+  running <- .edge_servers[[key]]
+  if (!is.null(running) && running$process$is_alive()) return(running$server_url)
+
+  if (is.null(port)) port <- httpuv::randomPort()
+  server_url <- sprintf("http://127.0.0.1:%d", as.integer(port))
+  process <- callr::r_bg(function(model_path, port, n_ctx, n_gpu_layers) {
+    edgemodelr::edge_serve(model_path, port = port, n_ctx = n_ctx,
+                           n_gpu_layers = n_gpu_layers)
+  }, args = list(model_path = key, port = as.integer(port), n_ctx = as.integer(n_ctx),
+                 n_gpu_layers = as.integer(n_gpu_layers)),
+  supervise = TRUE)
+
+  deadline <- Sys.time() + 300
+  repeat {
+    if (!process$is_alive()) {
+      err <- tryCatch(process$read_all_error(), error = function(e) "")
+      stop("The model server stopped while starting: ", err)
+    }
+    if (.server_answers(paste0(server_url, "/health"))) break
+    if (Sys.time() > deadline) {
+      process$kill()
+      stop("The model server did not start within 5 minutes")
+    }
+    Sys.sleep(0.5)
+  }
+  .edge_servers[[key]] <- list(process = process, server_url = server_url)
+  server_url
+}
+
+.server_answers <- function(health_url) {
+  suppressWarnings(tryCatch({
+    con <- url(health_url, open = "r")
+    close(con)
+    TRUE
+  }, error = function(e) FALSE))
 }
 
 # Null coalescing operator for plumber body parsing
