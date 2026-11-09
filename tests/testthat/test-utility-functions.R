@@ -418,3 +418,14 @@ test_that("tool_choice none means no call", {
   tools <- edgemodelr:::.check_tools(list(edge_tool("ping", "Ping")))
   expect_identical(edgemodelr:::.check_tool_choice("none", tools), character())
 })
+
+test_that("chat messages parsed into a data.frame become a list of turns", {
+  skip_if_not_installed("jsonlite")
+  parsed <- jsonlite::fromJSON('[{"role":"system","content":"Be brief."},{"role":"user","content":"Hi"}]')
+  turns <- edgemodelr:::.as_chat_turns(parsed)
+  expect_length(turns, 2L)
+  expect_identical(turns[[2]]$role, "user")
+  expect_identical(turns[[2]]$content, "Hi")
+  as_list <- list(list(role = "user", content = "Hi"))
+  expect_identical(edgemodelr:::.as_chat_turns(as_list), as_list)
+})

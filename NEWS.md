@@ -36,6 +36,10 @@
   in use. For now this covers GCC builds (Linux and Windows); clang builds,
   such as macOS on Intel, keep the generic kernels.
 
+* `edge_serve()` fixes: `/v1/chat/completions` no longer fails with
+  "history must be a list of turns", and responses no longer wrap single
+  values in arrays, so OpenAI clients can read them.
+
 * Sampled text (temperature above 0) is no longer the same on every call.
   The seed used to be fixed; it is now drawn from R's random number
   generator, so `set.seed()` makes results reproducible, or pass `seed`.

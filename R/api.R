@@ -4638,6 +4638,17 @@ print.edge_index <- function(x, ...) {
 # Plumber API Wrapper (Model-as-a-Service)
 # ============================================================================
 
+# plumber parses a JSON array of messages into a data.frame; turn it back
+# into a list of turns, each a list with role and content.
+.as_chat_turns <- function(messages) {
+  if (is.data.frame(messages)) {
+    messages <- lapply(seq_len(nrow(messages)), function(i) {
+      as.list(messages[i, , drop = FALSE])
+    })
+  }
+  messages
+}
+
 #' Serve a model as a local OpenAI-compatible API
 #'
 #' Starts a local Plumber API server that exposes the loaded model through
@@ -4697,8 +4708,11 @@ edge_serve <- function(model_path, host = "127.0.0.1", port = 8080L,
   model_name <- tools::file_path_sans_ext(basename(model_path))
   n_embd <- if (embeddings) edge_model_n_embd(ctx) else 0L
 
-  # Build plumber API programmatically
+  # Build plumber API programmatically. The unboxed JSON serializer must be
+  # set before the routes are added, or they keep the boxed default and
+  # every single value is sent as an array.
   pr <- plumber::pr()
+  pr <- plumber::pr_set_serializer(pr, plumber::serializer_unboxed_json())
 
   # Auth filter
   if (!is.null(api_key) && nchar(api_key) > 0) {
@@ -4767,7 +4781,7 @@ edge_serve <- function(model_path, host = "127.0.0.1", port = 8080L,
   # POST /v1/chat/completions
   pr <- plumber::pr_post(pr, "/v1/chat/completions", function(req, res) {
     body <- req$body
-    messages <- body$messages
+    messages <- .as_chat_turns(body$messages)
     max_tokens <- body$max_tokens %||% 256L
     temperature <- body$temperature %||% 0.7
     top_p <- body$top_p %||% 0.95
@@ -4834,9 +4848,6 @@ edge_serve <- function(model_path, host = "127.0.0.1", port = 8080L,
       })
     })
   }
-
-  # Set serializer to JSON (unboxed for OpenAI compatibility)
-  pr <- plumber::pr_set_serializer(pr, plumber::serializer_unboxed_json())
 
   message("\nedgemodelr API server starting")
   message("  Model: ", model_name)
