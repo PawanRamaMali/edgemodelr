@@ -32,6 +32,12 @@
 #'   times faster. The prompts share the context, so make \code{n_ctx} large
 #'   enough for all of them with their answers; fewer run at once when they
 #'   do not fit.
+#' @param cache_type_k,cache_type_v Number format of the keys and values in
+#'   the KV cache (default: "f16"). One of "f16", "bf16", "q8_0", "q5_1",
+#'   "q5_0", "q4_1", "q4_0" or "iq4_nl". "q8_0" for both halves the memory
+#'   the cache takes, with almost no change in output, so a larger
+#'   \code{n_ctx} fits; the 4-bit types save more and cost some quality.
+#'   A quantized \code{cache_type_v} needs \code{flash_attn = TRUE}.
 #' @return External pointer to the loaded model context
 #'
 #' @examples
@@ -60,7 +66,7 @@
 #' @export
 edge_load_model <- function(model_path, n_ctx = 2048L, n_gpu_layers = 0L, n_threads = NULL, flash_attn = TRUE, embeddings = FALSE,
                             prompt_cache = FALSE, lora = NULL, lora_scale = 1,
-                            n_parallel = 1L) {
+                            n_parallel = 1L, cache_type_k = "f16", cache_type_v = "f16") {
   if (!file.exists(model_path)) {
     stop("Model file does not exist: ", model_path, "\n",
          "Try these options:\n",
@@ -108,6 +114,16 @@ edge_load_model <- function(model_path, n_ctx = 2048L, n_gpu_layers = 0L, n_thre
       n_parallel < 1 || n_parallel > 64 || n_parallel != round(n_parallel)) {
     stop("n_parallel must be a whole number from 1 to 64")
   }
+  cache_types <- c("f16", "bf16", "q8_0", "q5_1", "q5_0", "q4_1", "q4_0", "iq4_nl")
+  for (arg in c("cache_type_k", "cache_type_v")) {
+    value <- get(arg)
+    if (!is.character(value) || length(value) != 1L || !value %in% cache_types) {
+      stop(arg, " must be one of ", paste0('"', cache_types, '"', collapse = ", "))
+    }
+  }
+  if (!cache_type_v %in% c("f16", "bf16") && !isTRUE(flash_attn)) {
+    stop("a quantized cache_type_v needs flash_attn = TRUE")
+  }
 
   # Adaptive context size optimization based on model size
   model_size_mb <- file.info(model_path)$size / (1024^2)
@@ -144,7 +160,9 @@ edge_load_model <- function(model_path, n_ctx = 2048L, n_gpu_layers = 0L, n_thre
                              isTRUE(prompt_cache),
                              normalizePath(lora),
                              lora_scale,
-                             as.integer(n_parallel))
+                             as.integer(n_parallel),
+                             cache_type_k,
+                             cache_type_v)
   }, error = function(e) {
     # Provide more context about what went wrong
     if (grepl("llama_load_model_from_file", e$message)) {
@@ -5216,6 +5234,13 @@ edge_serve <- function(model_path, host = "127.0.0.1", port = 8080L,
 #' @param n_ctx Context size for a server started here (default: 4096).
 #' @param n_gpu_layers GPU layers for a server started here (default: 0).
 #' @param port Port for a server started here (default: a free one).
+#' @param embeddings Also serve \code{POST /v1/embeddings} from a server
+#'   started here (default: FALSE), so the same server can embed texts, for
+#'   example with \code{ragnar::embed_openai(base_url = )}. The model then
+#'   keeps an output for every prompt token, which slows chat and takes more
+#'   memory, and a chat model gives weaker embeddings than an embedding model.
+#'   For embeddings inside R, \code{\link{embed_edge}} with an embedding
+#'   model needs no server.
 #' @param params Optional \code{ellmer::params()} with sampling settings such
 #'   as \code{temperature}.
 #' @param echo Passed to \code{ellmer::chat_openai_compatible()}.
@@ -5247,7 +5272,7 @@ edge_serve <- function(model_path, host = "127.0.0.1", port = 8080L,
 #' @export
 chat_edge <- function(model_path = NULL, system_prompt = NULL, base_url = NULL,
                       n_ctx = 4096L, n_gpu_layers = 0L, port = NULL,
-                      params = NULL, echo = "none") {
+                      embeddings = FALSE, params = NULL, echo = "none") {
   if (!requireNamespace("ellmer", quietly = TRUE)) {
     stop("The 'ellmer' package is required for chat_edge().\n",
          "Install it with: install.packages('ellmer')")
@@ -5257,7 +5282,8 @@ chat_edge <- function(model_path = NULL, system_prompt = NULL, base_url = NULL,
   }
   if (is.null(base_url)) {
     base_url <- .edge_start_server(model_path, n_ctx = n_ctx,
-                                   n_gpu_layers = n_gpu_layers, port = port)
+                                   n_gpu_layers = n_gpu_layers, port = port,
+                                   embeddings = isTRUE(embeddings))
   }
   base_url <- sub("/+$", "", base_url)
   base_url <- sub("/v1$", "", base_url)
@@ -5279,7 +5305,8 @@ chat_edge <- function(model_path = NULL, system_prompt = NULL, base_url = NULL,
 
 # Starts edge_serve() in a background R process, or reuses the one already
 # serving this model, and waits until it answers /health.
-.edge_start_server <- function(model_path, n_ctx, n_gpu_layers, port) {
+.edge_start_server <- function(model_path, n_ctx, n_gpu_layers, port,
+                               embeddings = FALSE) {
   if (!requireNamespace("callr", quietly = TRUE)) {
     stop("The 'callr' package is required to start a server for chat_edge().\n",
          "Install it with: install.packages('callr'), or pass base_url.")
@@ -5289,17 +5316,18 @@ chat_edge <- function(model_path = NULL, system_prompt = NULL, base_url = NULL,
          "Install it with: install.packages('plumber'), or pass base_url.")
   }
   if (!file.exists(model_path)) stop("Model file not found: ", model_path)
-  key <- normalizePath(model_path, winslash = "/")
+  path <- normalizePath(model_path, winslash = "/")
+  key <- paste0(path, if (embeddings) " +embeddings")
   running <- .edge_servers[[key]]
   if (!is.null(running) && running$process$is_alive()) return(running$server_url)
 
   if (is.null(port)) port <- httpuv::randomPort()
   server_url <- sprintf("http://127.0.0.1:%d", as.integer(port))
-  process <- callr::r_bg(function(model_path, port, n_ctx, n_gpu_layers) {
+  process <- callr::r_bg(function(model_path, port, n_ctx, n_gpu_layers, embeddings) {
     edgemodelr::edge_serve(model_path, port = port, n_ctx = n_ctx,
-                           n_gpu_layers = n_gpu_layers)
-  }, args = list(model_path = key, port = as.integer(port), n_ctx = as.integer(n_ctx),
-                 n_gpu_layers = as.integer(n_gpu_layers)),
+                           n_gpu_layers = n_gpu_layers, embeddings = embeddings)
+  }, args = list(model_path = path, port = as.integer(port), n_ctx = as.integer(n_ctx),
+                 n_gpu_layers = as.integer(n_gpu_layers), embeddings = embeddings),
   supervise = TRUE)
 
   deadline <- Sys.time() + 300
@@ -5325,6 +5353,86 @@ chat_edge <- function(model_path = NULL, system_prompt = NULL, base_url = NULL,
     close(con)
     TRUE
   }, error = function(e) FALSE))
+}
+
+#' Embed texts with a local model, for ragnar and other packages
+#'
+#' Turns texts into embedding vectors with a local GGUF embedding model,
+#' without a server. Called without \code{x}, it returns a function of the
+#' texts, which is what \code{ragnar::ragnar_store_create(embed = )} takes.
+#' That function refers to the model only by its path, so a ragnar store
+#' saved with it embeds new texts and queries again in a later R session.
+#'
+#' The model is loaded the first time it is needed and kept for the rest of
+#' the session, one per path.
+#'
+#' @param x A character vector of texts, a data frame with a \code{text}
+#'   column, or missing.
+#' @param model_path Path to a .gguf embedding model, such as
+#'   Qwen3-Embedding-0.6B or nomic-embed-text.
+#' @param n_ctx Context size for the model (default: 2048). Longer texts
+#'   are cut to the batch size.
+#' @param normalize Scale each vector to length 1 (default: TRUE), so the
+#'   dot product of two vectors is their cosine similarity.
+#' @return For a character vector, a numeric matrix with one row per text.
+#'   For a data frame, the data frame with an \code{embedding} matrix column
+#'   added. Without \code{x}, a function that takes \code{x}.
+#'
+#' @examples
+#' \dontrun{
+#' model <- "Qwen3-Embedding-0.6B-Q8_0.gguf"
+#' m <- embed_edge(c("cats purr", "dogs bark"), model)
+#' dim(m)
+#'
+#' # A ragnar store that embeds locally
+#' store <- ragnar::ragnar_store_create(
+#'   "docs.duckdb",
+#'   embed = embed_edge(model_path = model)
+#' )
+#' }
+#' @seealso \code{\link{edge_embeddings}}, \code{\link{chat_edge}}
+#' @export
+embed_edge <- function(x, model_path, n_ctx = 2048L, normalize = TRUE) {
+  if (missing(model_path) || !is.character(model_path) || length(model_path) != 1L ||
+      is.na(model_path)) {
+    stop("model_path must be the path of a .gguf embedding model")
+  }
+  if (missing(x) || is.null(x)) {
+    # Built from values only, in the base environment, so it still works
+    # after being saved and loaded in a new session.
+    path <- normalizePath(model_path, winslash = "/", mustWork = FALSE)
+    fn <- as.function.default(c(alist(x = ), bquote(
+      edgemodelr::embed_edge(x, model_path = .(path), n_ctx = .(as.integer(n_ctx)),
+                             normalize = .(isTRUE(normalize))))),
+      envir = baseenv())
+    return(fn)
+  }
+  if (is.data.frame(x)) {
+    if (!"text" %in% names(x)) stop("a data frame x needs a text column")
+    x[["embedding"]] <- embed_edge(x[["text"]], model_path, n_ctx = n_ctx,
+                                   normalize = normalize)
+    return(x)
+  }
+  if (!is.character(x) || anyNA(x)) {
+    stop("x must be a character vector without NA values, or a data frame with a text column")
+  }
+  ctx <- .edge_embed_model(model_path, n_ctx)
+  if (length(x) == 0L) return(matrix(numeric(), 0L, edge_model_n_embd(ctx)))
+  edge_embeddings(ctx, x, normalize = normalize)
+}
+
+# Embedding models loaded by embed_edge(), by path and context size.
+.edge_embed_models <- new.env(parent = emptyenv())
+
+.edge_embed_model <- function(model_path, n_ctx) {
+  if (!file.exists(model_path)) stop("Model file not found: ", model_path)
+  key <- paste0(normalizePath(model_path, winslash = "/"), "@", as.integer(n_ctx))
+  ctx <- .edge_embed_models[[key]]
+  if (is.null(ctx) || !is_valid_model(ctx)) {
+    ctx <- edge_load_model(model_path, n_ctx = as.integer(n_ctx), embeddings = TRUE)
+    .edge_embed_models[[key]] <- ctx
+  }
+  ctx
 }
 
 # Null coalescing operator for plumber body parsing

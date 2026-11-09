@@ -42,8 +42,8 @@ BEGIN_RCPP
 END_RCPP
 }
 // edge_load_model_internal
-SEXP edge_load_model_internal(std::string model_path, int n_ctx, int n_gpu_layers, int n_threads, bool flash_attn, bool embeddings, bool prompt_cache, std::vector<std::string> lora_paths, std::vector<double> lora_scales, int n_parallel);
-RcppExport SEXP _edgemodelr_edge_load_model_internal(SEXP model_pathSEXP, SEXP n_ctxSEXP, SEXP n_gpu_layersSEXP, SEXP n_threadsSEXP, SEXP flash_attnSEXP, SEXP embeddingsSEXP, SEXP prompt_cacheSEXP, SEXP lora_pathsSEXP, SEXP lora_scalesSEXP, SEXP n_parallelSEXP) {
+SEXP edge_load_model_internal(std::string model_path, int n_ctx, int n_gpu_layers, int n_threads, bool flash_attn, bool embeddings, bool prompt_cache, std::vector<std::string> lora_paths, std::vector<double> lora_scales, int n_parallel, std::string cache_type_k, std::string cache_type_v);
+RcppExport SEXP _edgemodelr_edge_load_model_internal(SEXP model_pathSEXP, SEXP n_ctxSEXP, SEXP n_gpu_layersSEXP, SEXP n_threadsSEXP, SEXP flash_attnSEXP, SEXP embeddingsSEXP, SEXP prompt_cacheSEXP, SEXP lora_pathsSEXP, SEXP lora_scalesSEXP, SEXP n_parallelSEXP, SEXP cache_type_kSEXP, SEXP cache_type_vSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
@@ -57,7 +57,9 @@ BEGIN_RCPP
     Rcpp::traits::input_parameter< std::vector<std::string> >::type lora_paths(lora_pathsSEXP);
     Rcpp::traits::input_parameter< std::vector<double> >::type lora_scales(lora_scalesSEXP);
     Rcpp::traits::input_parameter< int >::type n_parallel(n_parallelSEXP);
-    rcpp_result_gen = Rcpp::wrap(edge_load_model_internal(model_path, n_ctx, n_gpu_layers, n_threads, flash_attn, embeddings, prompt_cache, lora_paths, lora_scales, n_parallel));
+    Rcpp::traits::input_parameter< std::string >::type cache_type_k(cache_type_kSEXP);
+    Rcpp::traits::input_parameter< std::string >::type cache_type_v(cache_type_vSEXP);
+    rcpp_result_gen = Rcpp::wrap(edge_load_model_internal(model_path, n_ctx, n_gpu_layers, n_threads, flash_attn, embeddings, prompt_cache, lora_paths, lora_scales, n_parallel, cache_type_k, cache_type_v));
     return rcpp_result_gen;
 END_RCPP
 }
@@ -288,7 +290,7 @@ static const R_CallMethodDef CallEntries[] = {
     {"_edgemodelr_edge_use_cuda_backend_internal", (DL_FUNC) &_edgemodelr_edge_use_cuda_backend_internal, 1},
     {"_edgemodelr_edge_cuda_backend_path_internal", (DL_FUNC) &_edgemodelr_edge_cuda_backend_path_internal, 0},
     {"_edgemodelr_edge_cuda_backend_loaded_internal", (DL_FUNC) &_edgemodelr_edge_cuda_backend_loaded_internal, 0},
-    {"_edgemodelr_edge_load_model_internal", (DL_FUNC) &_edgemodelr_edge_load_model_internal, 10},
+    {"_edgemodelr_edge_load_model_internal", (DL_FUNC) &_edgemodelr_edge_load_model_internal, 12},
     {"_edgemodelr_edge_completion_internal", (DL_FUNC) &_edgemodelr_edge_completion_internal, 5},
     {"_edgemodelr_edge_free_model_internal", (DL_FUNC) &_edgemodelr_edge_free_model_internal, 1},
     {"_edgemodelr_is_valid_model_internal", (DL_FUNC) &_edgemodelr_is_valid_model_internal, 1},

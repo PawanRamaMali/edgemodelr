@@ -11,6 +11,7 @@ chat_edge(
   n_ctx = 4096L,
   n_gpu_layers = 0L,
   port = NULL,
+  embeddings = FALSE,
   params = NULL,
   echo = "none"
 )
@@ -29,6 +30,14 @@ chat_edge(
 \item{n_gpu_layers}{GPU layers for a server started here (default: 0).}
 
 \item{port}{Port for a server started here (default: a free one).}
+
+\item{embeddings}{Also serve \code{POST /v1/embeddings} from a server
+started here (default: FALSE), so the same server can embed texts, for
+example with \code{ragnar::embed_openai(base_url = )}. The model then
+keeps an output for every prompt token, which slows chat and takes more
+memory, and a chat model gives weaker embeddings than an embedding model.
+For embeddings inside R, \code{\link{embed_edge}} with an embedding
+model needs no server.}
 
 \item{params}{Optional \code{ellmer::params()} with sampling settings such
 as \code{temperature}.}

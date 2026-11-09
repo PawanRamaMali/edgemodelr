@@ -39,7 +39,23 @@
 
 * New `edge_tokenize()` returns a text's tokens with the model's tokenizer.
 
+* New `embed_edge()` embeds texts with a local model and, called without
+  texts, returns a function for `ragnar::ragnar_store_create(embed = )`.
+  The function refers to the model by path, so a saved store works again
+  in a new session. `chat_edge(embeddings = TRUE)` also serves
+  `/v1/embeddings` from its background server.
+
+* `edge_load_model()` gains `cache_type_k` and `cache_type_v` to store the
+  KV cache in a smaller format. `"q8_0"` for both halves the cache's memory
+  with almost no change in output. A quantized `cache_type_v` needs
+  `flash_attn = TRUE`, which is the default.
+
 ## Changes
+
+* `edge_embeddings()` no longer reads past the end of a model's output:
+  vectors now have the model's output width, which differs from its hidden
+  size for some embedding models such as EmbeddingGemma2, and a reranker
+  model gives an error instead.
 
 * `edge_stream_completion()` no longer splits a character across two
   callback calls when it spans several tokens, as emojis often do, so every
