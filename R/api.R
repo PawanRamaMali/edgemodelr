@@ -1811,6 +1811,12 @@ edge_chat_completion <- function(ctx, messages, n_predict = 256L,
        message = list(role = "assistant", content = text))
 }
 
+# A field type is an enum when it is a character vector of allowed values.
+# I("x") marks a single allowed value, which would otherwise be a type name.
+.is_enum <- function(spec) {
+  is.character(spec) && (length(spec) > 1L || inherits(spec, "AsIs"))
+}
+
 #' Define a tool the model can call
 #'
 #' A tool is a name, a description and typed arguments. Pass a list of tools
@@ -1823,8 +1829,9 @@ edge_chat_completion <- function(ctx, messages, n_predict = 256L,
 #'   it to decide when to call the tool.
 #' @param parameters A named list of arguments, in the format of
 #'   \code{\link{edge_json_grammar}}: "string", "number", "integer",
-#'   "boolean" or a character vector of allowed values. An argument can also
-#'   be \code{list(type = ..., description = ...)} to tell the model what it
+#'   "boolean" or a character vector of allowed values (use \code{I("x")}
+#'   for a single allowed value). An argument can also be
+#'   \code{list(type = ..., description = ...)} to tell the model what it
 #'   means. Every argument is required. Default: no arguments.
 #' @return An \code{edge_tool} object
 #'
@@ -1860,17 +1867,17 @@ edge_tool <- function(name, description, parameters = list()) {
       note <- if (is.null(spec$description)) "" else as.character(spec$description)
       spec <- spec$type
     }
+    enum <- .is_enum(spec)
     if (!is.character(spec) || length(spec) == 0L || anyNA(spec) ||
-        (length(spec) == 1L &&
-         !tolower(spec) %in% c("string", "number", "integer", "boolean"))) {
+        (!enum && !tolower(spec) %in% c("string", "number", "integer", "boolean"))) {
       stop("argument '", arg_names[i], "' must have type 'string', 'number', ",
            "'integer', 'boolean' or a character vector of allowed values")
     }
-    if (length(spec) > 1L && any(grepl('["\\\n]', spec))) {
+    if (enum && any(grepl('["\\\n]', spec))) {
       stop("allowed values of '", arg_names[i], "' must not contain quotes, ",
            "backslashes or line breaks")
     }
-    types[[arg_names[i]]] <- if (length(spec) == 1L) tolower(spec) else spec
+    types[[arg_names[i]]] <- if (enum) spec else tolower(spec)
     notes <- c(notes, note)
   }
   structure(list(name = name, description = description,
@@ -1913,7 +1920,7 @@ print.edge_tool <- function(x, ...) {
 .describe_tool <- function(tool) {
   args <- vapply(seq_along(tool$parameters), function(i) {
     type <- tool$parameters[[i]]
-    type <- if (length(type) > 1L) {
+    type <- if (.is_enum(type)) {
       paste0("one of ", paste0('"', type, '"', collapse = ", "))
     } else {
       type
@@ -3048,7 +3055,7 @@ edge_grammar_completion <- function(ctx, prompt, grammar, grammar_root = "root",
     field_spec <- schema[[i]]
     rule_name <- paste0(prefix, "field-", i)
 
-    if (is.character(field_spec) && length(field_spec) == 1L) {
+    if (is.character(field_spec) && length(field_spec) == 1L && !.is_enum(field_spec)) {
       type <- tolower(field_spec)
       if (!type %in% c("string", "number", "integer", "boolean")) {
         stop("Unknown type '", type, "' for field '", field_name,
@@ -3056,7 +3063,7 @@ edge_grammar_completion <- function(ctx, prompt, grammar, grammar_root = "root",
       }
       field_rules <- c(field_rules, paste0(rule_name, " ::= ", type))
       needed <- c(needed, type)
-    } else if (is.character(field_spec) && length(field_spec) > 1L) {
+    } else if (.is_enum(field_spec)) {
       # Enum values
       enum_options <- paste0('"\\\"', field_spec, '\\\""', collapse = " | ")
       field_rules <- c(field_rules, paste0(rule_name, " ::= ", enum_options))
@@ -3091,7 +3098,8 @@ edge_grammar_completion <- function(ctx, prompt, grammar, grammar_root = "root",
 #'     \item \code{"number"} - a numeric value (integer or decimal)
 #'     \item \code{"integer"} - an integer value
 #'     \item \code{"boolean"} - true or false
-#'     \item A character vector - enum of allowed values (e.g., \code{c("positive", "negative")})
+#'     \item A character vector - enum of allowed values (e.g., \code{c("positive", "negative")}),
+#'       or \code{I("x")} for a single allowed value
 #'   }
 #' @param compact If TRUE, the layout is fixed to \code{{"key": value, "key": value}},
 #'   with one space after each colon and comma. Every key and separator is then
@@ -3228,7 +3236,7 @@ edge_extract <- function(ctx, text, schema, instruction = NULL, n_predict = 512L
   field_descriptions <- vapply(seq_along(schema), function(i) {
     nm <- names(schema)[i]
     spec <- schema[[i]]
-    if (is.character(spec) && length(spec) > 1L) {
+    if (.is_enum(spec)) {
       paste0(nm, " (one of: ", paste(spec, collapse = ", "), ")")
     } else {
       paste0(nm, " (", spec, ")")
@@ -4761,7 +4769,8 @@ print.edge_index <- function(x, ...) {
       type <- setdiff(unlist(type), "null")[1]
     }
     spec <- if (!is.null(p$enum)) {
-      as.character(unlist(p$enum))
+      values <- as.character(unlist(p$enum))
+      if (length(values) == 1L) I(values) else values
     } else if (is.character(type) && type %in% c("string", "number", "integer", "boolean")) {
       type
     } else {
@@ -4865,10 +4874,9 @@ print.edge_index <- function(x, ...) {
   out <- edge_completion_stream_internal(ctx, prompt, function(data) TRUE,
                                          as.integer(n_predict), sampling)
   pieces <- as.character(out$tokens_generated)
-  n <- as.integer(out$total_tokens)
   list(text = out$full_response, pieces = pieces[nzchar(pieces)],
-       completion_tokens = n,
-       finish_reason = if (n >= n_predict) "length" else "stop")
+       completion_tokens = as.integer(out$n_generated),
+       finish_reason = if (isTRUE(out$hit_limit)) "length" else "stop")
 }
 
 .oa_usage <- function(prompt_tokens, completion_tokens) {

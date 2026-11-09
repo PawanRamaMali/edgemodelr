@@ -41,6 +41,13 @@
 
 ## Changes
 
+* `edge_stream_completion()` no longer splits a character across two
+  callback calls when it spans several tokens, as emojis often do, so every
+  streamed piece is valid UTF-8.
+
+* `edge_tool()` and `edge_json_grammar()` take `I("x")` for a field with a
+  single allowed value, which would otherwise read as a type name.
+
 * The default build is faster on x86-64 CPUs with AVX2: it now also carries
   the AVX2 versions of the quantized dot-product kernels and switches to
   them at run time, so no `EDGEMODELR_SIMD` reinstall is needed. TinyLlama

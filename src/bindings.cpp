@@ -706,6 +706,25 @@ bool is_valid_model_internal(SEXP model_ptr) {
   }
 }
 
+// The end of the longest prefix of s[0, upto) that does not stop inside a
+// UTF-8 character. A character can span several tokens, and each streamed
+// piece must be valid text on its own.
+static size_t utf8_boundary(const std::string& s, size_t upto) {
+  size_t i = upto;
+  size_t cont = 0;
+  while (i > 0 && cont < 3 && (static_cast<unsigned char>(s[i - 1]) & 0xC0) == 0x80) {
+    --i;
+    ++cont;
+  }
+  if (i == 0) return upto;
+  const unsigned char lead = static_cast<unsigned char>(s[i - 1]);
+  size_t len = 1;
+  if ((lead & 0xE0) == 0xC0) len = 2;
+  else if ((lead & 0xF0) == 0xE0) len = 3;
+  else if ((lead & 0xF8) == 0xF0) len = 4;
+  return (len > 1 && cont + 1 < len) ? i - 1 : upto;
+}
+
 // [[Rcpp::export]]
 List edge_completion_stream_internal(SEXP model_ptr, std::string prompt, Function callback, int n_predict, List sampling) {
   try {
@@ -759,6 +778,7 @@ List edge_completion_stream_internal(SEXP model_ptr, std::string prompt, Functio
     std::string full_response;  // Track generated text only
     std::vector<std::string> tokens_generated;
     int tokens_count = 0;
+    int n_generated = 0;  // sampled tokens, not callback calls
     bool stopped_early = false;
 
     // Create sampler chain for streaming
@@ -768,10 +788,12 @@ List edge_completion_stream_internal(SEXP model_ptr, std::string prompt, Functio
 
     add_sampling_steps(sampler, vocab, opts);
 
-    // Text is passed to the callback once no stop string can start in it.
-    // Without stop strings that is every token as soon as it is generated.
+    // Text is passed to the callback once no stop string can start in it
+    // and it ends on a whole character. Without stop strings that is
+    // usually every token as soon as it is generated.
     size_t sent = 0;
-    auto send = [&](size_t upto, int position) -> bool {
+    auto send = [&](size_t upto, int position, bool flush = false) -> bool {
+      if (!flush) upto = utf8_boundary(full_response, upto);
       if (upto <= sent) return true;
       const std::string text = full_response.substr(sent, upto - sent);
       sent = upto;
@@ -812,6 +834,7 @@ List edge_completion_stream_internal(SEXP model_ptr, std::string prompt, Functio
         stopped_early = true;
         break;
       }
+      n_generated++;
       
       // Convert token to text with dynamic buffer allocation
       std::vector<char> piece(512);  // Start with larger buffer
@@ -856,7 +879,7 @@ List edge_completion_stream_internal(SEXP model_ptr, std::string prompt, Functio
       }
     }
     // Text held back for a stop string that never came.
-    if (!callback_stopped) send(full_response.size(), position);
+    if (!callback_stopped) send(full_response.size(), position, true);
 
     // Send final callback
     try {
@@ -880,7 +903,9 @@ List edge_completion_stream_internal(SEXP model_ptr, std::string prompt, Functio
       Named("tokens_generated") = tokens_generated,
       Named("total_tokens") = tokens_count,
       Named("stopped_early") = stopped_early,
-      Named("original_prompt") = prompt
+      Named("original_prompt") = prompt,
+      Named("n_generated") = n_generated,
+      Named("hit_limit") = !stopped_early
     );
     
   } catch (const std::exception& e) {

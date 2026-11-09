@@ -49,6 +49,20 @@ test_that("OpenAI tools become edge tools", {
   expect_error(edgemodelr:::.oa_tools(nested), class = "edge_bad_request")
 })
 
+test_that("an enum with one value stays an enum", {
+  skip_if_not_installed("jsonlite")
+  tools <- parse_json('[{"type": "function", "function": {"name": "f", "parameters": {
+    "type": "object", "properties": {"unit": {"type": "string", "enum": ["celsius"]},
+    "kind": {"type": "string", "enum": ["string"]}}}}}]')
+  out <- edgemodelr:::.oa_tools(tools)
+  expect_identical(out[[1]]$parameters, list(unit = I("celsius"), kind = I("string")))
+  expect_match(edgemodelr:::.describe_tool(out[[1]]), 'unit: one of "celsius", kind: one of "string"')
+  grammar <- edge_json_grammar(list(unit = I("celsius"), kind = I("string")))
+  expect_match(grammar, '"\\"celsius\\""', fixed = TRUE)
+  expect_false(grepl("^string ::=", grammar))
+  expect_false(grepl("\nstring ::=", grammar))
+})
+
 test_that("tool_choice is read in both OpenAI forms", {
   expect_identical(edgemodelr:::.oa_tool_choice(NULL), "auto")
   expect_identical(edgemodelr:::.oa_tool_choice("required"), "required")
