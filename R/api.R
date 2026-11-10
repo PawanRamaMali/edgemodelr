@@ -5234,6 +5234,9 @@ edge_serve <- function(model_path, host = "127.0.0.1", port = 8080L,
 #' @param n_ctx Context size for a server started here (default: 4096).
 #' @param n_gpu_layers GPU layers for a server started here (default: 0).
 #' @param port Port for a server started here (default: a free one).
+#' @param params Optional \code{ellmer::params()} with sampling settings such
+#'   as \code{temperature}.
+#' @param echo Passed to \code{ellmer::chat_openai_compatible()}.
 #' @param embeddings Also serve \code{POST /v1/embeddings} from a server
 #'   started here (default: FALSE), so the same server can embed texts, for
 #'   example with \code{ragnar::embed_openai(base_url = )}. The model then
@@ -5241,9 +5244,6 @@ edge_serve <- function(model_path, host = "127.0.0.1", port = 8080L,
 #'   memory, and a chat model gives weaker embeddings than an embedding model.
 #'   For embeddings inside R, \code{\link{embed_edge}} with an embedding
 #'   model needs no server.
-#' @param params Optional \code{ellmer::params()} with sampling settings such
-#'   as \code{temperature}.
-#' @param echo Passed to \code{ellmer::chat_openai_compatible()}.
 #' @return An ellmer \code{Chat} object.
 #'
 #' @details
@@ -5272,7 +5272,7 @@ edge_serve <- function(model_path, host = "127.0.0.1", port = 8080L,
 #' @export
 chat_edge <- function(model_path = NULL, system_prompt = NULL, base_url = NULL,
                       n_ctx = 4096L, n_gpu_layers = 0L, port = NULL,
-                      embeddings = FALSE, params = NULL, echo = "none") {
+                      params = NULL, echo = "none", embeddings = FALSE) {
   if (!requireNamespace("ellmer", quietly = TRUE)) {
     stop("The 'ellmer' package is required for chat_edge().\n",
          "Install it with: install.packages('ellmer')")
