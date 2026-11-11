@@ -2,6 +2,31 @@
 
 ## New features
 
+* `edge_api()` serves a model to many users at once, for Posit Connect or
+  any server that runs plumber APIs. A new serving engine, `edge_engine()`,
+  runs requests in a background thread with continuous batching: up to
+  `n_slots` requests are generated together and the rest wait in a queue,
+  so a busy server answers later instead of failing. Request handlers
+  return promises, so R keeps accepting requests while the model works. A
+  finished request leaves its tokens in its slot, and a request that starts
+  the same way (the same system prompt, or the next turn of a chat) skips
+  that part of its prompt; `usage$prompt_tokens_details$cached_tokens`
+  reports it. On an 8 core laptop, 8 slots gave about 3 to 4 times the total
+  tokens per second of one. New `POST /v1/jobs` endpoints return at once
+  and report the queue position and the text so far, which suits Shiny
+  apps, and `GET /metrics` reports the engine's counters. A full queue
+  answers 503 with `Retry-After`. `inst/examples/posit-connect` has an API
+  entrypoint and a Shiny chat app that uses it.
+
+* `edge_serve()` runs on `edge_api()`, with one slot by default and an
+  `n_slots` argument. It now also accepts the key as `X-API-Key`, since
+  Posit Connect uses `Authorization` for its own keys.
+
+* The default thread count follows a container's CPU limit (cgroup v1 and
+  v2) instead of the host's core count, and batches no longer use every
+  hardware thread in a container. Too many threads made llama.cpp several
+  times slower on a shared or limited CPU.
+
 * `edge_completion()`, `edge_stream_completion()`, `edge_chat_completion()`,
   `edge_chat_stream()`, `edge_grammar_completion()` and `edge_map()` have new
   sampling arguments: `top_k`, `min_p`, `repeat_penalty`, `seed` and `stop`.

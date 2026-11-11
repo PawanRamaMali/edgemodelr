@@ -39,6 +39,8 @@ Suggests:
     jsonlite,
     httr,
     plumber,
+    promises,
+    later,
     DBI,
     RSQLite,
     callr,

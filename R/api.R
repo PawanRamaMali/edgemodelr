@@ -174,6 +174,15 @@ edge_load_model <- function(model_path, n_ctx = 2048L, n_gpu_layers = 0L, n_thre
     stop(e$message)
   })
 
+  # Batches use every hardware thread, which in a container with a CPU
+  # limit is far more than it may use.
+  quota <- .cpu_quota()
+  if (!is.na(quota)) {
+    n <- if (is.null(n_threads)) .default_threads() else as.integer(n_threads)
+    n <- max(1L, n)
+    edge_set_threads_internal(ctx, n, max(n, as.integer(floor(quota))))
+  }
+
   # Touch file to update LRU metadata (best-effort)
   try(Sys.setFileTime(model_path, Sys.time()), silent = TRUE)
 
@@ -4886,25 +4895,41 @@ print.edge_index <- function(x, ...) {
   min(n, 4096L)
 }
 
-# Generates text token by token, so the pieces can be streamed and the
-# completion tokens counted.
-.oa_generate <- function(ctx, prompt, n_predict, sampling) {
-  out <- edge_completion_stream_internal(ctx, prompt, function(data) TRUE,
-                                         as.integer(n_predict), sampling)
-  pieces <- as.character(out$tokens_generated)
-  list(text = out$full_response, pieces = pieces[nzchar(pieces)],
-       completion_tokens = as.integer(out$n_generated),
-       finish_reason = if (isTRUE(out$hit_limit)) "length" else "stop")
+.oa_usage <- function(prompt_tokens, completion_tokens, cached_tokens = NULL) {
+  usage <- list(prompt_tokens = prompt_tokens, completion_tokens = completion_tokens,
+                total_tokens = prompt_tokens + completion_tokens)
+  if (!is.null(cached_tokens)) {
+    usage$prompt_tokens_details <- list(cached_tokens = as.integer(cached_tokens))
+  }
+  usage
 }
 
-.oa_usage <- function(prompt_tokens, completion_tokens) {
-  list(prompt_tokens = prompt_tokens, completion_tokens = completion_tokens,
-       total_tokens = prompt_tokens + completion_tokens)
+# A finished text in word-sized pieces for streamed chunks. The engine
+# hands over the text when it is done, so the pieces are cut afterwards.
+.oa_pieces <- function(text) {
+  if (is.null(text) || !nzchar(text)) return(character())
+  pieces <- regmatches(text, gregexpr("\\s*\\S+|\\s+$", text, perl = TRUE))[[1]]
+  if (!identical(paste(pieces, collapse = ""), text)) pieces <- text
+  pieces
 }
 
-# POST /v1/chat/completions without the HTTP layer. Returns the response
-# object and, for stream = true, the chunks to send instead.
-.oa_chat <- function(ctx, body, model_name) {
+# How the endpoints reach a model: gen$prompt() formats chat messages and
+# gen$generate() returns a promise of one generation (text, finish,
+# prompt_tokens, completion_tokens, cached_tokens). .engine_gen() is the
+# one edge_api() uses.
+.engine_gen <- function(engine, on_submit = NULL) {
+  list(
+    prompt = function(messages) build_chat_prompt(messages, ctx = engine$ctx),
+    generate = function(prompt, n_predict, sampling, grammar = NULL) {
+      id <- .engine_submit(engine, prompt, n_predict, sampling, grammar)
+      if (!is.null(on_submit)) on_submit(id)
+      .engine_promise(engine, id)
+    })
+}
+
+# POST /v1/chat/completions without the HTTP layer. Returns a promise of
+# the response object and, for stream = true, the chunks to send instead.
+.oa_chat <- function(gen, body, model_name) {
   messages <- .oa_messages(body$messages)
   tools <- .oa_tools(body$tools)
   tool_choice <- .oa_tool_choice(body$tool_choice)
@@ -4912,121 +4937,126 @@ print.edge_index <- function(x, ...) {
   sampling <- .oa_sampling(body)
   id <- .oa_id("chatcmpl-")
   created <- as.integer(Sys.time())
-  tool_calls <- list()
 
   grammar <- .oa_response_grammar(body$response_format)
-  if (!is.null(grammar) && !is.null(tools) && !identical(tool_choice, "none")) {
+  use_tools <- !is.null(tools) && !identical(tool_choice, "none")
+  if (!is.null(grammar) && use_tools) {
     .bad_request("response_format json_schema cannot be combined with tools")
   }
-
-  if (!is.null(grammar)) {
-    prompt <- build_chat_prompt(.messages_with_tools(messages, NULL, NULL), ctx = ctx)
-    content <- edge_completion_grammar_internal(ctx, prompt, grammar, "root",
-                                                as.integer(n_predict), sampling, TRUE)
-    pieces <- if (nzchar(content)) content else character()
-    completion_tokens <- length(edge_tokenize_internal(ctx, content, FALSE))
-    finish <- if (completion_tokens >= n_predict) "length" else "stop"
-  } else if (is.null(tools) || identical(tool_choice, "none")) {
-    prompt <- build_chat_prompt(.messages_with_tools(messages, NULL, NULL), ctx = ctx)
-    gen <- .oa_generate(ctx, prompt, n_predict, sampling)
-    content <- gen$text
-    pieces <- gen$pieces
-    completion_tokens <- gen$completion_tokens
-    finish <- gen$finish_reason
-  } else {
-    forced <- tryCatch(.check_tool_choice(tool_choice, .check_tools(tools)),
+  if (use_tools) {
+    checked <- tryCatch(.check_tools(tools), error = function(e) .bad_request(conditionMessage(e)))
+    forced <- tryCatch(.check_tool_choice(tool_choice, checked),
                        error = function(e) .bad_request(conditionMessage(e)))
-    prompt <- build_chat_prompt(.messages_with_tools(messages, .check_tools(tools), forced),
-                                ctx = ctx)
-    reply <- edge_chat_completion(ctx, messages, n_predict = n_predict,
-                                  temperature = sampling$temperature, top_p = sampling$top_p,
-                                  top_k = sampling$top_k, min_p = sampling$min_p,
-                                  repeat_penalty = sampling$repeat_penalty,
-                                  seed = sampling$seed, stop = sampling$stop,
-                                  tools = tools, tool_choice = tool_choice)
-    completion_tokens <- length(edge_tokenize_internal(ctx, reply$message$content, FALSE))
-    if (length(reply$tool_calls) > 0L) {
-      call <- reply$tool_calls[[1]]
-      args <- if (length(call$arguments)) call$arguments else .oa_empty_object()
-      tool_calls <- list(list(id = .oa_id("call_"), type = "function",
-                              `function` = list(name = call$name,
-                                                arguments = .oa_json(args))))
-      content <- NULL
-      pieces <- character()
-      finish <- "tool_calls"
-    } else {
-      content <- reply$content
-      pieces <- if (nzchar(content)) content else character()
-      finish <- if (completion_tokens >= n_predict) "length" else "stop"
+    if (identical(forced, character())) use_tools <- FALSE
+  }
+
+  answer <- function(out, tool_calls = list()) {
+    content <- if (length(tool_calls)) NULL else out$text
+    finish <- if (length(tool_calls)) "tool_calls" else out$finish
+    usage <- .oa_usage(out$prompt_tokens, out$completion_tokens, out$cached_tokens)
+    message <- list(role = "assistant", content = content)
+    if (length(tool_calls)) message$tool_calls <- tool_calls
+    response <- list(id = id, object = "chat.completion", created = created,
+                     model = model_name,
+                     choices = list(list(index = 0L, message = message,
+                                         finish_reason = finish)),
+                     usage = usage)
+    if (!isTRUE(body$stream)) return(list(response = response))
+    chunk <- function(delta, finish_reason = NA) {
+      list(id = id, object = "chat.completion.chunk", created = created, model = model_name,
+           choices = list(list(index = 0L, delta = delta, finish_reason = finish_reason)))
     }
+    chunks <- list(chunk(list(role = "assistant", content = "")))
+    chunks <- c(chunks, lapply(.oa_pieces(content), function(p) chunk(list(content = p))))
+    if (length(tool_calls)) {
+      chunks <- c(chunks, list(chunk(list(tool_calls = list(c(list(index = 0L), tool_calls[[1]]))))))
+    }
+    chunks <- c(chunks, list(chunk(.oa_empty_object(), finish)))
+    if (isTRUE(body$stream_options$include_usage)) {
+      chunks <- c(chunks, list(list(id = id, object = "chat.completion.chunk",
+                                    created = created, model = model_name,
+                                    choices = list(), usage = usage)))
+    }
+    list(response = response, chunks = chunks)
   }
-  usage <- .oa_usage(length(edge_tokenize_internal(ctx, prompt, TRUE)), completion_tokens)
+  plain <- function() {
+    prompt <- gen$prompt(.messages_with_tools(messages, NULL, NULL))
+    promises::then(gen$generate(prompt, n_predict, sampling, grammar), answer)
+  }
+  if (!use_tools) return(plain())
 
-  message <- list(role = "assistant", content = content)
-  if (length(tool_calls)) message$tool_calls <- tool_calls
-  response <- list(id = id, object = "chat.completion", created = created,
-                   model = model_name,
-                   choices = list(list(index = 0L, message = message,
-                                       finish_reason = finish)),
-                   usage = usage)
-  if (!isTRUE(body$stream)) return(list(response = response))
-
-  chunk <- function(delta, finish_reason = NA) {
-    list(id = id, object = "chat.completion.chunk", created = created, model = model_name,
-         choices = list(list(index = 0L, delta = delta, finish_reason = finish_reason)))
-  }
-  chunks <- c(list(chunk(list(role = "assistant", content = ""))),
-              lapply(pieces, function(p) chunk(list(content = p))))
-  if (length(tool_calls)) {
-    tc <- tool_calls[[1]]
-    chunks <- c(chunks, list(chunk(list(tool_calls = list(c(list(index = 0L), tc))))))
-  }
-  chunks <- c(chunks, list(chunk(.oa_empty_object(), finish)))
-  if (isTRUE(body$stream_options$include_usage)) {
-    chunks <- c(chunks, list(list(id = id, object = "chat.completion.chunk",
-                                  created = created, model = model_name,
-                                  choices = list(), usage = usage)))
-  }
-  list(response = response, chunks = chunks)
+  # The call itself is chosen greedily, as in edge_chat_completion().
+  prompt <- gen$prompt(.messages_with_tools(messages, checked, forced))
+  call_grammar <- .tool_grammar(checked, forced)
+  promises::then(gen$generate(prompt, n_predict, .sampling_options(0, sampling$top_p), call_grammar),
+                 function(out) {
+    reply <- .parse_tool_reply(out$text, checked)
+    if (isTRUE(reply$none) || (is.null(forced) && .repeats_last_call(reply, messages, checked))) {
+      # No tool needed, or the model asked again for a result it has: answer
+      # in text without the tool instructions.
+      return(plain())
+    }
+    call <- reply$tool_calls[[1]]
+    args <- if (length(call$arguments)) call$arguments else .oa_empty_object()
+    answer(out, list(list(id = .oa_id("call_"), type = "function",
+                          `function` = list(name = call$name, arguments = .oa_json(args)))))
+  })
 }
 
-# POST /v1/completions without the HTTP layer.
-.oa_completion <- function(ctx, body, model_name) {
+# POST /v1/completions without the HTTP layer; a promise like .oa_chat().
+.oa_completion <- function(gen, body, model_name) {
   prompt <- .oa_text(body$prompt)
   n_predict <- .oa_max_tokens(body, 128L)
-  gen <- .oa_generate(ctx, prompt, n_predict, .oa_sampling(body))
+  sampling <- .oa_sampling(body)
   id <- .oa_id("cmpl-")
   created <- as.integer(Sys.time())
-  usage <- .oa_usage(length(edge_tokenize_internal(ctx, prompt, TRUE)), gen$completion_tokens)
-  response <- list(id = id, object = "text_completion", created = created, model = model_name,
-                   choices = list(list(text = gen$text, index = 0L,
-                                       finish_reason = gen$finish_reason)),
-                   usage = usage)
-  if (!isTRUE(body$stream)) return(list(response = response))
-  chunk <- function(text, finish_reason = NA) {
-    list(id = id, object = "text_completion", created = created, model = model_name,
-         choices = list(list(text = text, index = 0L, finish_reason = finish_reason)))
-  }
-  chunks <- c(lapply(gen$pieces, chunk), list(chunk("", gen$finish_reason)))
-  if (isTRUE(body$stream_options$include_usage)) {
-    chunks <- c(chunks, list(list(id = id, object = "text_completion", created = created,
-                                  model = model_name, choices = list(), usage = usage)))
-  }
-  list(response = response, chunks = chunks)
+  promises::then(gen$generate(prompt, n_predict, sampling), function(out) {
+    usage <- .oa_usage(out$prompt_tokens, out$completion_tokens, out$cached_tokens)
+    response <- list(id = id, object = "text_completion", created = created, model = model_name,
+                     choices = list(list(text = out$text, index = 0L,
+                                         finish_reason = out$finish)),
+                     usage = usage)
+    if (!isTRUE(body$stream)) return(list(response = response))
+    chunk <- function(text, finish_reason = NA) {
+      list(id = id, object = "text_completion", created = created, model = model_name,
+           choices = list(list(text = text, index = 0L, finish_reason = finish_reason)))
+    }
+    chunks <- c(lapply(.oa_pieces(out$text), chunk), list(chunk("", out$finish)))
+    if (isTRUE(body$stream_options$include_usage)) {
+      chunks <- c(chunks, list(list(id = id, object = "text_completion", created = created,
+                                    model = model_name, choices = list(), usage = usage)))
+    }
+    list(response = response, chunks = chunks)
+  })
 }
 
-# Runs one endpoint: 400 for a bad request, 500 for anything else.
-.oa_handle <- function(res, fun) {
-  out <- tryCatch(fun(), edge_bad_request = function(e) {
+# Sets the status for an error and returns its body: 400 for a bad
+# request, 503 when the queue is full, 500 for anything else.
+.oa_error <- function(res, e) {
+  if (inherits(e, "edge_bad_request")) {
     res$status <- 400L
-    list(response = list(error = list(message = conditionMessage(e),
-                                      type = "invalid_request_error")))
-  }, error = function(e) {
+    type <- "invalid_request_error"
+  } else if (inherits(e, "edge_busy")) {
+    res$status <- 503L
+    res$setHeader("Retry-After", "5")
+    type <- "server_busy"
+  } else {
     res$status <- 500L
-    list(response = list(error = list(message = conditionMessage(e), type = "server_error")))
-  })
-  if (!is.null(out$chunks)) return(.oa_sse_response(res, out$chunks))
-  out$response
+    type <- "server_error"
+  }
+  list(error = list(message = conditionMessage(e), type = type))
+}
+
+# Runs one endpoint. fun returns the output of .oa_chat() or
+# .oa_completion(), or a promise of it.
+.oa_handle <- function(res, fun) {
+  out <- tryCatch(fun(), error = function(e) e)
+  if (inherits(out, "error")) return(.oa_error(res, out))
+  if (!promises::is.promise(out)) out <- promises::promise_resolve(out)
+  promises::catch(promises::then(out, function(out) {
+    if (!is.null(out$chunks)) return(.oa_sse_response(res, out$chunks))
+    out$response
+  }), function(e) .oa_error(res, e))
 }
 
 #' Serve a model as a local OpenAI-compatible API
@@ -5044,7 +5074,12 @@ print.edge_index <- function(x, ...) {
 #' @param n_gpu_layers GPU layers (default: 0, use -1 for full GPU offload)
 #' @param embeddings Enable embeddings endpoint (default: FALSE)
 #' @param api_key Optional API key for authentication. If set, requests must
-#'   include \code{Authorization: Bearer <key>} header.
+#'   include an \code{Authorization: Bearer <key>} or \code{X-API-Key: <key>}
+#'   header.
+#' @param n_slots Requests generated at once (default: 1); see
+#'   \code{\link{edge_api}}.
+#' @param ... More arguments for \code{\link{edge_api}}, such as
+#'   \code{n_threads}, \code{max_queue} or \code{cache_type}.
 #'
 #' @details
 #' Endpoints served:
@@ -5079,8 +5114,10 @@ print.edge_index <- function(x, ...) {
 #' chunks are produced token by token but sent together when generation
 #' ends, so clients get the format but not the text as it is written.
 #'
-#' The server handles one request at a time and runs in the foreground.
-#' Press Ctrl+C / Esc to stop.
+#' The server is \code{\link{edge_api}} run with \code{plumber::pr_run()}:
+#' requests wait in a queue and \code{n_slots} of them are generated at
+#' once. It runs in the foreground; press Ctrl+C / Esc to stop. For many
+#' users, or Posit Connect, use \code{\link{edge_api}} directly.
 #'
 #' @return Does not return while the server runs.
 #' @examples
@@ -5093,44 +5130,455 @@ print.edge_index <- function(x, ...) {
 #' #   -H "Content-Type: application/json" \
 #' #   -d '{"messages": [{"role": "user", "content": "Hello!"}]}'
 #' }
-#' @seealso \code{\link{chat_edge}}
+#' @seealso \code{\link{edge_api}}, \code{\link{chat_edge}}
 #' @export
 edge_serve <- function(model_path, host = "127.0.0.1", port = 8080L,
                         n_ctx = 2048L, n_gpu_layers = 0L, embeddings = FALSE,
-                        api_key = NULL) {
-
-  if (!requireNamespace("plumber", quietly = TRUE)) {
-    stop("The 'plumber' package is required for edge_serve().\n",
-         "Install it with: install.packages('plumber')")
-  }
-  if (!requireNamespace("jsonlite", quietly = TRUE)) {
-    stop("The 'jsonlite' package is required for edge_serve().\n",
-         "Install it with: install.packages('jsonlite')")
-  }
-
-  if (!file.exists(model_path)) {
-    stop("Model file not found: ", model_path)
-  }
-
-  message("Loading model: ", basename(model_path))
-  ctx <- edge_load_model(model_path, n_ctx = n_ctx,
-                          n_gpu_layers = n_gpu_layers,
-                          embeddings = embeddings)
-
+                        api_key = NULL, n_slots = 1L, ...) {
+  pr <- edge_api(model_path, n_slots = n_slots, n_ctx = n_ctx, embeddings = embeddings,
+                 api_key = api_key, n_gpu_layers = n_gpu_layers, ...)
   model_name <- tools::file_path_sans_ext(basename(model_path))
+  message("
+edgemodelr API server starting")
+  message("  Model: ", model_name, " (", n_slots, if (n_slots == 1) " slot" else " slots", ")")
+  message("  Endpoints:")
+  message("    POST ", host, ":", port, "/v1/completions")
+  message("    POST ", host, ":", port, "/v1/chat/completions")
+  message("    POST ", host, ":", port, "/v1/jobs")
+  if (!isFALSE(embeddings)) message("    POST ", host, ":", port, "/v1/embeddings")
+  message("    GET  ", host, ":", port, "/v1/models")
+  message("    GET  ", host, ":", port, "/health")
+  if (!is.null(api_key)) message("  Auth: API key required")
+  message("
+Press Ctrl+C to stop.
+")
+  plumber::pr_run(pr, host = host, port = as.integer(port))
+}
 
-  # Build plumber API programmatically. The unboxed JSON serializer must be
-  # set before the routes are added, or they keep the boxed default and
-  # every single value is sent as an array.
+#' Run many requests at once on one model
+#'
+#' Starts a serving engine on a loaded model: a background thread that
+#' generates for several requests at the same time with continuous batching,
+#' the way llama.cpp's own server does. Each of \code{n_slots} slots holds
+#' one request; every step decodes the next token of each running request
+#' in one batch, so on CPU total throughput grows with the number of slots
+#' while each request gets a little slower. Requests beyond the slots wait in
+#' a queue, first come first served. A slot keeps its tokens after a request
+#' ends, and a later request that starts the same way (the same system
+#' prompt, or the next turn of a chat) reuses them instead of reading them
+#' again.
+#'
+#' The engine runs beside R: \code{edge_engine_submit()} returns at once
+#' with a request id, and R stays free while the request is generated.
+#' \code{edge_engine_poll()} reports progress and the text so far,
+#' \code{edge_engine_result()} gives a promise of the finished request (for
+#' plumber and Shiny), and \code{edge_engine_generate()} submits prompts and
+#' waits for all of them.
+#'
+#' While the engine runs, the model belongs to it: the direct completion
+#' functions refuse to use \code{ctx} until \code{edge_engine_stop()}.
+#' Tokenizing and chat templates still work. \code{\link{edge_api}} builds
+#' an HTTP API on an engine. An internal llama.cpp error on the engine's
+#' thread cannot become an R error and ends the R process, as it would end
+#' llama.cpp's own server; on Posit Connect the process is then restarted.
+#'
+#' @param ctx A model loaded with \code{\link{edge_load_model}} with
+#'   \code{n_parallel} of at least \code{n_slots} and
+#'   \code{embeddings = FALSE}. The context is shared by the slots: each
+#'   request needs room for its prompt plus \code{n_predict} tokens, and
+#'   waits in the queue until there is room.
+#' @param n_slots Requests generated at once (default: the model's
+#'   \code{n_parallel}).
+#' @param max_queue Requests that may wait (default: 256). A submit beyond
+#'   it fails with an error of class \code{edge_busy}.
+#' @param engine An engine from \code{edge_engine()}.
+#' @param prompt,prompts Prompt text, already formatted (see
+#'   \code{\link{build_chat_prompt}}).
+#' @param n_predict Most tokens to generate (default: 256).
+#' @param temperature,top_p,top_k,min_p,repeat_penalty,seed,stop Sampling,
+#'   as in \code{\link{edge_completion}}. \code{temperature = 0} is greedy.
+#' @param grammar Optional GBNF grammar with a \code{root} rule, such as
+#'   one from \code{\link{edge_json_grammar}}.
+#' @param ids,id Request ids from \code{edge_engine_submit()}.
+#' @param timeout Seconds \code{edge_engine_generate()} waits before it
+#'   cancels what is left (default: no limit).
+#' @return \code{edge_engine()}: an \code{edge_engine} object.
+#'   \code{edge_engine_submit()}: an integer request id.
+#'   \code{edge_engine_poll()} and \code{edge_engine_generate()}: a data
+#'   frame with one row per request: \code{id}, \code{status} ("queued",
+#'   "running", "done" or "unknown"), \code{text} (so far, for an
+#'   unfinished request), \code{finish} ("stop", "length", "cancelled" or
+#'   "error"), \code{error}, \code{prompt_tokens},
+#'   \code{completion_tokens}, \code{cached_tokens} (prompt tokens reused
+#'   from a slot), \code{queue_position}, \code{queue_seconds},
+#'   \code{first_token_seconds} and \code{total_seconds}.
+#'   \code{edge_engine_result()}: a promise of a list with the same fields,
+#'   rejected with an error of class \code{edge_cancelled} if the request is
+#'   cancelled.
+#'   \code{edge_engine_stats()}: a list of counters.
+#' @examples
+#' \dontrun{
+#' ctx <- edge_load_model("gemma-3-1b-it-Q4_K_M.gguf", n_ctx = 8192, n_parallel = 4)
+#' engine <- edge_engine(ctx)
+#' prompts <- vapply(c("Rome", "Paris", "Oslo", "Lima"), function(city) {
+#'   build_chat_prompt(list(list(role = "user",
+#'     content = paste("One fact about", city))), ctx = ctx)
+#' }, character(1))
+#' out <- edge_engine_generate(engine, prompts, n_predict = 60, temperature = 0)
+#' out$text
+#' edge_engine_stats(engine)
+#' edge_engine_stop(engine)
+#' }
+#' @seealso \code{\link{edge_api}}, \code{\link{edge_map}}
+#' @export
+edge_engine <- function(ctx, n_slots = NULL, max_queue = 256L) {
+  if (!is_valid_model(ctx)) stop("Invalid model context. Load a model first with edge_load_model()")
+  if (is.null(n_slots)) n_slots <- edge_n_parallel_internal(ctx)
+  if (!is.numeric(n_slots) || length(n_slots) != 1L || is.na(n_slots) || n_slots < 1 ||
+      n_slots != round(n_slots)) {
+    stop("n_slots must be a positive whole number")
+  }
+  if (!is.numeric(max_queue) || length(max_queue) != 1L || is.na(max_queue) || max_queue < 1) {
+    stop("max_queue must be a positive number")
+  }
+  ptr <- edge_engine_start_internal(ctx, as.integer(n_slots), as.integer(max_queue))
+  state <- new.env(parent = emptyenv())
+  state$waiters <- list()
+  state$scheduled <- FALSE
+  structure(list(ptr = ptr, ctx = ctx, state = state), class = "edge_engine")
+}
+
+#' @export
+print.edge_engine <- function(x, ...) {
+  s <- tryCatch(edge_engine_stats(x), error = function(e) NULL)
+  if (is.null(s) || !isTRUE(s$running)) {
+    cat("<edge_engine: stopped>\n")
+  } else {
+    cat(sprintf("<edge_engine: %d slots, %d running, %d queued, %d requests done>\n",
+                s$slots, s$active, s$queued, as.integer(s$requests_done)))
+  }
+  invisible(x)
+}
+
+.check_engine <- function(engine) {
+  if (!inherits(engine, "edge_engine")) stop("engine must come from edge_engine()")
+}
+
+.engine_submit <- function(engine, prompt, n_predict, sampling, grammar = NULL) {
+  tryCatch(
+    edge_engine_submit_internal(engine$ptr, enc2utf8(prompt), as.integer(n_predict), sampling,
+                                if (is.null(grammar)) "" else grammar, "root"),
+    error = function(e) {
+      msg <- conditionMessage(e)
+      if (grepl("queue_full", msg, fixed = TRUE)) {
+        stop(structure(class = c("edge_busy", "error", "condition"),
+                       list(message = "The server is busy: too many requests are waiting. Try again shortly.",
+                            call = NULL)))
+      }
+      if (grepl("Prompt too long", msg, fixed = TRUE)) .bad_request(msg)
+      stop(e)
+    })
+}
+
+#' @rdname edge_engine
+#' @export
+edge_engine_submit <- function(engine, prompt, n_predict = 256L, temperature = 0.7,
+                               top_p = 0.95, top_k = 0L, min_p = 0, repeat_penalty = 1,
+                               seed = NULL, stop = NULL, grammar = NULL) {
+  .check_engine(engine)
+  if (!is.character(prompt) || length(prompt) != 1L || is.na(prompt)) {
+    stop("prompt must be a single string")
+  }
+  sampling <- .sampling_options(temperature, top_p, top_k, min_p, repeat_penalty, seed, stop)
+  .engine_submit(engine, prompt, n_predict, sampling, grammar)
+}
+
+#' @rdname edge_engine
+#' @export
+edge_engine_poll <- function(engine, ids) {
+  .check_engine(engine)
+  as.data.frame(edge_engine_poll_internal(engine$ptr, as.integer(ids)),
+                stringsAsFactors = FALSE)
+}
+
+#' @rdname edge_engine
+#' @export
+edge_engine_cancel <- function(engine, ids) {
+  .check_engine(engine)
+  edge_engine_cancel_internal(engine$ptr, as.integer(ids))
+  invisible(engine)
+}
+
+#' @rdname edge_engine
+#' @export
+edge_engine_result <- function(engine, id) {
+  .check_engine(engine)
+  if (!requireNamespace("promises", quietly = TRUE) || !requireNamespace("later", quietly = TRUE)) {
+    stop("The 'promises' and 'later' packages are required for edge_engine_result()")
+  }
+  .engine_promise(engine, as.integer(id))
+}
+
+#' @rdname edge_engine
+#' @export
+edge_engine_generate <- function(engine, prompts, n_predict = 256L, temperature = 0.7,
+                                 top_p = 0.95, top_k = 0L, min_p = 0, repeat_penalty = 1,
+                                 seed = NULL, stop = NULL, grammar = NULL, timeout = Inf) {
+  .check_engine(engine)
+  if (!is.character(prompts) || anyNA(prompts)) stop("prompts must be a character vector")
+  sampling <- .sampling_options(temperature, top_p, top_k, min_p, repeat_penalty, seed, stop)
+  ids <- vapply(prompts, function(p) .engine_submit(engine, p, n_predict, sampling, grammar),
+                integer(1), USE.NAMES = FALSE)
+  on.exit(edge_engine_release_internal(engine$ptr, ids), add = TRUE)
+  deadline <- Sys.time() + timeout
+  repeat {
+    out <- edge_engine_poll(engine, ids)
+    if (all(out$status %in% c("done", "unknown"))) break
+    if (Sys.time() > deadline) {
+      edge_engine_cancel_internal(engine$ptr, ids)
+      deadline <- Inf
+    }
+    Sys.sleep(0.02)
+  }
+  out
+}
+
+#' @rdname edge_engine
+#' @export
+edge_engine_stats <- function(engine) {
+  .check_engine(engine)
+  edge_engine_stats_internal(engine$ptr)
+}
+
+#' @rdname edge_engine
+#' @export
+edge_engine_stop <- function(engine) {
+  .check_engine(engine)
+  edge_engine_stop_internal(engine$ptr)
+  waiters <- engine$state$waiters
+  engine$state$waiters <- list()
+  for (ws in waiters) for (w in ws) w$reject(simpleError("The engine was stopped"))
+  invisible(engine)
+}
+
+# A promise of one request. One poll loop per engine, run by later, checks
+# every waiting request and settles the finished ones.
+.engine_promise <- function(engine, id) {
+  promises::promise(function(resolve, reject) {
+    st <- engine$state
+    key <- as.character(id)
+    st$waiters[[key]] <- c(st$waiters[[key]], list(list(resolve = resolve, reject = reject)))
+    .engine_schedule(engine)
+  })
+}
+
+.engine_schedule <- function(engine) {
+  st <- engine$state
+  if (isTRUE(st$scheduled)) return(invisible())
+  st$scheduled <- TRUE
+  later::later(function() .engine_tick(engine), 0.01)
+  invisible()
+}
+
+.engine_row <- function(p, i) lapply(p, function(col) col[[i]])
+
+.engine_tick <- function(engine) {
+  st <- engine$state
+  st$scheduled <- FALSE
+  keys <- names(st$waiters)
+  if (length(keys) == 0L) return(invisible())
+  p <- tryCatch(edge_engine_poll_internal(engine$ptr, as.integer(keys)), error = function(e) e)
+  if (inherits(p, "error")) {
+    waiters <- st$waiters
+    st$waiters <- list()
+    for (ws in waiters) for (w in ws) w$reject(p)
+    return(invisible())
+  }
+  done <- which(p$status %in% c("done", "unknown"))
+  for (i in done) {
+    ws <- st$waiters[[keys[i]]]
+    st$waiters[[keys[i]]] <- NULL
+    row <- .engine_row(p, i)
+    for (w in ws) {
+      if (identical(row$status, "unknown")) {
+        w$reject(simpleError("The request is no longer known to the engine"))
+      } else if (identical(row$finish, "error")) {
+        w$reject(simpleError(row$error))
+      } else if (identical(row$finish, "cancelled")) {
+        w$reject(structure(class = c("edge_cancelled", "error", "condition"),
+                           list(message = "The request was cancelled", call = NULL)))
+      } else {
+        w$resolve(row)
+      }
+    }
+  }
+  if (length(done)) edge_engine_release_internal(engine$ptr, as.integer(keys[done]))
+  if (length(st$waiters)) .engine_schedule(engine)
+  invisible()
+}
+
+# CPUs this process may use when a container limits it (cgroup v2 or v1),
+# or NA. parallel::detectCores() reports the host's cores, and llama.cpp
+# slows down badly with more threads than the container has CPUs.
+.cpu_quota <- function() {
+  read1 <- function(f) tryCatch(readLines(f, n = 1L, warn = FALSE), error = function(e) "")
+  v2 <- "/sys/fs/cgroup/cpu.max"
+  if (file.exists(v2)) {
+    parts <- strsplit(read1(v2), " ", fixed = TRUE)[[1]]
+    if (length(parts) == 2L && parts[1] != "max") {
+      q <- suppressWarnings(as.numeric(parts[1]) / as.numeric(parts[2]))
+      if (is.finite(q) && q > 0) return(q)
+    }
+    return(NA_real_)
+  }
+  quota <- suppressWarnings(as.numeric(read1("/sys/fs/cgroup/cpu/cpu.cfs_quota_us")))
+  period <- suppressWarnings(as.numeric(read1("/sys/fs/cgroup/cpu/cpu.cfs_period_us")))
+  if (length(quota) == 1L && length(period) == 1L && is.finite(quota) && quota > 0 &&
+      is.finite(period) && period > 0) {
+    return(quota / period)
+  }
+  NA_real_
+}
+
+#' Build an OpenAI-compatible API for many users
+#'
+#' Returns a plumber router that serves a local GGUF model to many users at
+#' once, for Posit Connect or any server that runs plumber APIs. The model
+#' is loaded once, and an \code{\link{edge_engine}} generates for up to
+#' \code{n_slots} requests at the same time with continuous batching; more
+#' requests wait in a queue, so a busy server answers later instead of
+#' failing. Request handlers return promises, so the R process keeps
+#' accepting requests while the engine works.
+#'
+#' Endpoints:
+#' \itemize{
+#'   \item \code{POST /v1/chat/completions} and \code{POST /v1/completions}:
+#'     the same requests and replies as \code{\link{edge_serve}}, including
+#'     tools, \code{response_format} and \code{stream}. \code{usage} adds
+#'     \code{prompt_tokens_details$cached_tokens}.
+#'   \item \code{POST /v1/jobs}: takes a chat completion request and returns
+#'     at once (status 202) with a job id. \code{GET /v1/jobs/<id>} gives the
+#'     status, the queue position and the text so far, then the whole chat
+#'     completion as \code{response} once done. \code{DELETE /v1/jobs/<id>}
+#'     cancels it. Jobs suit a Shiny app: it can show the answer as it is
+#'     written, and no request has to stay open while the model works.
+#'     Finished jobs are kept for 15 minutes.
+#'   \item \code{POST /v1/embeddings} when \code{embeddings} is set.
+#'   \item \code{GET /v1/models}, \code{GET /metrics} (engine counters) and
+#'     \code{GET /health} (no key needed).
+#' }
+#'
+#' A full queue answers 503 with \code{Retry-After}.
+#'
+#' Sizing: each slot gets \code{n_ctx} tokens of context, so the KV cache
+#' holds \code{n_slots * n_ctx} tokens (at most 32768); \code{cache_type =
+#' "q8_0"} halves its memory compared with "f16". On CPU, more slots give
+#' more tokens per second in total until the cores are saturated, typically
+#' at about 8 slots; each request then gets slower. Inside a container the
+#' default thread count follows the container's CPU limit.
+#'
+#' @param model_path Path to a .gguf model file.
+#' @param n_slots Requests generated at once (default: 8).
+#' @param n_ctx Context per slot, in tokens (default: 2048): the longest
+#'   prompt plus answer one request may use.
+#' @param n_threads CPU threads (default: one per core, within the
+#'   container's CPU limit). The environment variable
+#'   \code{EDGEMODELR_THREADS} overrides the default.
+#' @param max_queue Requests that may wait for a slot (default: 256).
+#' @param cache_type KV cache type for keys and values (default: "q8_0");
+#'   see \code{\link{edge_load_model}}.
+#' @param embeddings FALSE (default), TRUE to also serve
+#'   \code{/v1/embeddings} from a second copy of the model loaded for
+#'   embeddings, or the path of a .gguf embedding model to serve instead.
+#' @param api_key Optional key. When set, every endpoint but \code{/health}
+#'   needs \code{Authorization: Bearer <key>} or \code{X-API-Key: <key>}.
+#'   On Posit Connect, which uses \code{Authorization} for its own keys, use
+#'   \code{X-API-Key}, or leave this unset and use Connect's access
+#'   settings.
+#' @param model_name Name reported as the model (default: the file name).
+#' @param n_gpu_layers GPU layers (default: 0).
+#' @return A plumber router. Run it with \code{plumber::pr_run()}, or return
+#'   it from \code{entrypoint.R} on Posit Connect. The engine is in
+#'   \code{attr(router, "edge_engine")}.
+#' @examples
+#' \dontrun{
+#' api <- edge_api("gemma-3-1b-it-Q4_K_M.gguf", n_slots = 8)
+#' plumber::pr_run(api, port = 8080)
+#'
+#' # entrypoint.R for Posit Connect
+#' edgemodelr::edge_api(Sys.getenv("EDGEMODELR_MODEL"), n_slots = 8,
+#'                      api_key = Sys.getenv("EDGEMODELR_API_KEY", unset = NA))
+#' }
+#' @seealso \code{\link{edge_serve}}, \code{\link{edge_engine}}
+#' @export
+edge_api <- function(model_path, n_slots = 8L, n_ctx = 2048L, n_threads = NULL,
+                     max_queue = 256L, cache_type = "q8_0", embeddings = FALSE,
+                     api_key = NULL, model_name = NULL, n_gpu_layers = 0L) {
+  for (pkg in c("plumber", "jsonlite", "promises", "later")) {
+    if (!requireNamespace(pkg, quietly = TRUE)) {
+      stop("The '", pkg, "' package is required for edge_api().\n",
+           "Install it with: install.packages('", pkg, "')")
+    }
+  }
+  if (!is.character(model_path) || length(model_path) != 1L || is.na(model_path) ||
+      !nzchar(model_path)) {
+    stop("model_path must be the path of a .gguf model")
+  }
+  if (!file.exists(model_path)) stop("Model file not found: ", model_path)
+  if (!is.numeric(n_slots) || length(n_slots) != 1L || is.na(n_slots) || n_slots < 1 ||
+      n_slots > 64 || n_slots != round(n_slots)) {
+    stop("n_slots must be a whole number from 1 to 64")
+  }
+  if (!is.numeric(n_ctx) || length(n_ctx) != 1L || is.na(n_ctx) || n_ctx < 128) {
+    stop("n_ctx must be at least 128")
+  }
+  total_ctx <- as.integer(n_slots * n_ctx)
+  if (total_ctx > 32768L) {
+    stop("n_slots * n_ctx is ", total_ctx, " tokens, more than the 32768 a context can hold; ",
+         "lower n_slots or n_ctx")
+  }
+  if (length(api_key) != 1L || is.na(api_key) || !nzchar(api_key)) api_key <- NULL
+  if (is.null(n_threads)) {
+    env <- suppressWarnings(as.integer(Sys.getenv("EDGEMODELR_THREADS")))
+    n_threads <- if (!is.na(env) && env > 0) env else .default_threads()
+  }
+
+  ctx <- edge_load_model(model_path, n_ctx = total_ctx, n_gpu_layers = n_gpu_layers,
+                         n_threads = if (n_threads > 0) n_threads else NULL,
+                         n_parallel = as.integer(n_slots),
+                         cache_type_k = cache_type, cache_type_v = cache_type)
+  engine <- edge_engine(ctx, n_slots = n_slots, max_queue = max_queue)
+
+  embed_ctx <- NULL
+  if (isTRUE(embeddings) || is.character(embeddings)) {
+    embed_path <- if (is.character(embeddings)) embeddings else model_path
+    embed_ctx <- edge_load_model(embed_path, n_ctx = n_ctx, n_gpu_layers = n_gpu_layers,
+                                 n_threads = if (n_threads > 0) n_threads else NULL,
+                                 embeddings = TRUE)
+  }
+  if (is.null(model_name)) model_name <- tools::file_path_sans_ext(basename(model_path))
+  jobs <- new.env(parent = emptyenv())
+
   pr <- plumber::pr()
   pr <- plumber::pr_set_serializer(
     pr, plumber::serializer_unboxed_json(null = "null", na = "null", digits = NA))
 
-  # Auth filter
-  if (!is.null(api_key) && nchar(api_key) > 0) {
+  pr <- plumber::pr_filter(pr, "cors", function(req, res) {
+    res$setHeader("Access-Control-Allow-Origin", "*")
+    res$setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
+    res$setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-API-Key")
+    if (req$REQUEST_METHOD == "OPTIONS") {
+      res$status <- 200L
+      return(list())
+    }
+    plumber::forward()
+  })
+  if (!is.null(api_key)) {
     pr <- plumber::pr_filter(pr, "auth", function(req, res) {
-      auth <- req$HTTP_AUTHORIZATION
-      if (is.null(auth) || auth != paste("Bearer", api_key)) {
+      if (identical(req$PATH_INFO, "/health")) return(plumber::forward())
+      bearer <- req$HTTP_AUTHORIZATION
+      key <- req$HTTP_X_API_KEY
+      if (!identical(key, api_key) && !identical(bearer, paste("Bearer", api_key))) {
         res$status <- 401L
         return(list(error = list(message = "Invalid API key", type = "authentication_error")))
       }
@@ -5138,53 +5586,116 @@ edge_serve <- function(model_path, host = "127.0.0.1", port = 8080L,
     })
   }
 
-  # CORS filter
-  pr <- plumber::pr_filter(pr, "cors", function(req, res) {
-    res$setHeader("Access-Control-Allow-Origin", "*")
-    res$setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-    res$setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization")
-    if (req$REQUEST_METHOD == "OPTIONS") {
-      res$status <- 200L
-      return(list())
-    }
-    plumber::forward()
+  engine_stats <- function() {
+    s <- edge_engine_stats(engine)
+    s$tokens_per_second <- if (s$busy_seconds > 0) s$tokens_generated / s$busy_seconds else 0
+    s
+  }
+  pr <- plumber::pr_get(pr, "/health", function(res) {
+    s <- edge_engine_stats(engine)
+    if (!isTRUE(s$running)) res$status <- 503L
+    list(status = if (isTRUE(s$running)) "ok" else "stopped", model = model_name,
+         slots = s$slots, active = s$active, queued = s$queued)
   })
-
-  # GET /health
-  pr <- plumber::pr_get(pr, "/health", function() {
-    list(status = "ok", model = model_name)
-  })
-
-  # GET /v1/models
+  pr <- plumber::pr_get(pr, "/metrics", function() engine_stats())
   pr <- plumber::pr_get(pr, "/v1/models", function() {
     list(object = "list", data = list(
       list(id = model_name, object = "model", owned_by = "local")
     ))
   })
-
-  # POST /v1/completions
   pr <- plumber::pr_post(pr, "/v1/completions", function(req, res) {
-    .oa_handle(res, function() .oa_completion(ctx, .oa_body(req), model_name))
+    .oa_handle(res, function() .oa_completion(.engine_gen(engine), .oa_body(req), model_name))
   })
-
-  # POST /v1/chat/completions
   pr <- plumber::pr_post(pr, "/v1/chat/completions", function(req, res) {
-    .oa_handle(res, function() .oa_chat(ctx, .oa_body(req), model_name))
+    .oa_handle(res, function() .oa_chat(.engine_gen(engine), .oa_body(req), model_name))
   })
 
-  # POST /v1/embeddings (only if enabled)
-  if (embeddings) {
+  # Jobs: the chat completion runs in the background and is fetched later.
+  forget_old_jobs <- function() {
+    old <- Sys.time() - 15 * 60
+    for (key in ls(jobs)) {
+      job <- jobs[[key]]
+      if (!is.null(job$ended) && job$ended < old) rm(list = key, envir = jobs)
+    }
+  }
+  pr <- plumber::pr_post(pr, "/v1/jobs", function(req, res) {
+    forget_old_jobs()
+    job <- new.env(parent = emptyenv())
+    job$id <- .oa_id("job-")
+    job$status <- "queued"
+    job$created <- as.integer(Sys.time())
+    body <- tryCatch(.oa_body(req), error = function(e) e)
+    if (inherits(body, "error")) return(.oa_error(res, body))
+    body$stream <- FALSE
+    gen <- .engine_gen(engine, on_submit = function(id) job$engine_id <- id)
+    p <- tryCatch(.oa_chat(gen, body, model_name), error = function(e) e)
+    if (inherits(p, "error")) return(.oa_error(res, p))
+    promises::then(p, function(out) {
+      if (isTRUE(job$cancelled)) return(invisible())
+      job$status <- "done"
+      job$response <- out$response
+      job$ended <- Sys.time()
+    }, onRejected = function(e) {
+      job$status <- if (isTRUE(job$cancelled)) "cancelled" else "error"
+      job$error <- conditionMessage(e)
+      job$ended <- Sys.time()
+    })
+    jobs[[job$id]] <- job
+    res$status <- 202L
+    list(id = job$id, object = "chat.completion.job", status = "queued", created = job$created)
+  })
+  job_view <- function(job) {
+    out <- list(id = job$id, object = "chat.completion.job", status = job$status,
+                created = job$created)
+    if (identical(job$status, "done")) {
+      out$response <- job$response
+    } else if (job$status %in% c("error", "cancelled")) {
+      out$error <- list(message = job$error %||% job$status)
+    } else if (!is.null(job$engine_id)) {
+      p <- edge_engine_poll_internal(engine$ptr, job$engine_id)
+      if (p$status %in% c("queued", "running")) {
+        out$status <- p$status
+        out$text <- p$text
+        out$queue_position <- p$queue_position
+        out$completion_tokens <- p$completion_tokens
+      }
+    }
+    out
+  }
+  find_job <- function(id, res) {
+    job <- if (exists(id, envir = jobs, inherits = FALSE)) jobs[[id]]
+    if (is.null(job)) res$status <- 404L
+    job
+  }
+  pr <- plumber::pr_get(pr, "/v1/jobs/<id>", function(id, res) {
+    job <- find_job(id, res)
+    if (is.null(job)) return(list(error = list(message = "No such job", type = "not_found")))
+    job_view(job)
+  })
+  pr <- plumber::pr_delete(pr, "/v1/jobs/<id>", function(id, res) {
+    job <- find_job(id, res)
+    if (is.null(job)) return(list(error = list(message = "No such job", type = "not_found")))
+    if (job$status %in% c("queued", "running")) {
+      job$cancelled <- TRUE
+      if (!is.null(job$engine_id)) edge_engine_cancel_internal(engine$ptr, job$engine_id)
+      job$status <- "cancelled"
+      job$ended <- Sys.time()
+    }
+    job_view(job)
+  })
+
+  if (!is.null(embed_ctx)) {
     pr <- plumber::pr_post(pr, "/v1/embeddings", function(req, res) {
       .oa_handle(res, function() {
         body <- .oa_body(req)
         if (is.null(body$input)) .bad_request("input is required")
         texts <- as.character(unlist(body$input))
-        emb_matrix <- edge_embeddings(ctx, texts)
+        emb_matrix <- edge_embeddings(embed_ctx, texts)
         data_list <- lapply(seq_len(nrow(emb_matrix)), function(i) {
           list(object = "embedding", embedding = as.numeric(emb_matrix[i, ]),
                index = i - 1L)
         })
-        n_tokens <- sum(vapply(texts, function(t) length(edge_tokenize_internal(ctx, t, TRUE)),
+        n_tokens <- sum(vapply(texts, function(t) length(edge_tokenize_internal(embed_ctx, t, TRUE)),
                                integer(1)))
         list(response = list(object = "list", data = data_list, model = model_name,
                              usage = list(prompt_tokens = n_tokens, total_tokens = n_tokens)))
@@ -5192,24 +5703,13 @@ edge_serve <- function(model_path, host = "127.0.0.1", port = 8080L,
     })
   }
 
-  message("\nedgemodelr API server starting")
-  message("  Model: ", model_name)
-  message("  Endpoints:")
-  message("    POST ", host, ":", port, "/v1/completions")
-  message("    POST ", host, ":", port, "/v1/chat/completions")
-  if (embeddings) message("    POST ", host, ":", port, "/v1/embeddings")
-  message("    GET  ", host, ":", port, "/v1/models")
-  message("    GET  ", host, ":", port, "/health")
-  if (!is.null(api_key)) message("  Auth: API key required")
-  message("\nPress Ctrl+C to stop.\n")
-
-  # Clean up model on exit
-  on.exit({
+  pr <- plumber::pr_hook(pr, "exit", function() {
+    edge_engine_stop(engine)
     tryCatch(edge_free_model(ctx), error = function(e) NULL)
-    message("Model freed.")
+    if (!is.null(embed_ctx)) tryCatch(edge_free_model(embed_ctx), error = function(e) NULL)
   })
-
-  plumber::pr_run(pr, host = host, port = as.integer(port))
+  attr(pr, "edge_engine") <- engine
+  pr
 }
 
 # Servers started by chat_edge(), by model path, so a second chat on the
@@ -5443,6 +5943,10 @@ embed_edge <- function(x, model_path, n_ctx = 2048L, normalize = TRUE) {
 # 0 lets the C++ side fall back to all hardware threads.
 .default_threads <- function() {
   n <- tryCatch(parallel::detectCores(logical = FALSE), error = function(e) NA_integer_)
-  if (length(n) != 1 || is.na(n) || n < 1) return(0L)
+  if (length(n) != 1 || is.na(n) || n < 1) n <- NA_integer_
+  # In a container, no more threads than the CPUs it may use.
+  quota <- .cpu_quota()
+  if (!is.na(quota)) n <- min(n, max(1L, floor(quota)), na.rm = TRUE)
+  if (is.na(n)) return(0L)
   return(as.integer(n))
 }

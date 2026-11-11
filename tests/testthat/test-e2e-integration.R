@@ -763,3 +763,82 @@ test_that("E2E: A q8_0 KV cache gives the same greedy text as f16", {
   first_word <- function(x) strsplit(trimws(x), "[[:space:][:punct:]]+")[[1]][1]
   expect_identical(first_word(q8), first_word(base))
 })
+
+test_that("E2E: The engine matches a direct call and runs requests side by side", {
+  skip_on_cran()
+  skip_if_offline()
+  skip_on_os("windows") # Windows CI has memory/segfault issues with model loading
+
+  test_dir <- file.path(tempdir(), "edgemodelr_integration_tests")
+  models <- edge_list_models()
+  tiny_model <- models[models$name == "TinyLlama-1.1B", ]
+  model_path <- file.path(test_dir, tiny_model$filename[1])
+  if (!file.exists(model_path)) {
+    edge_download_url(tiny_model$download_url[1], tiny_model$filename[1],
+                      cache_dir = test_dir)
+  }
+
+  direct <- edge_load_model(model_path, n_ctx = 512)
+  want <- edge_completion(direct, "The capital of France is", n_predict = 8, temperature = 0)
+  edge_free_model(direct)
+
+  ctx <- edge_load_model(model_path, n_ctx = 2048, n_parallel = 4)
+  engine <- edge_engine(ctx)
+  on.exit({
+    edge_engine_stop(engine)
+    edge_free_model(ctx)
+  })
+  one <- edge_engine_generate(engine, "The capital of France is", n_predict = 8, temperature = 0)
+  expect_identical(one$text, want)
+  expect_identical(one$finish, "length")
+  expect_identical(one$completion_tokens, 8L)
+
+  prompts <- paste("Write a sentence about", c("cats", "rivers", "music", "bread", "snow", "trains"))
+  out <- edge_engine_generate(engine, prompts, n_predict = 12, temperature = 0)
+  expect_identical(nrow(out), 6L)
+  expect_true(all(out$status == "done"))
+  expect_true(all(nzchar(out$text)))
+  expect_lte(max(out$completion_tokens), 12L)
+  # The same prompt again reuses the slot's tokens.
+  again <- edge_engine_generate(engine, prompts[1], n_predict = 2, temperature = 0)
+  expect_gt(again$cached_tokens, 0L)
+  s <- edge_engine_stats(engine)
+  expect_identical(s$requests_failed, 0)
+  expect_error(edge_completion(ctx, "Hi", n_predict = 2), "serving requests through an engine")
+
+  # Cancel a long request.
+  id <- edge_engine_submit(engine, "Tell a very long story.", n_predict = 400, temperature = 0)
+  edge_engine_cancel(engine, id)
+  for (i in 1:200) {
+    p <- edge_engine_poll(engine, id)
+    if (p$status == "done") break
+    Sys.sleep(0.05)
+  }
+  expect_identical(p$finish, "cancelled")
+
+  # After a prefix is reused, the text is still the direct call's text.
+  reused <- edge_engine_generate(engine, "The capital of France is", n_predict = 8, temperature = 0)
+  expect_gt(reused$cached_tokens, 0L)
+  expect_identical(reused$text, want)
+
+  # A grammar through the engine gives JSON of the schema.
+  g <- edge_json_grammar(list(city = "string", big = c("yes", "no")))
+  js <- edge_engine_generate(engine, rep("Describe Paris as JSON.", 3), n_predict = 40,
+                             temperature = 0, grammar = g)
+  parsed <- lapply(js$text, jsonlite::fromJSON)
+  expect_true(all(vapply(parsed, function(x) x$big %in% c("yes", "no"), logical(1))))
+
+  # A cancelled request rejects its promise.
+  skip_if_not_installed("promises")
+  skip_if_not_installed("later")
+  id <- edge_engine_submit(engine, "Tell a very long story.", n_predict = 400, temperature = 0)
+  outcome <- NULL
+  promises::then(edge_engine_result(engine, id), function(v) outcome <<- "resolved",
+                 onRejected = function(e) outcome <<- class(e)[1])
+  edge_engine_cancel(engine, id)
+  for (i in 1:400) {
+    later::run_now(0.05)
+    if (!is.null(outcome)) break
+  }
+  expect_identical(outcome, "edge_cancelled")
+})

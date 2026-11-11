@@ -148,6 +148,100 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
+// edge_engine_start_internal
+SEXP edge_engine_start_internal(SEXP model_ptr, int n_slots, int max_queue);
+RcppExport SEXP _edgemodelr_edge_engine_start_internal(SEXP model_ptrSEXP, SEXP n_slotsSEXP, SEXP max_queueSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< SEXP >::type model_ptr(model_ptrSEXP);
+    Rcpp::traits::input_parameter< int >::type n_slots(n_slotsSEXP);
+    Rcpp::traits::input_parameter< int >::type max_queue(max_queueSEXP);
+    rcpp_result_gen = Rcpp::wrap(edge_engine_start_internal(model_ptr, n_slots, max_queue));
+    return rcpp_result_gen;
+END_RCPP
+}
+// edge_engine_stop_all_internal
+int edge_engine_stop_all_internal();
+RcppExport SEXP _edgemodelr_edge_engine_stop_all_internal() {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    rcpp_result_gen = Rcpp::wrap(edge_engine_stop_all_internal());
+    return rcpp_result_gen;
+END_RCPP
+}
+// edge_engine_submit_internal
+int edge_engine_submit_internal(SEXP engine_ptr, std::string prompt, int n_predict, List sampling, std::string grammar_str, std::string grammar_root);
+RcppExport SEXP _edgemodelr_edge_engine_submit_internal(SEXP engine_ptrSEXP, SEXP promptSEXP, SEXP n_predictSEXP, SEXP samplingSEXP, SEXP grammar_strSEXP, SEXP grammar_rootSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< SEXP >::type engine_ptr(engine_ptrSEXP);
+    Rcpp::traits::input_parameter< std::string >::type prompt(promptSEXP);
+    Rcpp::traits::input_parameter< int >::type n_predict(n_predictSEXP);
+    Rcpp::traits::input_parameter< List >::type sampling(samplingSEXP);
+    Rcpp::traits::input_parameter< std::string >::type grammar_str(grammar_strSEXP);
+    Rcpp::traits::input_parameter< std::string >::type grammar_root(grammar_rootSEXP);
+    rcpp_result_gen = Rcpp::wrap(edge_engine_submit_internal(engine_ptr, prompt, n_predict, sampling, grammar_str, grammar_root));
+    return rcpp_result_gen;
+END_RCPP
+}
+// edge_engine_poll_internal
+List edge_engine_poll_internal(SEXP engine_ptr, IntegerVector ids);
+RcppExport SEXP _edgemodelr_edge_engine_poll_internal(SEXP engine_ptrSEXP, SEXP idsSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< SEXP >::type engine_ptr(engine_ptrSEXP);
+    Rcpp::traits::input_parameter< IntegerVector >::type ids(idsSEXP);
+    rcpp_result_gen = Rcpp::wrap(edge_engine_poll_internal(engine_ptr, ids));
+    return rcpp_result_gen;
+END_RCPP
+}
+// edge_engine_release_internal
+void edge_engine_release_internal(SEXP engine_ptr, IntegerVector ids);
+RcppExport SEXP _edgemodelr_edge_engine_release_internal(SEXP engine_ptrSEXP, SEXP idsSEXP) {
+BEGIN_RCPP
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< SEXP >::type engine_ptr(engine_ptrSEXP);
+    Rcpp::traits::input_parameter< IntegerVector >::type ids(idsSEXP);
+    edge_engine_release_internal(engine_ptr, ids);
+    return R_NilValue;
+END_RCPP
+}
+// edge_engine_cancel_internal
+void edge_engine_cancel_internal(SEXP engine_ptr, IntegerVector ids);
+RcppExport SEXP _edgemodelr_edge_engine_cancel_internal(SEXP engine_ptrSEXP, SEXP idsSEXP) {
+BEGIN_RCPP
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< SEXP >::type engine_ptr(engine_ptrSEXP);
+    Rcpp::traits::input_parameter< IntegerVector >::type ids(idsSEXP);
+    edge_engine_cancel_internal(engine_ptr, ids);
+    return R_NilValue;
+END_RCPP
+}
+// edge_engine_stats_internal
+List edge_engine_stats_internal(SEXP engine_ptr);
+RcppExport SEXP _edgemodelr_edge_engine_stats_internal(SEXP engine_ptrSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< SEXP >::type engine_ptr(engine_ptrSEXP);
+    rcpp_result_gen = Rcpp::wrap(edge_engine_stats_internal(engine_ptr));
+    return rcpp_result_gen;
+END_RCPP
+}
+// edge_engine_stop_internal
+void edge_engine_stop_internal(SEXP engine_ptr);
+RcppExport SEXP _edgemodelr_edge_engine_stop_internal(SEXP engine_ptrSEXP) {
+BEGIN_RCPP
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< SEXP >::type engine_ptr(engine_ptrSEXP);
+    edge_engine_stop_internal(engine_ptr);
+    return R_NilValue;
+END_RCPP
+}
 // edge_save_state_internal
 int edge_save_state_internal(SEXP model_ptr, std::string path);
 RcppExport SEXP _edgemodelr_edge_save_state_internal(SEXP model_ptrSEXP, SEXP pathSEXP) {
@@ -195,6 +289,18 @@ BEGIN_RCPP
     Rcpp::traits::input_parameter< Rcpp::Nullable<Rcpp::NumericVector> >::type scales(scalesSEXP);
     rcpp_result_gen = Rcpp::wrap(edge_lora_scales_internal(model_ptr, scales));
     return rcpp_result_gen;
+END_RCPP
+}
+// edge_set_threads_internal
+void edge_set_threads_internal(SEXP model_ptr, int n_threads, int n_threads_batch);
+RcppExport SEXP _edgemodelr_edge_set_threads_internal(SEXP model_ptrSEXP, SEXP n_threadsSEXP, SEXP n_threads_batchSEXP) {
+BEGIN_RCPP
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< SEXP >::type model_ptr(model_ptrSEXP);
+    Rcpp::traits::input_parameter< int >::type n_threads(n_threadsSEXP);
+    Rcpp::traits::input_parameter< int >::type n_threads_batch(n_threads_batchSEXP);
+    edge_set_threads_internal(model_ptr, n_threads, n_threads_batch);
+    return R_NilValue;
 END_RCPP
 }
 // edge_n_parallel_internal
@@ -297,10 +403,19 @@ static const R_CallMethodDef CallEntries[] = {
     {"_edgemodelr_edge_completion_stream_internal", (DL_FUNC) &_edgemodelr_edge_completion_stream_internal, 5},
     {"_edgemodelr_edge_completion_grammar_internal", (DL_FUNC) &_edgemodelr_edge_completion_grammar_internal, 7},
     {"_edgemodelr_edge_completion_batch_internal", (DL_FUNC) &_edgemodelr_edge_completion_batch_internal, 7},
+    {"_edgemodelr_edge_engine_start_internal", (DL_FUNC) &_edgemodelr_edge_engine_start_internal, 3},
+    {"_edgemodelr_edge_engine_stop_all_internal", (DL_FUNC) &_edgemodelr_edge_engine_stop_all_internal, 0},
+    {"_edgemodelr_edge_engine_submit_internal", (DL_FUNC) &_edgemodelr_edge_engine_submit_internal, 6},
+    {"_edgemodelr_edge_engine_poll_internal", (DL_FUNC) &_edgemodelr_edge_engine_poll_internal, 2},
+    {"_edgemodelr_edge_engine_release_internal", (DL_FUNC) &_edgemodelr_edge_engine_release_internal, 2},
+    {"_edgemodelr_edge_engine_cancel_internal", (DL_FUNC) &_edgemodelr_edge_engine_cancel_internal, 2},
+    {"_edgemodelr_edge_engine_stats_internal", (DL_FUNC) &_edgemodelr_edge_engine_stats_internal, 1},
+    {"_edgemodelr_edge_engine_stop_internal", (DL_FUNC) &_edgemodelr_edge_engine_stop_internal, 1},
     {"_edgemodelr_edge_save_state_internal", (DL_FUNC) &_edgemodelr_edge_save_state_internal, 2},
     {"_edgemodelr_edge_load_state_internal", (DL_FUNC) &_edgemodelr_edge_load_state_internal, 2},
     {"_edgemodelr_edge_embeddings_internal", (DL_FUNC) &_edgemodelr_edge_embeddings_internal, 3},
     {"_edgemodelr_edge_lora_scales_internal", (DL_FUNC) &_edgemodelr_edge_lora_scales_internal, 2},
+    {"_edgemodelr_edge_set_threads_internal", (DL_FUNC) &_edgemodelr_edge_set_threads_internal, 3},
     {"_edgemodelr_edge_n_parallel_internal", (DL_FUNC) &_edgemodelr_edge_n_parallel_internal, 1},
     {"_edgemodelr_edge_model_n_embd_internal", (DL_FUNC) &_edgemodelr_edge_model_n_embd_internal, 1},
     {"_edgemodelr_edge_tokenize_internal", (DL_FUNC) &_edgemodelr_edge_tokenize_internal, 3},
