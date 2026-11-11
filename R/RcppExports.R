@@ -13,8 +13,8 @@ edge_cuda_backend_loaded_internal <- function() {
     .Call(`_edgemodelr_edge_cuda_backend_loaded_internal`)
 }
 
-edge_load_model_internal <- function(model_path, n_ctx, n_gpu_layers, n_threads, flash_attn, embeddings, prompt_cache, lora_paths, lora_scales, n_parallel) {
-    .Call(`_edgemodelr_edge_load_model_internal`, model_path, n_ctx, n_gpu_layers, n_threads, flash_attn, embeddings, prompt_cache, lora_paths, lora_scales, n_parallel)
+edge_load_model_internal <- function(model_path, n_ctx, n_gpu_layers, n_threads, flash_attn, embeddings, prompt_cache, lora_paths, lora_scales, n_parallel, cache_type_k = "f16", cache_type_v = "f16") {
+    .Call(`_edgemodelr_edge_load_model_internal`, model_path, n_ctx, n_gpu_layers, n_threads, flash_attn, embeddings, prompt_cache, lora_paths, lora_scales, n_parallel, cache_type_k, cache_type_v)
 }
 
 edge_completion_internal <- function(model_ptr, prompt, n_predict, sampling, timeout_seconds = 0.0) {

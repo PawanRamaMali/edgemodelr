@@ -401,14 +401,32 @@ static bool decode_token(EdgeModelContext & e, llama_token token) {
   return true;
 }
 
+// The KV cache types edge_load_model() accepts. These are the ones the CPU
+// flash attention kernels support; another type would reach a GGML_ASSERT.
+static ggml_type kv_cache_type(const std::string& name) {
+  static const std::pair<const char*, ggml_type> types[] = {
+    {"f16", GGML_TYPE_F16},   {"bf16", GGML_TYPE_BF16}, {"q8_0", GGML_TYPE_Q8_0},
+    {"q5_1", GGML_TYPE_Q5_1}, {"q5_0", GGML_TYPE_Q5_0}, {"q4_1", GGML_TYPE_Q4_1},
+    {"q4_0", GGML_TYPE_Q4_0}, {"iq4_nl", GGML_TYPE_IQ4_NL}};
+  for (const auto& t : types) {
+    if (name == t.first) return t.second;
+  }
+  stop("Unknown KV cache type: " + name);
+}
+
 // [[Rcpp::export]]
 SEXP edge_load_model_internal(std::string model_path, int n_ctx, int n_gpu_layers, int n_threads, bool flash_attn, bool embeddings, bool prompt_cache,
                               std::vector<std::string> lora_paths,
                               std::vector<double> lora_scales,
-                              int n_parallel) {
+                              int n_parallel,
+                              std::string cache_type_k = "f16",
+                              std::string cache_type_v = "f16") {
   try {
     // Ensure llama is properly initialized
     ensure_llama_initialized();
+    // Checked before the model loads, so a bad name does not leak it.
+    const ggml_type type_k = kv_cache_type(cache_type_k);
+    const ggml_type type_v = kv_cache_type(cache_type_v);
     
     llama_model_params model_params = llama_model_default_params();
     model_params.n_gpu_layers = n_gpu_layers;
@@ -490,6 +508,9 @@ SEXP edge_load_model_internal(std::string model_path, int n_ctx, int n_gpu_layer
     ctx_params.flash_attn_type = flash_attn
       ? LLAMA_FLASH_ATTN_TYPE_ENABLED
       : LLAMA_FLASH_ATTN_TYPE_DISABLED;
+    // Quantized V needs flash attention; edge_load_model() checks that.
+    ctx_params.type_k = type_k;
+    ctx_params.type_v = type_v;
     ctx_params.embeddings = embeddings;
     if (embeddings) {
       // edge_embeddings() decodes several texts at once, one sequence each.
@@ -510,6 +531,12 @@ SEXP edge_load_model_internal(std::string model_path, int n_ctx, int n_gpu_layer
     struct llama_context* ctx = llama_init_from_model(model, ctx_params);
     if (!ctx) {
       llama_model_free(model);
+      if (cache_type_k != "f16" || cache_type_v != "f16") {
+        stop("Failed to create context for model with cache_type_k = \"" + cache_type_k +
+             "\" and cache_type_v = \"" + cache_type_v + "\". The model's attention "
+             "head size may not fit this cache type, or the model may need the "
+             "same type for both; try \"q8_0\" for both, or \"f16\".");
+      }
       stop("Failed to create context for model");
     }
     
@@ -1428,8 +1455,16 @@ NumericMatrix edge_embeddings_internal(SEXP model_ptr, std::vector<std::string> 
     const struct llama_vocab* vocab = llama_model_get_vocab(edge_ctx->model);
     if (!vocab) stop("Failed to get vocabulary from model");
 
-    const int n_embd = llama_model_n_embd(edge_ctx->model);
+    // The embedding buffers hold n_embd_out values, which differs from
+    // n_embd for models that project their output, such as EmbeddingGemma2.
+    const int n_embd = llama_model_n_embd_out(edge_ctx->model);
     if (n_embd <= 0) stop("Failed to get embedding dimension from model");
+    // A reranker pools to n_cls_out scores, not n_embd values, so reading an
+    // embedding from it would run past the end of the buffer.
+    if (llama_pooling_type(edge_ctx->ctx) == LLAMA_POOLING_TYPE_RANK) {
+      stop("This model is a reranker: it scores query and document pairs and "
+           "does not produce embeddings");
+    }
 
     const int n_texts = static_cast<int>(texts.size());
     NumericMatrix result(n_texts, n_embd);
@@ -1567,7 +1602,7 @@ int edge_model_n_embd_internal(SEXP model_ptr) {
     if (TYPEOF(model_ptr) != EXTPTRSXP) stop("Invalid model context");
     XPtr<EdgeModelContext> edge_ctx(model_ptr);
     if (!edge_ctx->is_valid()) stop("Invalid model context");
-    return llama_model_n_embd(edge_ctx->model);
+    return llama_model_n_embd_out(edge_ctx->model);
   } catch (const std::exception& e) {
     stop("Error getting embedding dimension: " + std::string(e.what()));
   }

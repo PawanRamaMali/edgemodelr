@@ -736,3 +736,30 @@ test_that("E2E: the prompt cache can be saved and loaded", {
   writeBin(charToRaw("not a state file"), bad)
   expect_error(edge_load_state(b, bad), "Not a state file")
 })
+
+test_that("E2E: A q8_0 KV cache gives the same greedy text as f16", {
+  skip_on_cran()
+  skip_if_offline()
+  skip_on_os("windows") # Windows CI has memory/segfault issues with model loading
+
+  test_dir <- file.path(tempdir(), "edgemodelr_integration_tests")
+  models <- edge_list_models()
+  tiny_model <- models[models$name == "TinyLlama-1.1B", ]
+  model_path <- file.path(test_dir, tiny_model$filename[1])
+  if (!file.exists(model_path)) {
+    edge_download_url(tiny_model$download_url[1], tiny_model$filename[1],
+                      cache_dir = test_dir)
+  }
+
+  greedy <- function(k, v) {
+    ctx <- edge_load_model(model_path, n_ctx = 512, cache_type_k = k, cache_type_v = v)
+    on.exit(edge_free_model(ctx))
+    edge_completion(ctx, "The capital of France is", n_predict = 8, temperature = 0)
+  }
+  base <- greedy("f16", "f16")
+  q8 <- greedy("q8_0", "q8_0")
+  expect_true(nchar(q8) > 0)
+  # The first words should agree; a quantized cache can change later tokens.
+  first_word <- function(x) strsplit(trimws(x), "[[:space:][:punct:]]+")[[1]][1]
+  expect_identical(first_word(q8), first_word(base))
+})

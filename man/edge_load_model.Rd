@@ -14,7 +14,9 @@ edge_load_model(
   prompt_cache = FALSE,
   lora = NULL,
   lora_scale = 1,
-  n_parallel = 1L
+  n_parallel = 1L,
+  cache_type_k = "f16",
+  cache_type_v = "f16"
 )
 }
 \arguments{
@@ -59,6 +61,13 @@ CPU costs little more than one token, so batches of texts finish several
 times faster. The prompts share the context, so make \code{n_ctx} large
 enough for all of them with their answers; fewer run at once when they
 do not fit.}
+
+\item{cache_type_k, cache_type_v}{Number format of the keys and values in
+the KV cache (default: "f16"). One of "f16", "bf16", "q8_0", "q5_1",
+"q5_0", "q4_1", "q4_0" or "iq4_nl". "q8_0" for both halves the memory
+the cache takes, with almost no change in output, so a larger
+\code{n_ctx} fits; the 4-bit types save more and cost some quality.
+A quantized \code{cache_type_v} needs \code{flash_attn = TRUE}.}
 }
 \value{
 External pointer to the loaded model context
