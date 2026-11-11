@@ -5170,10 +5170,13 @@ Press Ctrl+C to stop.
 #'
 #' The engine runs beside R: \code{edge_engine_submit()} returns at once
 #' with a request id, and R stays free while the request is generated.
-#' \code{edge_engine_poll()} reports progress and the text so far,
+#' \code{edge_engine_poll()} reports progress and the text so far. A
+#' finished request is kept until \code{edge_engine_release()} frees it
+#' (an unfinished one is cancelled first), so a client that polls should
+#' release each request once it has read the result.
 #' \code{edge_engine_result()} gives a promise of the finished request (for
-#' plumber and Shiny), and \code{edge_engine_generate()} submits prompts and
-#' waits for all of them.
+#' plumber and Shiny) and \code{edge_engine_generate()} submits prompts and
+#' waits for all of them; both free the requests themselves.
 #'
 #' While the engine runs, the model belongs to it: the direct completion
 #' functions refuse to use \code{ctx} until \code{edge_engine_stop()}.
@@ -5303,6 +5306,14 @@ edge_engine_poll <- function(engine, ids) {
 
 #' @rdname edge_engine
 #' @export
+edge_engine_release <- function(engine, ids) {
+  .check_engine(engine)
+  edge_engine_release_internal(engine$ptr, as.integer(ids))
+  invisible(engine)
+}
+
+#' @rdname edge_engine
+#' @export
 edge_engine_cancel <- function(engine, ids) {
   .check_engine(engine)
   edge_engine_cancel_internal(engine$ptr, as.integer(ids))
@@ -5327,9 +5338,11 @@ edge_engine_generate <- function(engine, prompts, n_predict = 256L, temperature 
   .check_engine(engine)
   if (!is.character(prompts) || anyNA(prompts)) stop("prompts must be a character vector")
   sampling <- .sampling_options(temperature, top_p, top_k, min_p, repeat_penalty, seed, stop)
-  ids <- vapply(prompts, function(p) .engine_submit(engine, p, n_predict, sampling, grammar),
-                integer(1), USE.NAMES = FALSE)
-  on.exit(edge_engine_release_internal(engine$ptr, ids), add = TRUE)
+  # Registered first, so a submit that fails part way (a full queue, a
+  # prompt too long) cancels and releases the ones already submitted.
+  ids <- integer()
+  on.exit(if (length(ids)) edge_engine_release_internal(engine$ptr, ids), add = TRUE)
+  for (p in prompts) ids <- c(ids, .engine_submit(engine, p, n_predict, sampling, grammar))
   deadline <- Sys.time() + timeout
   repeat {
     out <- edge_engine_poll(engine, ids)

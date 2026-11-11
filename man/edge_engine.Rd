@@ -4,6 +4,7 @@
 \alias{edge_engine}
 \alias{edge_engine_submit}
 \alias{edge_engine_poll}
+\alias{edge_engine_release}
 \alias{edge_engine_cancel}
 \alias{edge_engine_result}
 \alias{edge_engine_generate}
@@ -28,6 +29,8 @@ edge_engine_submit(
 )
 
 edge_engine_poll(engine, ids)
+
+edge_engine_release(engine, ids)
 
 edge_engine_cancel(engine, ids)
 
@@ -114,10 +117,13 @@ again.
 \details{
 The engine runs beside R: \code{edge_engine_submit()} returns at once
 with a request id, and R stays free while the request is generated.
-\code{edge_engine_poll()} reports progress and the text so far,
+\code{edge_engine_poll()} reports progress and the text so far. A
+finished request is kept until \code{edge_engine_release()} frees it
+(an unfinished one is cancelled first), so a client that polls should
+release each request once it has read the result.
 \code{edge_engine_result()} gives a promise of the finished request (for
-plumber and Shiny), and \code{edge_engine_generate()} submits prompts and
-waits for all of them.
+plumber and Shiny) and \code{edge_engine_generate()} submits prompts and
+waits for all of them; both free the requests themselves.
 
 While the engine runs, the model belongs to it: the direct completion
 functions refuse to use \code{ctx} until \code{edge_engine_stop()}.

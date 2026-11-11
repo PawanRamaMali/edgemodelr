@@ -68,6 +68,7 @@ test_that("edge_engine checks its arguments", {
   expect_error(edge_engine(NULL), "Invalid model context")
   expect_error(edge_engine_poll(list(), 1L), "engine must come from edge_engine")
   expect_error(edge_engine_submit("x", "prompt"), "engine must come from edge_engine")
+  expect_error(edge_engine_release(list(), 1L), "engine must come from edge_engine")
 })
 
 test_that("streamed text is cut into pieces that add up to the text", {

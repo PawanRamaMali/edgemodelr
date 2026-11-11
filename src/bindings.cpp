@@ -1608,11 +1608,15 @@ struct ServeEngine {
       finish_locked(s, "stop");
       return false;
     }
-    char buf[512];
-    int n_chars = llama_token_to_piece(vocab, token, buf, sizeof(buf), 0, true);
+    std::vector<char> piece(512);
+    int n_chars = llama_token_to_piece(vocab, token, piece.data(), static_cast<int32_t>(piece.size()), 0, true);
+    if (n_chars < 0) {   // longer than the buffer: retry with the size it needs
+      piece.resize(static_cast<size_t>(-n_chars));
+      n_chars = llama_token_to_piece(vocab, token, piece.data(), static_cast<int32_t>(piece.size()), 0, true);
+    }
     if (n_chars > 0) {
       const size_t before = r.text.size();
-      r.text.append(buf, n_chars);
+      r.text.append(piece.data(), n_chars);
       if (!r.opts.stop.empty()) {
         const size_t at = find_stop(r.text, r.opts.stop, before);
         if (at != std::string::npos) {

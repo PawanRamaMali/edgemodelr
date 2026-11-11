@@ -816,6 +816,10 @@ test_that("E2E: The engine matches a direct call and runs requests side by side"
   }
   expect_identical(p$finish, "cancelled")
 
+  # Polling clients free finished requests with edge_engine_release().
+  edge_engine_release(engine, id)
+  expect_identical(edge_engine_poll(engine, id)$status, "unknown")
+
   # After a prefix is reused, the text is still the direct call's text.
   reused <- edge_engine_generate(engine, "The capital of France is", n_predict = 8, temperature = 0)
   expect_gt(reused$cached_tokens, 0L)
