@@ -41,6 +41,38 @@ edge_completion_batch_internal <- function(model_ptr, prompts, n_predict, sampli
     .Call(`_edgemodelr_edge_completion_batch_internal`, model_ptr, prompts, n_predict, sampling, seeds, grammar_str, grammar_root)
 }
 
+edge_engine_start_internal <- function(model_ptr, n_slots, max_queue) {
+    .Call(`_edgemodelr_edge_engine_start_internal`, model_ptr, n_slots, max_queue)
+}
+
+edge_engine_stop_all_internal <- function() {
+    .Call(`_edgemodelr_edge_engine_stop_all_internal`)
+}
+
+edge_engine_submit_internal <- function(engine_ptr, prompt, n_predict, sampling, grammar_str = "", grammar_root = "root") {
+    .Call(`_edgemodelr_edge_engine_submit_internal`, engine_ptr, prompt, n_predict, sampling, grammar_str, grammar_root)
+}
+
+edge_engine_poll_internal <- function(engine_ptr, ids) {
+    .Call(`_edgemodelr_edge_engine_poll_internal`, engine_ptr, ids)
+}
+
+edge_engine_release_internal <- function(engine_ptr, ids) {
+    invisible(.Call(`_edgemodelr_edge_engine_release_internal`, engine_ptr, ids))
+}
+
+edge_engine_cancel_internal <- function(engine_ptr, ids) {
+    invisible(.Call(`_edgemodelr_edge_engine_cancel_internal`, engine_ptr, ids))
+}
+
+edge_engine_stats_internal <- function(engine_ptr) {
+    .Call(`_edgemodelr_edge_engine_stats_internal`, engine_ptr)
+}
+
+edge_engine_stop_internal <- function(engine_ptr) {
+    invisible(.Call(`_edgemodelr_edge_engine_stop_internal`, engine_ptr))
+}
+
 edge_save_state_internal <- function(model_ptr, path) {
     .Call(`_edgemodelr_edge_save_state_internal`, model_ptr, path)
 }
@@ -55,6 +87,10 @@ edge_embeddings_internal <- function(model_ptr, texts, normalize = TRUE) {
 
 edge_lora_scales_internal <- function(model_ptr, scales = NULL) {
     .Call(`_edgemodelr_edge_lora_scales_internal`, model_ptr, scales)
+}
+
+edge_set_threads_internal <- function(model_ptr, n_threads, n_threads_batch) {
+    invisible(.Call(`_edgemodelr_edge_set_threads_internal`, model_ptr, n_threads, n_threads_batch))
 }
 
 edge_n_parallel_internal <- function(model_ptr) {

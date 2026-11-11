@@ -55,5 +55,7 @@
     # Silently ignore cleanup errors during unload
   })
 
+  # An engine thread must not run code from an unloaded DLL.
+  try(edge_engine_stop_all_internal(), silent = TRUE)
   library.dynam.unload("edgemodelr", libpath)
 }

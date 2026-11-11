@@ -11,7 +11,9 @@ edge_serve(
   n_ctx = 2048L,
   n_gpu_layers = 0L,
   embeddings = FALSE,
-  api_key = NULL
+  api_key = NULL,
+  n_slots = 1L,
+  ...
 )
 }
 \arguments{
@@ -28,7 +30,14 @@ edge_serve(
 \item{embeddings}{Enable embeddings endpoint (default: FALSE)}
 
 \item{api_key}{Optional API key for authentication. If set, requests must
-include \code{Authorization: Bearer <key>} header.}
+include an \code{Authorization: Bearer <key>} or \code{X-API-Key: <key>}
+header.}
+
+\item{n_slots}{Requests generated at once (default: 1); see
+\code{\link{edge_api}}.}
+
+\item{...}{More arguments for \code{\link{edge_api}}, such as
+\code{n_threads}, \code{max_queue} or \code{cache_type}.}
 }
 \value{
 Does not return while the server runs.
@@ -73,8 +82,10 @@ the OpenAI chunk format, ending with \code{data: [DONE]}, and
 chunks are produced token by token but sent together when generation
 ends, so clients get the format but not the text as it is written.
 
-The server handles one request at a time and runs in the foreground.
-Press Ctrl+C / Esc to stop.
+The server is \code{\link{edge_api}} run with \code{plumber::pr_run()}:
+requests wait in a queue and \code{n_slots} of them are generated at
+once. It runs in the foreground; press Ctrl+C / Esc to stop. For many
+users, or Posit Connect, use \code{\link{edge_api}} directly.
 }
 \examples{
 \dontrun{
@@ -88,5 +99,5 @@ edge_serve("model.gguf", port = 8080)
 }
 }
 \seealso{
-\code{\link{chat_edge}}
+\code{\link{edge_api}}, \code{\link{chat_edge}}
 }

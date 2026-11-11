@@ -13,6 +13,10 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <mutex>
+#include <condition_variable>
+#include <deque>
+#include <map>
 
 #include "llama.h"
 #include "llama-grammar.h"
@@ -43,19 +47,20 @@ static std::string g_cuda_backend_path;
 // Tracks whether the CUDA backend DLL was successfully loaded by ggml_backend_load()
 static bool g_cuda_backend_loaded = false;
 
+// Thread that R runs on; recorded at package load. Only this thread may
+// signal an R error or warning.
+static std::thread::id g_r_main_thread;
+
 // Custom log callback to suppress output
 void quiet_log_callback(ggml_log_level level, const char * text, void * user_data) {
   // Only output critical errors using R's error system, suppress all other output
-  if (g_logging_enabled && level >= GGML_LOG_LEVEL_ERROR) {
+  if (g_logging_enabled && level >= GGML_LOG_LEVEL_ERROR &&
+      std::this_thread::get_id() == g_r_main_thread) {
     // Use R's warning system instead of direct stderr output
     Rcpp::warning(std::string("llama.cpp error: ") + text);
   }
   // Otherwise, completely suppress output
 }
-
-// Thread that R runs on; recorded at package load. Only this thread may
-// signal an R error.
-static std::thread::id g_r_main_thread;
 
 // ggml abort callback. Without one, GGML_ABORT/GGML_ASSERT end in
 // raise(SIGABRT) (see ggml_abort in ggml.c) and take down the R session.
@@ -288,6 +293,9 @@ bool edge_cuda_backend_loaded_internal() {
   return g_cuda_backend_loaded;
 }
 
+struct ServeEngine;
+static void engine_detach(ServeEngine * engine);
+
 struct EdgeModelContext {
   struct llama_model* model = NULL;
   struct llama_context* ctx = NULL;
@@ -307,6 +315,9 @@ struct EdgeModelContext {
   // Prompts edge_completion_batch_internal() may run at once (n_parallel).
   int n_parallel = 1;
 
+  // The serving engine using this context, if any (see ServeEngine).
+  ServeEngine * engine = nullptr;
+
   EdgeModelContext() = default;
 
   // Copy constructor and assignment deleted to prevent double-free
@@ -318,6 +329,8 @@ struct EdgeModelContext {
   }
 
   void cleanup() {
+    // An engine thread may be decoding with the context: stop it first.
+    if (engine) engine_detach(engine);
     if (ctx) {
       llama_free(ctx);
       ctx = NULL;
@@ -343,6 +356,8 @@ struct EdgeModelContext {
     }
   }
 };
+
+static void check_no_engine(const EdgeModelContext & e);
 
 // Sets the context's LoRA adapters to the loaded ones at their scales. An
 // adapter at scale 0 is left out instead of being computed for nothing.
@@ -587,6 +602,7 @@ std::string edge_completion_internal(SEXP model_ptr, std::string prompt, int n_p
     }
 
     XPtr<EdgeModelContext> edge_ctx(model_ptr);
+    check_no_engine(*edge_ctx);
 
     if (!edge_ctx->is_valid() || edge_ctx->ctx == nullptr || edge_ctx->model == nullptr) {
       stop("Invalid model context or null pointers");
@@ -760,6 +776,7 @@ List edge_completion_stream_internal(SEXP model_ptr, std::string prompt, Functio
     }
     
     XPtr<EdgeModelContext> edge_ctx(model_ptr);
+    check_no_engine(*edge_ctx);
 
     if (!edge_ctx->is_valid() || edge_ctx->ctx == nullptr || edge_ctx->model == nullptr) {
       stop("Invalid model context or null pointers");
@@ -948,6 +965,7 @@ std::string edge_completion_grammar_internal(SEXP model_ptr, std::string prompt,
     }
 
     XPtr<EdgeModelContext> edge_ctx(model_ptr);
+    check_no_engine(*edge_ctx);
 
     if (!edge_ctx->is_valid() || edge_ctx->ctx == nullptr || edge_ctx->model == nullptr) {
       stop("Invalid model context or null pointers");
@@ -1150,9 +1168,11 @@ struct BatchSeq {
 // Samples from output `idx` of the last decode. With a grammar, the token the
 // chain picks is checked alone first and the whole vocabulary is filtered
 // only when the grammar rejects it, as in edge_completion_grammar_internal().
-static llama_token batch_sample(BatchSeq & s, llama_context * ctx, int32_t idx,
-                                std::vector<llama_token_data> & candidates) {
-  if (!s.grammar) return llama_sampler_sample(s.chain.get(), ctx, idx);
+static llama_token sample_tokens(llama_sampler * chain_s, llama_sampler * grammar_s,
+                                 llama_context * ctx, int32_t idx,
+                                 std::vector<llama_token_data> & candidates,
+                                 bool plain_greedy = false) {
+  if (!grammar_s) return llama_sampler_sample(chain_s, ctx, idx);
   const float * logits = llama_get_logits_ith(ctx, idx);
   const int n_vocab = static_cast<int>(candidates.size());
   auto fill = [&]() {
@@ -1160,20 +1180,48 @@ static llama_token batch_sample(BatchSeq & s, llama_context * ctx, int32_t idx,
     return llama_token_data_array{candidates.data(), static_cast<size_t>(n_vocab), -1, false};
   };
   llama_token_data_array cur = fill();
-  llama_sampler_apply(s.chain.get(), &cur);
+  llama_sampler_apply(chain_s, &cur);
   llama_token token = cur.data[cur.selected].id;
   llama_token_data single = {token, 1.0f, 0.0f};
   llama_token_data_array one = {&single, 1, -1, false};
-  llama_sampler_apply(s.grammar.get(), &one);
+  llama_sampler_apply(grammar_s, &one);
+  if (std::isinf(single.logit) && single.logit < 0 && plain_greedy) {
+    // Greedy with no other step: the answer is the allowed token with the
+    // highest logit, so look among the top ones before the whole vocabulary,
+    // which is slow with large vocabularies (262k tokens for Gemma 3).
+    const size_t k = std::min<size_t>(512, static_cast<size_t>(n_vocab));
+    cur = fill();
+    // Ties go to the lower id, as in llama.cpp's greedy sampler.
+    auto by_logit = [](const llama_token_data & a, const llama_token_data & b) {
+      return a.logit > b.logit || (a.logit == b.logit && a.id < b.id);
+    };
+    std::nth_element(cur.data, cur.data + (k - 1), cur.data + n_vocab, by_logit);
+    std::sort(cur.data, cur.data + k, by_logit);
+    llama_token_data_array top = {cur.data, k, -1, true};
+    llama_sampler_apply(grammar_s, &top);
+    for (size_t j = 0; j < k; ++j) {
+      if (!(std::isinf(top.data[j].logit) && top.data[j].logit < 0)) {
+        token = top.data[j].id;
+        llama_sampler_accept(grammar_s, token);
+        llama_sampler_accept(chain_s, token);
+        return token;
+      }
+    }
+  }
   if (std::isinf(single.logit) && single.logit < 0) {
     cur = fill();
-    llama_sampler_apply(s.grammar.get(), &cur);
-    llama_sampler_apply(s.chain.get(), &cur);
+    llama_sampler_apply(grammar_s, &cur);
+    llama_sampler_apply(chain_s, &cur);
     token = cur.data[cur.selected].id;
   }
-  llama_sampler_accept(s.grammar.get(), token);
-  llama_sampler_accept(s.chain.get(), token);
+  llama_sampler_accept(grammar_s, token);
+  llama_sampler_accept(chain_s, token);
   return token;
+}
+
+static llama_token batch_sample(BatchSeq & s, llama_context * ctx, int32_t idx,
+                                std::vector<llama_token_data> & candidates) {
+  return sample_tokens(s.chain.get(), s.grammar.get(), ctx, idx, candidates);
 }
 
 // Adds a sampled token to a sequence's text. Returns false once the
@@ -1220,6 +1268,7 @@ std::vector<std::string> edge_completion_batch_internal(SEXP model_ptr, std::vec
   try {
     if (TYPEOF(model_ptr) != EXTPTRSXP) stop("Invalid model context");
     XPtr<EdgeModelContext> edge_ctx(model_ptr);
+    check_no_engine(*edge_ctx);
     if (!edge_ctx->is_valid()) stop("Invalid model context or null pointers");
     if (n_predict <= 0) stop("n_predict must be positive");
     SamplingOptions opts = read_sampling(sampling);
@@ -1329,6 +1378,718 @@ std::vector<std::string> edge_completion_batch_internal(SEXP model_ptr, std::vec
   }
 }
 
+// ---------------------------------------------------------------------------
+// Serving engine. One background thread runs many requests on one context,
+// the way llama.cpp's server does: each slot is a sequence in a unified KV
+// cache, and every step decodes the next token of each generating slot plus
+// prompt tokens of slots still reading their prompt, in a single batch. On
+// CPU a step for many sequences costs little more than a step for one, so
+// total throughput grows with the number of slots. A finished slot keeps its
+// tokens, and a later request that starts the same way (the same system
+// prompt, or the next turn of the same chat) skips that part of its prompt.
+//
+// The thread never calls R. R submits requests, polls them and cancels them;
+// everything both sides touch is guarded by the engine's mutex. While an
+// engine runs, the model's context belongs to it, and the direct completion
+// functions refuse to use it (check_no_engine).
+
+struct ServeEngine;
+// Engines that have a running thread. Only R's thread touches this.
+static std::vector<ServeEngine *> g_engines;
+
+static double engine_now() {
+  return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
+struct EngineRequest {
+  int id = 0;
+  std::vector<llama_token> prompt;
+  int n_predict = 0;
+  SamplingOptions opts;
+  bool plain_greedy = false;   // temperature 0 and no repeat penalty
+  sampler_ptr chain;
+  sampler_ptr grammar;
+  grammar_ptr shadow;        // the grammar's state, to find text it forces
+  // Guarded by ServeEngine::mu.
+  int status = 0;            // 0 queued, 1 running, 2 done
+  bool cancel = false;
+  bool released = false;     // R no longer wants it: forget it when it ends
+  std::string text;
+  int n_generated = 0;
+  int n_cached = 0;          // prompt tokens reused from a slot
+  std::string finish;        // stop, length, cancelled, error
+  std::string error;
+  double t_submit = 0, t_start = 0, t_first = 0, t_end = 0;
+};
+
+struct EngineSlot {
+  llama_seq_id seq = 0;
+  std::shared_ptr<EngineRequest> req;   // null when idle
+  std::vector<llama_token> cache;       // tokens in this sequence's KV cells
+  size_t n_prompt_done = 0;             // prompt tokens of req in the cache
+  llama_token last = 0;                 // sampled, not yet decoded
+  bool pending = false;
+  std::vector<llama_token> forced;      // forced by the grammar, after last
+  int32_t i_batch = -1;                 // row of this slot's logits
+  double last_used = 0;
+};
+
+struct ServeEngine {
+  EdgeModelContext * owner = nullptr;
+  llama_context * ctx = nullptr;
+  const llama_vocab * vocab = nullptr;
+  int n_ctx = 0;
+  int n_batch = 0;
+  int max_queue = 0;
+  double t_started = 0;
+
+  std::mutex mu;
+  std::condition_variable cv;
+  std::deque<std::shared_ptr<EngineRequest>> queue;
+  std::map<int, std::shared_ptr<EngineRequest>> requests;
+  std::vector<EngineSlot> slots;
+  std::thread worker;
+  bool stopping = false;
+  int next_id = 1;
+
+  // Counters, guarded by mu.
+  long long n_done = 0, n_failed = 0, n_cancelled = 0;
+  long long tokens_generated = 0, tokens_prompt = 0, tokens_reused = 0;
+  double busy_seconds = 0;
+  double sample_seconds = 0;
+  long long tokens_forced = 0;
+  long long kv_tokens = 0;   // tokens in the slots' caches, updated by the worker
+  int n_active = 0;
+
+  std::vector<llama_token_data> candidates;   // worker only
+
+  ~ServeEngine() { stop(); }
+
+  void stop() {
+    g_engines.erase(std::remove(g_engines.begin(), g_engines.end(), this), g_engines.end());
+    {
+      std::lock_guard<std::mutex> lock(mu);
+      stopping = true;
+    }
+    cv.notify_all();
+    if (worker.joinable()) worker.join();
+    std::lock_guard<std::mutex> lock(mu);
+    for (auto & kv : requests) {
+      if (kv.second->status != 2) {
+        kv.second->status = 2;
+        kv.second->finish = "error";
+        kv.second->error = "The engine was stopped";
+        kv.second->t_end = engine_now();
+      }
+    }
+    queue.clear();
+    for (EngineSlot & s : slots) {
+      s.req.reset();
+      s.cache.clear();
+    }
+    if (ctx) clear_kv_cache(ctx);
+    if (owner) owner->engine = nullptr;
+    owner = nullptr;
+    ctx = nullptr;
+  }
+
+  // Ends a request; mu must be held.
+  void finish_locked(EngineSlot & s, const std::string & why, const std::string & err = "") {
+    std::shared_ptr<EngineRequest> r = s.req;
+    if (!r) return;
+    r->status = 2;
+    r->finish = why;
+    r->error = err;
+    r->t_end = engine_now();
+    if (why == "error") n_failed++;
+    else if (why == "cancelled") n_cancelled++;
+    else n_done++;
+    s.req.reset();
+    s.pending = false;
+    s.last_used = r->t_end;
+    n_active--;
+    if (r->released) requests.erase(r->id);
+  }
+
+  void drop_seq(EngineSlot & s) {
+    llama_memory_seq_rm(llama_get_memory(ctx), s.seq, -1, -1);
+    s.cache.clear();
+  }
+
+  // Moves queued requests into free slots, first come first served, while
+  // the KV cache has room for each one's prompt and longest answer.
+  // mu must be held.
+  void admit_locked() {
+    llama_memory_t mem = llama_get_memory(ctx);
+    while (!queue.empty()) {
+      std::shared_ptr<EngineRequest> r = queue.front();
+      if (r->cancel) {
+        queue.pop_front();
+        r->status = 2;
+        r->finish = "cancelled";
+        r->t_end = engine_now();
+        n_cancelled++;
+        if (r->released) requests.erase(r->id);
+        continue;
+      }
+      // The idle slot sharing the longest prefix with the prompt; ties go to
+      // the one unused longest.
+      int best = -1;
+      size_t best_keep = 0;
+      for (size_t i = 0; i < slots.size(); ++i) {
+        const EngineSlot & s = slots[i];
+        if (s.req) continue;
+        size_t keep = 0;
+        const size_t n = std::min(s.cache.size(), r->prompt.size());
+        while (keep < n && s.cache[keep] == r->prompt[keep]) ++keep;
+        if (best < 0 || keep > best_keep ||
+            (keep == best_keep && s.last_used < slots[best].last_used)) {
+          best = static_cast<int>(i);
+          best_keep = keep;
+        }
+      }
+      if (best < 0) return;   // every slot is busy
+      EngineSlot & slot = slots[best];
+
+      // Room: running requests hold their prompt plus their longest answer;
+      // idle slots hold what they cached, and give it up when needed.
+      const long long need = static_cast<long long>(r->prompt.size()) + r->n_predict;
+      long long used = 0;
+      for (size_t i = 0; i < slots.size(); ++i) {
+        if (static_cast<int>(i) == best) continue;
+        const EngineSlot & s = slots[i];
+        used += s.req ? static_cast<long long>(s.req->prompt.size()) + s.req->n_predict
+                      : static_cast<long long>(s.cache.size());
+      }
+      while (used + need > n_ctx) {
+        int lru = -1;
+        for (size_t i = 0; i < slots.size(); ++i) {
+          if (static_cast<int>(i) == best || slots[i].req || slots[i].cache.empty()) continue;
+          if (lru < 0 || slots[i].last_used < slots[lru].last_used) lru = static_cast<int>(i);
+        }
+        if (lru < 0) break;
+        used -= static_cast<long long>(slots[lru].cache.size());
+        drop_seq(slots[lru]);
+      }
+      if (used + need > n_ctx) return;   // wait for running requests to finish
+
+      size_t keep = best_keep;
+      if (keep == r->prompt.size() && keep > 0) --keep;   // the last token gives the logits
+      if (keep > 0 && !llama_memory_seq_rm(mem, slot.seq, static_cast<llama_pos>(keep), -1)) keep = 0;
+      const int32_t n_swa = llama_model_n_swa(owner->model);
+      if (keep > 0 && n_swa > 0 &&
+          llama_memory_seq_pos_min(mem, slot.seq) > std::max<llama_pos>(0, static_cast<llama_pos>(keep) - n_swa)) {
+        keep = 0;
+      }
+      if (keep == 0) drop_seq(slot);
+      slot.cache.resize(keep);
+      slot.n_prompt_done = keep;
+      slot.pending = false;
+      slot.req = r;
+      r->status = 1;
+      r->n_cached = static_cast<int>(keep);
+      r->t_start = engine_now();
+      tokens_reused += static_cast<long long>(keep);
+      n_active++;
+      queue.pop_front();
+    }
+  }
+
+  // Adds a sampled token to the slot's request. Returns false once it is
+  // finished. mu must be held.
+  bool take_locked(EngineSlot & s, llama_token token) {
+    // Held here: finishing a released request drops it from the map.
+    const std::shared_ptr<EngineRequest> keep = s.req;
+    EngineRequest & r = *keep;
+    if (r.n_generated == 0) r.t_first = engine_now();
+    r.n_generated++;
+    tokens_generated++;
+    if (llama_vocab_is_eog(vocab, token)) {
+      finish_locked(s, "stop");
+      return false;
+    }
+    std::vector<char> piece(512);
+    int n_chars = llama_token_to_piece(vocab, token, piece.data(), static_cast<int32_t>(piece.size()), 0, true);
+    if (n_chars < 0) {   // longer than the buffer: retry with the size it needs
+      piece.resize(static_cast<size_t>(-n_chars));
+      n_chars = llama_token_to_piece(vocab, token, piece.data(), static_cast<int32_t>(piece.size()), 0, true);
+    }
+    if (n_chars > 0) {
+      const size_t before = r.text.size();
+      r.text.append(piece.data(), n_chars);
+      if (!r.opts.stop.empty()) {
+        const size_t at = find_stop(r.text, r.opts.stop, before);
+        if (at != std::string::npos) {
+          r.text.resize(at);
+          finish_locked(s, "stop");
+          return false;
+        }
+      }
+    }
+    if (r.n_generated >= r.n_predict) {
+      finish_locked(s, "length");
+      return false;
+    }
+    s.last = token;
+    s.pending = true;
+    s.forced.clear();
+    if (r.shadow) jump_forward_locked(s);
+    return r.status != 2;
+  }
+
+  // Text the grammar allows in only one way (JSON keys and separators) is
+  // taken without sampling and decoded with the next token in one step, as
+  // edge_completion_grammar_internal() does. mu must be held.
+  void jump_forward_locked(EngineSlot & s) {
+    EngineRequest & r = *s.req;
+    llama_grammar_accept_impl(*r.shadow, s.last);
+    const std::string text = grammar_forced_text(*r.shadow);
+    if (text.empty()) return;
+    std::vector<llama_token> ft(text.size() + 1);
+    int n_ft = llama_tokenize(vocab, text.c_str(), (int32_t)text.size(), ft.data(),
+                              (int32_t)ft.size(), false, false);
+    // The last token is left to the model: it may merge with what follows.
+    if (n_ft > 0) n_ft -= 1;
+    if (n_ft <= 0 || r.n_generated + n_ft >= r.n_predict) return;
+    ft.resize(n_ft);
+    std::string spelled;
+    for (llama_token tk : ft) {
+      char buf[256];
+      const int n = llama_token_to_piece(vocab, tk, buf, sizeof(buf), 0, false);
+      if (n < 0) return;
+      spelled.append(buf, n);
+    }
+    if (spelled.empty() || text.compare(0, spelled.size(), spelled) != 0) return;
+    for (llama_token tk : ft) {
+      llama_sampler_accept(r.grammar.get(), tk);
+      llama_grammar_accept_impl(*r.shadow, tk);
+      llama_sampler_accept(r.chain.get(), tk);
+    }
+    r.n_generated += n_ft;
+    tokens_generated += n_ft;
+    tokens_forced += n_ft;
+    const size_t before = r.text.size();
+    r.text += spelled;
+    if (!r.opts.stop.empty()) {
+      const size_t at = find_stop(r.text, r.opts.stop, before);
+      if (at != std::string::npos) {
+        r.text.resize(at);
+        finish_locked(s, "stop");
+        return;
+      }
+    }
+    s.forced = ft;
+  }
+
+  // One step: build the batch, decode it, sample. Returns false when there
+  // was nothing to do.
+  bool step(llama_batch & batch, std::vector<int> & row_slot) {
+    {
+      std::lock_guard<std::mutex> lock(mu);
+      for (EngineSlot & s : slots) {
+        if (s.req && s.req->cancel) finish_locked(s, "cancelled");
+      }
+      admit_locked();
+    }
+    batch.n_tokens = 0;
+    row_slot.clear();
+    long long n_prompt_tokens = 0;
+    for (size_t i = 0; i < slots.size(); ++i) {
+      EngineSlot & s = slots[i];
+      s.i_batch = -1;
+      if (!s.req || !s.pending) continue;
+      batch_add(batch, s.last, static_cast<llama_pos>(s.cache.size()), s.seq, s.forced.empty());
+      row_slot.push_back(static_cast<int>(i));
+      s.cache.push_back(s.last);
+      for (size_t k = 0; k < s.forced.size(); ++k) {
+        batch_add(batch, s.forced[k], static_cast<llama_pos>(s.cache.size()), s.seq,
+                  k + 1 == s.forced.size());
+        row_slot.push_back(static_cast<int>(i));
+        s.cache.push_back(s.forced[k]);
+      }
+      s.i_batch = batch.n_tokens - 1;
+      s.forced.clear();
+      s.pending = false;
+    }
+    for (size_t i = 0; i < slots.size() && batch.n_tokens < n_batch; ++i) {
+      EngineSlot & s = slots[i];
+      if (!s.req || s.n_prompt_done >= s.req->prompt.size()) continue;
+      const std::vector<llama_token> & p = s.req->prompt;
+      while (s.n_prompt_done < p.size() && batch.n_tokens < n_batch) {
+        const bool last = s.n_prompt_done + 1 == p.size();
+        if (last) s.i_batch = batch.n_tokens;
+        batch_add(batch, p[s.n_prompt_done], static_cast<llama_pos>(s.cache.size()), s.seq, last);
+        row_slot.push_back(static_cast<int>(i));
+        s.cache.push_back(p[s.n_prompt_done]);
+        s.n_prompt_done++;
+        n_prompt_tokens++;
+      }
+    }
+    if (batch.n_tokens == 0) return false;
+
+    const double t0 = engine_now();
+    const int32_t n_tokens = batch.n_tokens;
+    int32_t view = std::min(n_tokens, static_cast<int32_t>(n_batch));
+    for (int32_t i = 0; i < n_tokens;) {
+      const int32_t n = std::min(view, n_tokens - i);
+      llama_batch v = {n, batch.token + i, nullptr, batch.pos + i, batch.n_seq_id + i,
+                       batch.seq_id + i, batch.logits + i};
+      const int ret = llama_decode(ctx, v);
+      if (ret == 1 && n > 1) {   // no room for this many at once: try fewer
+        view = n / 2;
+        continue;
+      }
+      if (ret != 0) {
+        std::lock_guard<std::mutex> lock(mu);
+        for (int32_t k = i; k < n_tokens; ++k) {
+          EngineSlot & s = slots[row_slot[k]];
+          if (!s.req) continue;
+          finish_locked(s, "error", ret == 1 ? "The context is full; raise n_ctx" : "Failed to decode");
+          drop_seq(s);
+        }
+        break;
+      }
+      for (size_t si = 0; si < slots.size(); ++si) {
+        EngineSlot & s = slots[si];
+        if (!s.req || s.i_batch < i || s.i_batch >= i + n) continue;
+        const double ts = engine_now();
+        const llama_token token = sample_tokens(s.req->chain.get(), s.req->grammar.get(), ctx,
+                                                s.i_batch - i, candidates, s.req->plain_greedy);
+        std::lock_guard<std::mutex> lock(mu);
+        take_locked(s, token);
+        sample_seconds += engine_now() - ts;
+      }
+      i += n;
+    }
+    std::lock_guard<std::mutex> lock(mu);
+    busy_seconds += engine_now() - t0;
+    tokens_prompt += n_prompt_tokens;
+    kv_tokens = 0;
+    for (const EngineSlot & sl : slots) kv_tokens += static_cast<long long>(sl.cache.size());
+    return true;
+  }
+
+  void run() {
+    // Room for a full batch of prompt tokens plus each slot's next token and
+    // the text its grammar forces (grammar_forced_text() stops at 64 bytes).
+    BatchOwner owner_batch(n_batch + static_cast<int>(slots.size()) * 66, 1);
+    std::vector<int> row_slot;
+    while (true) {
+      {
+        std::unique_lock<std::mutex> lock(mu);
+        cv.wait(lock, [&] { return stopping || !queue.empty() || n_active > 0; });
+        if (stopping) return;
+      }
+      try {
+        if (!step(owner_batch.b, row_slot)) {
+          // Nothing could run yet: wait for a submit, a cancel or a stop.
+          std::unique_lock<std::mutex> lock(mu);
+          cv.wait_for(lock, std::chrono::milliseconds(20));
+        }
+      } catch (const std::exception & e) {
+        std::lock_guard<std::mutex> lock(mu);
+        for (EngineSlot & s : slots) {
+          finish_locked(s, "error", e.what());
+          s.cache.clear();
+        }
+        clear_kv_cache(ctx);
+      }
+    }
+  }
+};
+
+static void engine_detach(ServeEngine * engine) {
+  if (engine) engine->stop();
+}
+
+static void check_no_engine(const EdgeModelContext & e) {
+  if (e.engine) {
+    stop("This model is serving requests through an engine (edge_api() or edge_engine()). "
+         "Load a second copy with edge_load_model() for direct calls, or stop the engine first.");
+  }
+}
+
+// Takes cancelled requests out of the queue right away, so they do not hold
+// queue places. mu must be held.
+static void drop_cancelled_queued(ServeEngine & e) {
+  auto it = e.queue.begin();
+  while (it != e.queue.end()) {
+    std::shared_ptr<EngineRequest> r = *it;
+    if (!r->cancel) {
+      ++it;
+      continue;
+    }
+    it = e.queue.erase(it);
+    r->status = 2;
+    r->finish = "cancelled";
+    r->t_end = engine_now();
+    e.n_cancelled++;
+    if (r->released) e.requests.erase(r->id);
+  }
+}
+
+struct EngineHandle {
+  std::shared_ptr<ServeEngine> engine;
+};
+
+static void engine_handle_finalizer(SEXP p) {
+  EngineHandle * h = static_cast<EngineHandle *>(R_ExternalPtrAddr(p));
+  if (!h) return;
+  R_ClearExternalPtr(p);
+  delete h;
+}
+
+static ServeEngine & get_engine(SEXP engine_ptr) {
+  if (TYPEOF(engine_ptr) != EXTPTRSXP) stop("Invalid engine");
+  XPtr<EngineHandle> h(engine_ptr);
+  if (!h.get() || !h->engine || !h->engine->ctx) stop("The engine is stopped");
+  return *h->engine;
+}
+
+// [[Rcpp::export]]
+SEXP edge_engine_start_internal(SEXP model_ptr, int n_slots, int max_queue) {
+  if (TYPEOF(model_ptr) != EXTPTRSXP) stop("Invalid model context");
+  XPtr<EdgeModelContext> edge_ctx(model_ptr);
+  if (!edge_ctx->is_valid()) stop("Invalid model context");
+  if (edge_ctx->engine) stop("This model already runs an engine");
+  llama_context * ctx = edge_ctx->ctx;
+  const int n_seq_max = static_cast<int>(llama_n_seq_max(ctx));
+  if (n_slots < 1 || n_slots > n_seq_max) {
+    stop("n_slots must be from 1 to " + std::to_string(n_seq_max) +
+         "; load the model with n_parallel = n_slots");
+  }
+  if (max_queue < 1) stop("max_queue must be positive");
+
+  auto engine = std::make_shared<ServeEngine>();
+  engine->owner = edge_ctx.get();
+  engine->ctx = ctx;
+  engine->vocab = llama_model_get_vocab(edge_ctx->model);
+  engine->n_ctx = static_cast<int>(llama_n_ctx(ctx));
+  engine->n_batch = std::max<int>(n_slots, static_cast<int>(llama_n_batch(ctx)));
+  engine->max_queue = max_queue;
+  engine->t_started = engine_now();
+  engine->candidates.resize(llama_vocab_n_tokens(engine->vocab));
+  engine->slots.resize(n_slots);
+  for (int i = 0; i < n_slots; ++i) engine->slots[i].seq = i;
+
+  // Batches of a few tokens per slot behave like generation, which is
+  // fastest on one thread per core: with every hardware thread (the batch
+  // default) the engine ran several times slower, worst on a busy machine.
+  llama_set_n_threads(ctx, llama_n_threads(ctx), llama_n_threads(ctx));
+
+  // The prompt cache of the direct functions is gone once the slots use
+  // the KV cache.
+  clear_kv_cache(ctx);
+  edge_ctx->cache_valid = false;
+  edge_ctx->cached_tokens.clear();
+  edge_ctx->engine = engine.get();
+  ServeEngine * raw = engine.get();
+  engine->worker = std::thread([raw] { raw->run(); });
+
+  g_engines.push_back(raw);
+
+  EngineHandle * h = new EngineHandle();
+  h->engine = engine;
+  // The handle keeps the model alive: it protects the model's pointer. Its
+  // finalizer also runs when R exits, so the thread stops before the
+  // process tears down what it uses.
+  XPtr<EngineHandle> ptr(h, false, R_NilValue, model_ptr);
+  R_RegisterCFinalizerEx(ptr, engine_handle_finalizer, TRUE);
+  ptr.attr("class") = "edge_engine_ptr";
+  return ptr;
+}
+
+// Stops every running engine; .onUnload calls it before the DLL goes away.
+// [[Rcpp::export]]
+int edge_engine_stop_all_internal() {
+  const std::vector<ServeEngine *> running = g_engines;
+  for (ServeEngine * e : running) e->stop();
+  return static_cast<int>(running.size());
+}
+
+// [[Rcpp::export]]
+int edge_engine_submit_internal(SEXP engine_ptr, std::string prompt, int n_predict, List sampling,
+                                std::string grammar_str = "", std::string grammar_root = "root") {
+  ServeEngine & e = get_engine(engine_ptr);
+  if (n_predict <= 0) stop("n_predict must be positive");
+  auto r = std::make_shared<EngineRequest>();
+  r->opts = read_sampling(sampling);
+  const int n = -llama_tokenize(e.vocab, prompt.c_str(), (int32_t)prompt.size(), NULL, 0, true, true);
+  if (n <= 0) stop("Failed to determine prompt token count");
+  r->prompt.resize(n);
+  if (llama_tokenize(e.vocab, prompt.c_str(), (int32_t)prompt.size(), r->prompt.data(), n, true, true) < 0) {
+    stop("Failed to tokenize prompt");
+  }
+  if (n >= e.n_ctx) {
+    stop("Prompt too long (" + std::to_string(n) + " tokens) for the engine's context (" +
+         std::to_string(e.n_ctx) + " tokens). Shorten the prompt or raise n_ctx.");
+  }
+  r->n_predict = std::min(n_predict, e.n_ctx - n);
+  r->plain_greedy = r->opts.temperature <= 0.0 &&
+                    (r->opts.repeat_penalty == 1.0 || r->opts.repeat_last_n == 0);
+  r->chain.reset(llama_sampler_chain_init(llama_sampler_chain_default_params()));
+  add_sampling_steps(r->chain.get(), e.vocab, r->opts);
+  if (!grammar_str.empty()) {
+    r->grammar.reset(llama_sampler_init_grammar(e.vocab, grammar_str.c_str(), grammar_root.c_str()));
+    if (!r->grammar) stop("Failed to parse GBNF grammar. Check grammar syntax.");
+    r->shadow.reset(llama_grammar_init_impl(e.vocab, grammar_str.c_str(), grammar_root.c_str(),
+                                            false, nullptr, 0, nullptr, 0));
+  }
+  {
+    std::lock_guard<std::mutex> lock(e.mu);
+    if (static_cast<int>(e.queue.size()) >= e.max_queue) {
+      stop("queue_full: " + std::to_string(e.queue.size()) + " requests are waiting");
+    }
+    r->id = e.next_id++;
+    r->t_submit = engine_now();
+    e.requests[r->id] = r;
+    e.queue.push_back(r);
+  }
+  e.cv.notify_one();
+  return r->id;
+}
+
+static const char * engine_status_name(int status) {
+  return status == 0 ? "queued" : status == 1 ? "running" : "done";
+}
+
+// The state of each request. Text of an unfinished request stops before a
+// split UTF-8 character and before anything that may be the start of a stop
+// string. A finished request stays until edge_engine_release_internal().
+// [[Rcpp::export]]
+List edge_engine_poll_internal(SEXP engine_ptr, IntegerVector ids) {
+  if (TYPEOF(engine_ptr) != EXTPTRSXP) stop("Invalid engine");
+  XPtr<EngineHandle> h(engine_ptr);
+  if (!h.get() || !h->engine) stop("Invalid engine");
+  ServeEngine & e = *h->engine;
+  const R_xlen_t n = ids.size();
+  CharacterVector status(n), text(n), finish(n), error(n);
+  IntegerVector n_prompt(n), n_generated(n), n_cached(n), position(n);
+  NumericVector queue_s(n), first_s(n), total_s(n);
+  std::lock_guard<std::mutex> lock(e.mu);
+  const double now = engine_now();
+  for (R_xlen_t i = 0; i < n; ++i) {
+    auto it = e.requests.find(ids[i]);
+    if (it == e.requests.end()) {
+      status[i] = "unknown";
+      finish[i] = NA_STRING;
+      error[i] = NA_STRING;
+      position[i] = NA_INTEGER;
+      queue_s[i] = first_s[i] = total_s[i] = NA_REAL;
+      continue;
+    }
+    const EngineRequest & r = *it->second;
+    status[i] = engine_status_name(r.status);
+    if (r.status == 2) {
+      text[i] = Rcpp::String(r.text, CE_UTF8);
+    } else {
+      size_t upto = r.text.size() - stop_holdback(r.text, r.opts.stop);
+      upto = utf8_boundary(r.text, upto);
+      text[i] = Rcpp::String(r.text.substr(0, upto), CE_UTF8);
+    }
+    finish[i] = r.status == 2 ? Rcpp::String(r.finish) : Rcpp::String(NA_STRING);
+    error[i] = r.error.empty() ? Rcpp::String(NA_STRING) : Rcpp::String(r.error);
+    n_prompt[i] = static_cast<int>(r.prompt.size());
+    n_generated[i] = r.n_generated;
+    n_cached[i] = r.n_cached;
+    position[i] = NA_INTEGER;
+    if (r.status == 0) {
+      int k = 0;
+      for (const auto & q : e.queue) {
+        ++k;
+        if (q->id == r.id) break;
+      }
+      position[i] = k;
+    }
+    const double started = r.status == 0 ? now : r.t_start;
+    queue_s[i] = started - r.t_submit;
+    first_s[i] = r.t_first > 0 ? r.t_first - r.t_submit : NA_REAL;
+    total_s[i] = (r.status == 2 ? r.t_end : now) - r.t_submit;
+  }
+  return List::create(_["id"] = ids, _["status"] = status, _["text"] = text,
+                      _["finish"] = finish, _["error"] = error,
+                      _["prompt_tokens"] = n_prompt, _["completion_tokens"] = n_generated,
+                      _["cached_tokens"] = n_cached, _["queue_position"] = position,
+                      _["queue_seconds"] = queue_s, _["first_token_seconds"] = first_s,
+                      _["total_seconds"] = total_s);
+}
+
+// Forgets finished requests; unfinished ones are cancelled and forgotten
+// once they end.
+// [[Rcpp::export]]
+void edge_engine_release_internal(SEXP engine_ptr, IntegerVector ids) {
+  if (TYPEOF(engine_ptr) != EXTPTRSXP) stop("Invalid engine");
+  XPtr<EngineHandle> h(engine_ptr);
+  if (!h.get() || !h->engine) return;
+  ServeEngine & e = *h->engine;
+  {
+    std::lock_guard<std::mutex> lock(e.mu);
+    for (R_xlen_t i = 0; i < ids.size(); ++i) {
+      auto it = e.requests.find(ids[i]);
+      if (it == e.requests.end()) continue;
+      if (it->second->status == 2) {
+        e.requests.erase(it);
+      } else {
+        it->second->cancel = true;
+        it->second->released = true;
+      }
+    }
+    drop_cancelled_queued(e);
+  }
+  e.cv.notify_one();
+}
+
+// [[Rcpp::export]]
+void edge_engine_cancel_internal(SEXP engine_ptr, IntegerVector ids) {
+  if (TYPEOF(engine_ptr) != EXTPTRSXP) stop("Invalid engine");
+  XPtr<EngineHandle> h(engine_ptr);
+  if (!h.get() || !h->engine) return;
+  ServeEngine & e = *h->engine;
+  {
+    std::lock_guard<std::mutex> lock(e.mu);
+    for (R_xlen_t i = 0; i < ids.size(); ++i) {
+      auto it = e.requests.find(ids[i]);
+      if (it != e.requests.end()) it->second->cancel = true;
+    }
+    drop_cancelled_queued(e);
+  }
+  e.cv.notify_one();
+}
+
+// [[Rcpp::export]]
+List edge_engine_stats_internal(SEXP engine_ptr) {
+  if (TYPEOF(engine_ptr) != EXTPTRSXP) stop("Invalid engine");
+  XPtr<EngineHandle> h(engine_ptr);
+  if (!h.get() || !h->engine) stop("Invalid engine");
+  ServeEngine & e = *h->engine;
+  std::lock_guard<std::mutex> lock(e.mu);
+  return List::create(
+    _["running"] = e.ctx != nullptr && e.worker.joinable(),
+    _["slots"] = static_cast<int>(e.slots.size()),
+    _["active"] = e.n_active,
+    _["queued"] = static_cast<int>(e.queue.size()),
+    _["max_queue"] = e.max_queue,
+    _["n_ctx"] = e.n_ctx,
+    _["kv_tokens"] = static_cast<double>(e.kv_tokens),
+    _["requests_done"] = static_cast<double>(e.n_done),
+    _["requests_failed"] = static_cast<double>(e.n_failed),
+    _["requests_cancelled"] = static_cast<double>(e.n_cancelled),
+    _["tokens_generated"] = static_cast<double>(e.tokens_generated),
+    _["tokens_prompt"] = static_cast<double>(e.tokens_prompt),
+    _["tokens_reused"] = static_cast<double>(e.tokens_reused),
+    _["busy_seconds"] = e.busy_seconds,
+    _["sample_seconds"] = e.sample_seconds,
+    _["tokens_forced"] = static_cast<double>(e.tokens_forced),
+    _["uptime_seconds"] = engine_now() - e.t_started);
+}
+
+// [[Rcpp::export]]
+void edge_engine_stop_internal(SEXP engine_ptr) {
+  if (TYPEOF(engine_ptr) != EXTPTRSXP) return;
+  XPtr<EngineHandle> h(engine_ptr);
+  if (h.get() && h->engine) h->engine->stop();
+}
+
 // What a saved state depends on: the model, and the LoRA adapters at their
 // scales, since they change every layer's keys and values.
 static std::string state_fingerprint(const EdgeModelContext & e) {
@@ -1351,6 +2112,7 @@ static const char STATE_MAGIC[8] = {'E', 'D', 'G', 'E', 'K', 'V', '0', '1'};
 int edge_save_state_internal(SEXP model_ptr, std::string path) {
   if (TYPEOF(model_ptr) != EXTPTRSXP) stop("Invalid model context");
   XPtr<EdgeModelContext> edge_ctx(model_ptr);
+  check_no_engine(*edge_ctx);
   if (!edge_ctx->is_valid()) stop("Invalid model context");
   if (!edge_ctx->prompt_cache) {
     stop("Saving the state needs a model loaded with prompt_cache = TRUE");
@@ -1390,6 +2152,7 @@ int edge_save_state_internal(SEXP model_ptr, std::string path) {
 int edge_load_state_internal(SEXP model_ptr, std::string path) {
   if (TYPEOF(model_ptr) != EXTPTRSXP) stop("Invalid model context");
   XPtr<EdgeModelContext> edge_ctx(model_ptr);
+  check_no_engine(*edge_ctx);
   if (!edge_ctx->is_valid()) stop("Invalid model context");
   if (!edge_ctx->prompt_cache) {
     stop("Loading a state needs a model loaded with prompt_cache = TRUE");
@@ -1445,6 +2208,7 @@ NumericMatrix edge_embeddings_internal(SEXP model_ptr, std::vector<std::string> 
     }
 
     XPtr<EdgeModelContext> edge_ctx(model_ptr);
+    check_no_engine(*edge_ctx);
 
     if (!edge_ctx->is_valid() || edge_ctx->ctx == nullptr || edge_ctx->model == nullptr) {
       stop("Invalid model context or null pointers");
@@ -1574,6 +2338,7 @@ Rcpp::NumericVector edge_lora_scales_internal(SEXP model_ptr, Rcpp::Nullable<Rcp
   XPtr<EdgeModelContext> edge_ctx(model_ptr);
   if (!edge_ctx->is_valid()) stop("Invalid model context");
   if (scales.isNotNull()) {
+    check_no_engine(*edge_ctx);
     Rcpp::NumericVector s(scales);
     if (static_cast<size_t>(s.size()) != edge_ctx->loras.size()) {
       stop("Expected " + std::to_string(edge_ctx->loras.size()) +
@@ -1586,6 +2351,17 @@ Rcpp::NumericVector edge_lora_scales_internal(SEXP model_ptr, Rcpp::Nullable<Rcp
     if (!apply_loras(*edge_ctx)) stop("Failed to apply LoRA adapters to the context");
   }
   return Rcpp::NumericVector(edge_ctx->lora_scales.begin(), edge_ctx->lora_scales.end());
+}
+
+// Sets the threads used for one token at a time and for batches.
+// [[Rcpp::export]]
+void edge_set_threads_internal(SEXP model_ptr, int n_threads, int n_threads_batch) {
+  if (TYPEOF(model_ptr) != EXTPTRSXP) stop("Invalid model context");
+  XPtr<EdgeModelContext> edge_ctx(model_ptr);
+  if (!edge_ctx->is_valid()) stop("Invalid model context");
+  if (n_threads < 1 || n_threads_batch < 1) stop("Thread counts must be positive");
+  check_no_engine(*edge_ctx);
+  llama_set_n_threads(edge_ctx->ctx, n_threads, n_threads_batch);
 }
 
 // [[Rcpp::export]]
