@@ -100,6 +100,45 @@ test_that("a chat request becomes a chat completion", {
   expect_identical(r$usage$total_tokens, 17L)
   expect_identical(r$usage$prompt_tokens_details$cached_tokens, 4L)
   expect_null(gen$calls()[[1]]$grammar)
+  expect_null(r$timings)
+})
+
+test_that("timings split a request's time into queue, prompt and generation", {
+  t <- edgemodelr:::.oa_timings(list(prompt_tokens = 40L, cached_tokens = 10L,
+                                     completion_tokens = 21L, queue_seconds = 0.5,
+                                     first_token_seconds = 1.5, total_seconds = 3.5))
+  expect_identical(t$queue_ms, 500)
+  expect_identical(t$prompt_ms, 1000)
+  expect_identical(t$first_token_ms, 1500)
+  expect_identical(t$predicted_ms, 2000)
+  expect_identical(t$total_ms, 3500)
+  expect_identical(t$prompt_n, 40L)
+  expect_identical(t$prompt_cached_n, 10L)
+  expect_identical(t$predicted_n, 21L)
+  expect_identical(t$predicted_per_second, 10)
+  # No first token (nothing generated): all of the time counts as prompt.
+  t <- edgemodelr:::.oa_timings(list(prompt_tokens = 5L, completion_tokens = 0L,
+                                     first_token_seconds = NA, total_seconds = 2))
+  expect_identical(t$predicted_ms, 0)
+  expect_identical(t$prompt_ms, 2000)
+  expect_true(is.na(t$predicted_per_second))
+  expect_null(edgemodelr:::.oa_timings(list(text = "x")))
+})
+
+test_that("a chat answer from the engine carries its timings", {
+  skip_if_not_installed("promises")
+  skip_if_not_installed("later")
+  gen <- fake_gen()
+  generate <- gen$generate
+  gen$generate <- function(...) {
+    promises::then(generate(...), function(out) {
+      c(out, list(queue_seconds = 0.1, first_token_seconds = 0.4, total_seconds = 0.9))
+    })
+  }
+  out <- wait_for(edgemodelr:::.oa_chat(gen, list(
+    messages = list(list(role = "user", content = "Hi")), max_tokens = 20), "m"))
+  expect_identical(out$response$timings$predicted_n, 5L)
+  expect_identical(out$response$timings$total_ms, 900)
 })
 
 test_that("a streamed chat comes in several chunks", {

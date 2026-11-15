@@ -4904,6 +4904,28 @@ print.edge_index <- function(x, ...) {
   usage
 }
 
+# Where a request's time went, in the form llama.cpp's server reports it:
+# waiting in the queue, reading the prompt (minus the part reused from a
+# slot), and generating. NULL when the generator gives no timings.
+.oa_timings <- function(out) {
+  if (is.null(out$total_seconds)) return(NULL)
+  queue <- out$queue_seconds %||% 0
+  first <- out$first_token_seconds
+  total <- out$total_seconds
+  if (is.null(first) || is.na(first)) first <- total
+  gen_s <- max(total - first, 0)
+  n <- as.integer(out$completion_tokens)
+  list(queue_ms = round(queue * 1000, 1),
+       prompt_n = as.integer(out$prompt_tokens),
+       prompt_cached_n = as.integer(out$cached_tokens %||% 0L),
+       prompt_ms = round(max(first - queue, 0) * 1000, 1),
+       first_token_ms = round(first * 1000, 1),
+       predicted_n = n,
+       predicted_ms = round(gen_s * 1000, 1),
+       predicted_per_second = if (n > 1 && gen_s > 0) round((n - 1) / gen_s, 2) else NA,
+       total_ms = round(total * 1000, 1))
+}
+
 # A finished text in word-sized pieces for streamed chunks. The engine
 # hands over the text when it is done, so the pieces are cut afterwards.
 .oa_pieces <- function(text) {
@@ -4960,7 +4982,7 @@ print.edge_index <- function(x, ...) {
                      model = model_name,
                      choices = list(list(index = 0L, message = message,
                                          finish_reason = finish)),
-                     usage = usage)
+                     usage = usage, timings = .oa_timings(out))
     if (!isTRUE(body$stream)) return(list(response = response))
     chunk <- function(delta, finish_reason = NA) {
       list(id = id, object = "chat.completion.chunk", created = created, model = model_name,
@@ -5015,7 +5037,7 @@ print.edge_index <- function(x, ...) {
     response <- list(id = id, object = "text_completion", created = created, model = model_name,
                      choices = list(list(text = out$text, index = 0L,
                                          finish_reason = out$finish)),
-                     usage = usage)
+                     usage = usage, timings = .oa_timings(out))
     if (!isTRUE(body$stream)) return(list(response = response))
     chunk <- function(text, finish_reason = NA) {
       list(id = id, object = "text_completion", created = created, model = model_name,
@@ -5468,7 +5490,9 @@ edge_engine_stop <- function(engine) {
 #'   \item \code{POST /v1/chat/completions} and \code{POST /v1/completions}:
 #'     the same requests and replies as \code{\link{edge_serve}}, including
 #'     tools, \code{response_format} and \code{stream}. \code{usage} adds
-#'     \code{prompt_tokens_details$cached_tokens}.
+#'     \code{prompt_tokens_details$cached_tokens}, and \code{timings}
+#'     gives the milliseconds spent in the queue, reading the prompt and
+#'     generating, and the tokens per second, as llama.cpp's server does.
 #'   \item \code{POST /v1/jobs}: takes a chat completion request and returns
 #'     at once (status 202) with a job id. \code{GET /v1/jobs/<id>} gives the
 #'     status, the queue position and the text so far, then the whole chat
