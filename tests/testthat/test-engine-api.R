@@ -139,6 +139,18 @@ test_that("a chat answer from the engine carries its timings", {
     messages = list(list(role = "user", content = "Hi")), max_tokens = 20), "m"))
   expect_identical(out$response$timings$predicted_n, 5L)
   expect_identical(out$response$timings$total_ms, 900)
+  # A stream has the timings on its last chunk, with or without usage.
+  for (usage in c(FALSE, TRUE)) {
+    out <- wait_for(edgemodelr:::.oa_chat(gen, list(
+      messages = list(list(role = "user", content = "Hi")), stream = TRUE,
+      stream_options = list(include_usage = usage)), "m"))
+    n <- length(out$chunks)
+    expect_identical(out$chunks[[n]]$timings$total_ms, 900)
+    expect_null(out$chunks[[1]]$timings)
+    out <- wait_for(edgemodelr:::.oa_completion(gen, list(
+      prompt = "Hi", stream = TRUE, stream_options = list(include_usage = usage)), "m"))
+    expect_identical(out$chunks[[length(out$chunks)]]$timings$predicted_n, 5L)
+  }
 })
 
 test_that("a streamed chat comes in several chunks", {
