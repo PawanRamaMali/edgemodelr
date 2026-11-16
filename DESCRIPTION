@@ -1,7 +1,7 @@
 Package: edgemodelr
 Type: Package
 Title: Local Large Language Model Inference Engine
-Version: 0.6.0.9000
+Version: 0.7.0
 Authors@R: c(
     person("Pawan Rama", "Mali", email = "prm@outlook.in", role = c("aut", "cre", "cph")),
     person("Georgi", "Gerganov", role = c("aut", "cph"), comment = "Author of llama.cpp and GGML library"),
@@ -15,7 +15,9 @@ Description: Enables R users to run large language models locally using 'GGUF' m
     and the 'llama.cpp' inference engine. Provides a complete R interface for loading models,
     generating text completions, extracting vector representations, and streaming responses in real-time.
     Includes grammar-constrained generation for structured output, text classification,
-    and retrieval-augmented generation (RAG) pipelines. Supports local inference without
+    and retrieval-augmented generation (RAG) pipelines. Models can also be served to many
+    users at once as an HTTP API compatible with the 'OpenAI' chat completions API.
+    Supports local inference without
     requiring cloud APIs or internet connectivity, ensuring complete data privacy and
     control. Based on the 'llama.cpp' project by Georgi Gerganov (2023) <https://github.com/ggml-org/llama.cpp>.
 License: MIT + file LICENSE

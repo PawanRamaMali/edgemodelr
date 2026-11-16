@@ -1,4 +1,7 @@
-# edgemodelr (development)
+# edgemodelr 0.7.0
+
+0.5.0 and 0.6.0 were not released on CRAN, so their changes (in their own
+sections below) also reach CRAN with this release.
 
 ## New features
 
@@ -114,6 +117,8 @@
 
 # edgemodelr 0.6.0
 
+0.6.0 was not released on CRAN; its changes reach CRAN with 0.7.0.
+
 ## New features
 
 * `edge_load_model()` has new `lora` and `lora_scale` arguments to apply
@@ -168,7 +173,7 @@
 
 # edgemodelr 0.5.0
 
-0.5.0 was not released on CRAN; its changes reach CRAN with 0.6.0.
+0.5.0 was not released on CRAN; its changes reach CRAN with 0.7.0.
 
 ## New features
 
