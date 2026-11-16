@@ -68,7 +68,10 @@ Endpoints:
 \item \code{POST /v1/chat/completions} and \code{POST /v1/completions}:
 the same requests and replies as \code{\link{edge_serve}}, including
 tools, \code{response_format} and \code{stream}. \code{usage} adds
-\code{prompt_tokens_details$cached_tokens}.
+\code{prompt_tokens_details$cached_tokens}, and \code{timings}
+gives the milliseconds spent in the queue, reading the prompt and
+generating, and the tokens per second, as llama.cpp's server does;
+a stream has them on its last chunk.
 \item \code{POST /v1/jobs}: takes a chat completion request and returns
 at once (status 202) with a job id. \code{GET /v1/jobs/<id>} gives the
 status, the queue position and the text so far, then the whole chat

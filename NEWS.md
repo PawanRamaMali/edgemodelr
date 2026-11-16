@@ -18,6 +18,11 @@
   answers 503 with `Retry-After`. `inst/examples/posit-connect` has an API
   entrypoint and a Shiny chat app that uses it.
 
+* Chat and text completions from `edge_api()` and `edge_serve()` include a
+  `timings` object, as llama.cpp's server does: milliseconds spent waiting
+  in the queue, reading the prompt and generating, the prompt tokens reused
+  from a slot, and tokens per second.
+
 * `edge_serve()` runs on `edge_api()`, with one slot by default and an
   `n_slots` argument. It now also accepts the key as `X-API-Key`, since
   Posit Connect uses `Authorization` for its own keys.
