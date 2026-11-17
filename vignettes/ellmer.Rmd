@@ -1,0 +1,217 @@
+---
+title: "Using local models with ellmer"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Using local models with ellmer}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>", eval = FALSE)
+```
+
+[ellmer](https://ellmer.tidyverse.org) gives one interface to many chat
+models. `chat_edge()` returns an ellmer chat object backed by a local
+GGUF model, so ellmer's chat, streaming, tool calling and structured
+output work offline. `embed_edge()` embeds texts with a local model for
+packages such as ragnar.
+
+The code in this vignette is not run when the package is built, because it
+needs a model file.
+
+## Setup
+
+You need ellmer, plus callr, plumber and httpuv for the background
+server. Any chat model in GGUF format works. Small instruction models
+such as Gemma 3 1B or Qwen3 1.7B are a good start on a laptop.
+
+```{r}
+library(edgemodelr)
+library(ellmer)
+
+model <- "gemma-3-1b-it-Q4_K_M.gguf"
+```
+
+`edge_download_model()` or `edge_quick_setup()` can fetch a model first.
+
+## How chat_edge() works
+
+`chat_edge(model_path)` starts `edge_serve()` in a background R process
+and connects `ellmer::chat_openai_compatible()` to it. The first call
+loads the model, which takes a few seconds. Later calls with the same
+model reuse the running server. The server stops when your R session
+ends.
+
+The arguments:
+
+| Argument | Default | Meaning |
+| --- | --- | --- |
+| `model_path` | | Path of a .gguf file. Give this or `base_url`. |
+| `system_prompt` | none | System prompt for the chat. |
+| `base_url` | | URL of a server you started yourself. |
+| `n_ctx` | 4096 | Context size of a server started here. |
+| `n_gpu_layers` | 0 | GPU layers of a server started here. |
+| `port` | a free one | Port of a server started here. |
+| `params` | none | `ellmer::params()`, such as `temperature`. |
+| `echo` | `"none"` | Passed to ellmer. |
+| `embeddings` | `FALSE` | Also serve `/v1/embeddings` from a server started here. |
+
+<!-- n_slots -->
+
+## Chat
+
+```{r}
+chat <- chat_edge(model, system_prompt = "Answer in one short sentence.")
+chat$chat("What is the capital of France?")
+#> Paris is the capital of France.
+
+chat$chat("And of Italy?")
+#> Rome is the capital of Italy.
+```
+
+The chat object keeps the conversation, so the second question is read
+with the first. Print it to see the turns and token counts:
+
+```{r}
+chat
+```
+
+For repeatable answers, set the temperature to 0:
+
+```{r}
+chat <- chat_edge(model, params = params(temperature = 0))
+```
+
+To use a server that is already running, for example `edge_serve()` in
+another process, pass its URL:
+
+```{r}
+chat <- chat_edge(base_url = "http://127.0.0.1:8080")
+```
+
+`chat_edge()` does not send an API key. For a server started with
+`api_key`, use `ellmer::chat_openai_compatible()` with `credentials`, as
+shown in `vignette("serving", package = "edgemodelr")`.
+
+## Streaming
+
+```{r}
+stream <- chat$stream("Name three primary colors.")
+coro::loop(for (chunk in stream) cat(chunk))
+```
+
+The server sends the chunks together when the answer is finished, so the
+text arrives in one burst rather than word by word. The format is the
+same as with a hosted model, so code written for streaming still works.
+
+## Tool calling
+
+Define a tool with `ellmer::tool()` and register it on the chat. The model
+asks for the tool, ellmer runs your R function and sends the result back,
+and the model writes the answer.
+
+```{r}
+get_weather <- tool(
+  function(city) {
+    if (city == "Paris") "18 C and cloudy" else "24 C and sunny"
+  },
+  name = "get_weather",
+  description = "Get the current weather for a city.",
+  arguments = list(city = type_string("The city name, such as Paris"))
+)
+
+chat <- chat_edge(model, params = params(temperature = 0))
+chat$register_tool(get_weather)
+chat$chat("What is the weather in Paris right now?")
+
+# The turns show the call and its result
+chat$get_turns()
+```
+
+Limits of local tool calls:
+
+- Arguments may be strings, numbers, integers, booleans or enums
+  (`type_enum()`). Every argument is required.
+- The model makes one call per reply. ellmer sends the result back, so a
+  model can still make several calls in a row.
+- The call is generated under a grammar, so it is always valid JSON that
+  names a known tool. Whether the model picks the right tool depends on
+  the model. Small models do best with few tools and clear descriptions.
+
+## Structured output
+
+`chat_structured()` returns R data in the shape you describe. The reply is
+constrained by a grammar, so it always parses.
+
+```{r}
+chat <- chat_edge(model, params = params(temperature = 0))
+
+person <- chat$chat_structured(
+  "Maria Lopez is a 34 year old nurse from Valencia.",
+  type = type_object(
+    name = type_string(),
+    age = type_integer(),
+    job = type_string(),
+    city = type_string()
+  )
+)
+str(person)
+#> List of 4
+#>  $ name: chr "Maria Lopez"
+#>  $ age : int 34
+#>  $ job : chr "Nurse"
+#>  $ city: chr "Valencia"
+```
+
+Use a flat object with string, number, integer, boolean or enum fields.
+Nested objects and arrays are not supported.
+
+Without ellmer, `edge_extract()` does the same directly on a loaded model.
+
+## Embeddings with embed_edge()
+
+`embed_edge()` turns texts into vectors with a local embedding model. It
+needs no server. The model is loaded the first time and kept for the rest
+of the session.
+
+```{r}
+embedder <- "Qwen3-Embedding-0.6B-Q8_0.gguf"
+
+texts <- c("The cat sat on the mat.", "A kitten slept on the rug.",
+           "Interest rates rose again.")
+m <- embed_edge(texts, embedder)
+dim(m)
+#> [1]    3 1024
+
+round(edge_similarity_matrix(m), 2)
+#>      [,1] [,2] [,3]
+#> [1,] 1.00 0.70 0.32
+#> [2,] 0.70 1.00 0.31
+#> [3,] 0.32 0.31 1.00
+```
+
+A data frame with a `text` column gets an `embedding` matrix column:
+
+```{r}
+df <- embed_edge(data.frame(text = texts), embedder)
+dim(df$embedding)
+```
+
+Called without texts, `embed_edge()` returns a function. That is what
+`ragnar::ragnar_store_create(embed = )` takes. The function refers to the
+model by its path only, so a saved store still works in a new session.
+
+```{r}
+store <- ragnar::ragnar_store_create(
+  "docs.duckdb",
+  embed = embed_edge(model_path = embedder)
+)
+```
+
+Use an embedding model here, not a chat model. A chat model gives weaker
+vectors. `chat_edge(embeddings = TRUE)` can serve `/v1/embeddings` from
+the chat model, but it slows chat and uses more memory.
+
+For retrieval without ragnar, see
+`vignette("rag", package = "edgemodelr")`.

@@ -2,6 +2,19 @@
 
 This directory contains examples for using edgemodelr with modern small language models.
 
+## Vignettes
+
+The package vignettes are the best place to start:
+
+- `vignette("serving", package = "edgemodelr")`: serving a model with
+  `edge_api()`, locally and on Posit Connect. It uses `posit-connect/` in
+  this directory.
+- `vignette("ellmer", package = "edgemodelr")`: local models with ellmer
+  through `chat_edge()` and `embed_edge()`.
+- `vignette("rag", package = "edgemodelr")`: retrieval-augmented
+  generation with `edge_index_documents()`, `edge_search()` and
+  `edge_ask()`.
+
 ## 📁 Organization
 
 ### 🚀 Quick Start Examples

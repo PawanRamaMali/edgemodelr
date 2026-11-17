@@ -1,0 +1,256 @@
+---
+title: "Retrieval-augmented generation"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Retrieval-augmented generation}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>", eval = FALSE)
+```
+
+Retrieval-augmented generation (RAG) answers a question from your own
+documents. It has two steps:
+
+1. Retrieval: find the pieces of text most similar to the question.
+2. Generation: give those pieces to a chat model with the question, and
+   ask it to answer from them.
+
+edgemodelr does both locally. The code in this vignette is not run when
+the package is built, because it needs model files.
+
+## Embeddings and similarity
+
+An embedding is a numeric vector for a text. Texts with similar meaning
+get vectors that point the same way. Load the model with
+`embeddings = TRUE`:
+
+```{r}
+library(edgemodelr)
+
+embedder <- edge_load_model("Qwen3-Embedding-0.6B-Q8_0.gguf", embeddings = TRUE)
+
+e <- edge_embeddings(embedder, c(
+  "cats purr when happy",
+  "kittens purr",
+  "the bond market fell"
+))
+dim(e)
+#> [1]    3 1024
+edge_model_n_embd(embedder)
+#> [1] 1024
+```
+
+`edge_embeddings()` returns one row per text. By default each row is
+scaled to length 1 (`normalize = TRUE`), so the dot product of two rows is
+their cosine similarity.
+
+`edge_similarity()` gives the cosine similarity of two vectors, from -1
+to 1. `edge_similarity_matrix()` gives it for every pair of rows:
+
+```{r}
+edge_similarity(e[1, ], e[2, ])
+#> [1] 0.7986
+edge_similarity(e[1, ], e[3, ])
+#> [1] 0.3275
+
+round(edge_similarity_matrix(e), 3)
+#>       [,1]  [,2]  [,3]
+#> [1,] 1.000 0.799 0.328
+#> [2,] 0.799 1.000 0.377
+#> [3,] 0.328 0.377 1.000
+```
+
+Scores are only comparable between vectors from the same model.
+
+## Choosing an embedding model
+
+Use a model trained for embeddings. A chat model loaded with
+`embeddings = TRUE` also gives vectors, but they separate topics less
+well.
+
+- Qwen3-Embedding-0.6B (Q8_0, about 600 MB) gives 1024 numbers per text
+  and handles many languages. It is a good default.
+- nomic-embed-text and similar models are smaller and faster, with
+  768 numbers per text.
+
+Embedding only reads text, so it is much faster than generating the
+same number of tokens.
+
+An embedding model cannot write answers. For the generation step, load a
+chat model as well (see below).
+
+## Building an index
+
+`edge_index_documents()` splits documents into chunks, embeds each chunk
+and returns an `edge_index` object. It takes either a character vector of
+texts or a directory.
+
+```{r}
+docs <- c(
+  "The library opens at 9am on weekdays and 10am on Saturdays. It is closed on Sundays.",
+  "Members can borrow up to 12 books at a time for three weeks.",
+  "Late returns cost 20 cents per book per day, up to 5 dollars.",
+  "The reading room on the second floor has 40 desks and free wifi."
+)
+index <- edge_index_documents(docs, embedder)
+index
+#> edgemodelr RAG Index
+#>   Chunks: 4
+#>   Embedding dim: 1024
+#>   Source: direct text input
+```
+
+For a directory, every file that matches `file_pattern` is read, also in
+subfolders. The default pattern is `"*.txt"`:
+
+```{r}
+policy_index <- edge_index_documents("policies/", embedder, file_pattern = "*.md")
+```
+
+The index is a list with `chunks`, `embeddings` (one row per chunk),
+`sources` (the file of each chunk, or `NA` for direct text), `n_chunks`
+and `n_embd`.
+
+## Chunking
+
+Long texts are split into chunks of about `chunk_size` characters
+(default 500), with `chunk_overlap` characters (default 50) repeated
+between neighbouring chunks. A chunk ends at a sentence end when there is
+one in its second half.
+
+```{r}
+policy_index <- edge_index_documents("policies/", embedder, file_pattern = "*.md",
+                                     chunk_size = 300, chunk_overlap = 50)
+```
+
+Some guidance:
+
+- A chunk should hold one idea, such as a paragraph or a rule. Chunks that
+  are too long mix topics and match questions less well. Chunks that are
+  too short lose their context.
+- 300 to 800 characters suits most prose. Use smaller chunks for lists of
+  short facts.
+- The overlap keeps a sentence that falls on a boundary in at least one
+  whole chunk. 10 to 20 percent of `chunk_size` is usually enough.
+- A character vector is taken as chunks you made yourself. Only texts
+  longer than twice `chunk_size` are split. This lets you chunk by your
+  own rules, for example one chunk per row of a data frame.
+- Each chunk must fit in the embedding model's context. `edge_tokenize()`
+  counts tokens: `length(edge_tokenize(embedder, chunk))`.
+
+## Searching
+
+`edge_search()` embeds the query and returns the `top_k` most similar
+chunks as a data frame:
+
+```{r}
+hits <- edge_search(index, embedder, "When is the library open on Saturday?",
+                    top_k = 2)
+hits
+#>                                                                                  chunk     score source index
+#> 1 The library opens at 9am on weekdays and 10am on Saturdays. It is closed on Sundays. 0.8356657   <NA>     1
+#> 2                         Members can borrow up to 12 books at a time for three weeks. 0.4660888   <NA>     2
+```
+
+`score` is the cosine similarity, `source` the file and `index` the row in
+the index. Use the same model for the query that built the index.
+
+## Answering with a separate chat model
+
+With an embedding model for retrieval, load a chat model for the answer
+and put the retrieved chunks in its system prompt:
+
+```{r}
+chat_model <- edge_load_model("gemma-3-1b-it-Q4_K_M.gguf", n_ctx = 4096)
+
+ask <- function(question, top_k = 3) {
+  hits <- edge_search(index, embedder, question, top_k = top_k)
+  context <- paste0("[", seq_len(nrow(hits)), "] ", hits$chunk, collapse = "\n")
+  edge_chat_completion(chat_model, list(
+    list(role = "system", content = paste0(
+      "Answer only from the context below. ",
+      "If the answer is not there, say you do not know.\n\nContext:\n", context)),
+    list(role = "user", content = question)
+  ), n_predict = 200, temperature = 0)
+}
+
+ask("How much is the late fee per day?")
+ask("Is there parking?")
+```
+
+`edge_chat_completion()` uses the chat model's own template, which most
+models need to follow instructions well.
+
+## Answering with edge_ask()
+
+`edge_ask()` does retrieval and generation in one call, but with a single
+model: the same `ctx` embeds the question and writes the answer. That
+model must be a chat model loaded with `embeddings = TRUE`, and the index
+must be built with it. An embedding-only model fails here, because it
+cannot generate text.
+
+```{r}
+ctx <- edge_load_model("gemma-3-1b-it-Q4_K_M.gguf", embeddings = TRUE)
+ctx_index <- edge_index_documents(docs, ctx)
+
+edge_ask(ctx, "How much is the late fee per day?", ctx_index, top_k = 2)
+```
+
+With `return_context = TRUE` it returns a list with `answer`, `context`
+(the `edge_search()` result) and `prompt`, which helps you see why an
+answer is wrong:
+
+```{r}
+res <- edge_ask(ctx, "How much is the late fee per day?", ctx_index,
+                top_k = 2, return_context = TRUE)
+res$context$score
+cat(res$prompt)
+```
+
+`edge_ask()` writes a plain prompt with `### Context` and `### Question`
+sections rather than the model's chat template. Answers can run on past
+the answer. Set `n_predict` low, or use the two-model pattern above.
+
+## Saving and reusing an index
+
+An index is an ordinary R object. Save it with `saveRDS()` and load it in
+a later session, so the documents are embedded only once:
+
+```{r}
+saveRDS(index, "library-index.rds")
+
+# Later
+index <- readRDS("library-index.rds")
+embedder <- edge_load_model("Qwen3-Embedding-0.6B-Q8_0.gguf", embeddings = TRUE)
+edge_search(index, embedder, "How many books can I borrow?", top_k = 1)
+```
+
+The model context itself cannot be saved. Load the same embedding model
+again before you search. If you change the model or the chunking, build
+the index again.
+
+To add documents, index only the new ones and combine the parts:
+
+```{r}
+new <- edge_index_documents(c("Parking is free for members after 6pm."), embedder)
+
+index$chunks <- c(index$chunks, new$chunks)
+index$embeddings <- rbind(index$embeddings, new$embeddings)
+index$sources <- c(index$sources, new$sources)
+index$n_chunks <- length(index$chunks)
+```
+
+## Cleaning up
+
+```{r}
+edge_free_model(embedder)
+edge_free_model(chat_model)
+edge_free_model(ctx)
+```
+
+For a larger document store with search by keywords as well as meaning,
+see the ragnar package. `embed_edge()` lets ragnar embed locally; see
+`vignette("ellmer", package = "edgemodelr")`.

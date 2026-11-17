@@ -13,6 +13,12 @@
   `edge_api(reranking = )` serves `POST /v1/rerank` in the Jina, Cohere and
   llama.cpp format.
 
+* Three vignettes: "Serving a model with edge_api()" (running locally and
+  on Posit Connect, clients in R, ellmer and Python, jobs, timings and
+  sizing), "Using local models with ellmer" (`chat_edge()` and
+  `embed_edge()`) and "Retrieval-augmented generation"
+  (`edge_index_documents()`, `edge_search()` and `edge_ask()`).
+
 # edgemodelr 0.7.0
 
 0.5.0 and 0.6.0 were not released on CRAN, so their changes (in their own

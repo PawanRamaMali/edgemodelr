@@ -1,0 +1,440 @@
+---
+title: "Serving a model with edge_api()"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Serving a model with edge_api()}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>", eval = FALSE)
+```
+
+`edge_api()` turns a local GGUF model into an HTTP API that follows the
+OpenAI chat completions format. One R process loads the model once and
+answers many users. This vignette shows how to run it on your own machine,
+how to deploy it to Posit Connect, and how to call it from R, ellmer and
+Python.
+
+The code in this vignette is not run when the package is built, because it
+needs a model file and a running server.
+
+## How it works
+
+`edge_api()` loads the model and starts an engine (see `edge_engine()`).
+The engine has `n_slots` slots. Each slot generates one answer, and all
+busy slots move forward together, one token per step. Requests that find
+every slot busy wait in a queue, first come first served, up to
+`max_queue` requests. A busy server answers later. It only fails, with
+status 503 and a `Retry-After` header, when the queue is full.
+
+The request handlers return promises, so R keeps accepting new requests
+while the model works.
+
+## Running it locally
+
+You need the plumber, jsonlite, promises and later packages.
+
+```{r}
+library(edgemodelr)
+
+model <- "gemma-3-1b-it-Q4_K_M.gguf"   # any chat model in GGUF format
+api <- edge_api(model, n_slots = 4, n_ctx = 2048, api_key = "secret-key")
+plumber::pr_run(api, host = "127.0.0.1", port = 8080)
+```
+
+`pr_run()` blocks the R session. Run it in its own R process (a second
+terminal, a background job in RStudio, or `callr::r_bg()`), and call the
+API from another one.
+
+`edge_serve()` does the same in one call and prints the endpoints. Its
+default is a single slot, which suits one user:
+
+```{r}
+edge_serve(model, port = 8080)
+```
+
+The main arguments of `edge_api()`:
+
+| Argument | Default | Meaning |
+| --- | --- | --- |
+| `n_slots` | 8 | Answers generated at the same time. |
+| `n_ctx` | 2048 | Tokens per slot, prompt and answer together. |
+| `n_threads` | one per core | CPU threads. `EDGEMODELR_THREADS` overrides it. |
+| `max_queue` | 256 | Requests that may wait for a slot. |
+| `cache_type` | `"q8_0"` | KV cache type. `"f16"` uses twice the memory. |
+| `embeddings` | `FALSE` | `TRUE`, or the path of an embedding model, adds `POST /v1/embeddings`. |
+| `api_key` | none | Key that clients must send. |
+| `model_name` | file name | Name reported in replies and `/v1/models`. |
+
+`n_slots * n_ctx` may be at most 32768 tokens.
+
+## Endpoints
+
+| Method | Path | What it does |
+| --- | --- | --- |
+| POST | `/v1/chat/completions` | Chat completion, with `tools`, `response_format` and `stream`. |
+| POST | `/v1/completions` | Text completion. |
+| POST | `/v1/jobs` | Starts a chat completion in the background. Returns 202 and a job id. |
+| GET | `/v1/jobs/<id>` | Status, queue position and text so far, then the full response. |
+| DELETE | `/v1/jobs/<id>` | Cancels a job. |
+| POST | `/v1/embeddings` | Only when `embeddings` is set. |
+| GET | `/v1/models` | The model name. |
+| GET | `/metrics` | Engine counters. |
+| GET | `/health` | Status and slot use. Needs no key. |
+
+Requests take `max_tokens` (or `max_completion_tokens`), `temperature`,
+`top_p`, `top_k`, `min_p`, `repeat_penalty`, `seed` and `stop`.
+
+With `stream = true` the reply comes as server-sent events in the OpenAI
+chunk format. The chunks are sent together when the answer is finished,
+so a client gets the format but does not see the text as it is written.
+Use jobs to show text while it is written.
+
+## Authentication
+
+When `api_key` is set, every endpoint except `/health` needs one of these
+headers:
+
+```
+Authorization: Bearer <key>
+X-API-Key: <key>
+```
+
+A request without a valid key gets status 401. On Posit Connect, use
+`X-API-Key`, because Connect uses the `Authorization` header for its own
+keys. You can also leave `api_key` unset and use Connect's access
+settings instead.
+
+## Calling it from R
+
+With httr2:
+
+```{r}
+library(httr2)
+
+base <- "http://127.0.0.1:8080"
+key <- "secret-key"
+
+resp <- request(paste0(base, "/v1/chat/completions")) |>
+  req_auth_bearer_token(key) |>
+  req_body_json(list(
+    messages = list(
+      list(role = "system", content = "Answer in one sentence."),
+      list(role = "user", content = "What is R?")
+    ),
+    max_tokens = 60,
+    temperature = 0
+  )) |>
+  req_perform() |>
+  resp_body_json()
+
+resp$choices[[1]]$message$content
+resp$usage$completion_tokens
+```
+
+With the curl package:
+
+```{r}
+h <- curl::new_handle()
+curl::handle_setheaders(h,
+  "Content-Type" = "application/json",
+  "X-API-Key" = key
+)
+curl::handle_setopt(h, postfields = jsonlite::toJSON(list(
+  messages = list(list(role = "user", content = "Say hello.")),
+  max_tokens = 20
+), auto_unbox = TRUE))
+
+out <- curl::curl_fetch_memory(paste0(base, "/v1/chat/completions"), handle = h)
+reply <- jsonlite::fromJSON(rawToChar(out$content))
+reply$choices$message$content
+```
+
+And from a shell:
+
+```sh
+curl http://127.0.0.1:8080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: secret-key" \
+  -d '{"messages": [{"role": "user", "content": "Hello!"}], "max_tokens": 40}'
+```
+
+## Calling it from ellmer
+
+`ellmer::chat_openai_compatible()` works against `<server>/v1`. The
+`credentials` function returns the key, which ellmer sends as a Bearer
+token:
+
+```{r}
+library(ellmer)
+
+chat <- chat_openai_compatible(
+  base_url = "http://127.0.0.1:8080/v1",
+  credentials = function() "secret-key",
+  model = "gemma-3-1b-it-Q4_K_M"
+)
+chat$chat("What is 2 + 2?")
+```
+
+To send `X-API-Key` instead, for example on Posit Connect, return a named
+list of headers:
+
+```{r}
+chat <- chat_openai_compatible(
+  base_url = "https://connect.example.com/content/<guid>/v1",
+  credentials = function() list(`X-API-Key` = Sys.getenv("EDGEMODELR_API_KEY")),
+  model = "gemma-3-1b-it-Q4_K_M"
+)
+```
+
+`chat_edge(base_url = )` also connects to a running server, but it cannot
+send a key. Use it only with a server that has no `api_key`. See
+`vignette("ellmer", package = "edgemodelr")`.
+
+## Calling it from Python
+
+The official OpenAI client works when `base_url` points at `/v1`. It sends
+the key as a Bearer token:
+
+```python
+from openai import OpenAI
+
+client = OpenAI(base_url="http://127.0.0.1:8080/v1", api_key="secret-key")
+
+reply = client.chat.completions.create(
+    model="gemma-3-1b-it-Q4_K_M",
+    messages=[{"role": "user", "content": "What is R?"}],
+    max_tokens=60,
+)
+print(reply.choices[0].message.content)
+```
+
+On Posit Connect, send the API's key in `X-API-Key` with
+`default_headers={"X-API-Key": "..."}`. The client still needs some
+`api_key` value; any placeholder works when the content is open to
+everyone.
+
+## Jobs for Shiny apps
+
+A plain chat request stays open until the whole answer is ready. With a
+long queue that can take minutes, and proxies often cut requests after 60
+seconds. Jobs avoid this. `POST /v1/jobs` takes the same body as a chat
+completion and returns at once:
+
+```{r}
+job <- request(paste0(base, "/v1/jobs")) |>
+  req_headers(`X-API-Key` = key) |>
+  req_body_json(list(
+    messages = list(list(role = "user", content = "Write two sentences about rivers.")),
+    max_tokens = 80
+  )) |>
+  req_perform() |>
+  resp_body_json()
+
+job$id
+job$status   # "queued"
+```
+
+Then poll `GET /v1/jobs/<id>`. While the job waits, the reply has
+`status = "queued"` and `queue_position`. While it runs, it has
+`status = "running"` and the text so far in `text`. When it is done,
+`status` is `"done"` and `response` holds the full chat completion.
+
+```{r}
+repeat {
+  j <- request(paste0(base, "/v1/jobs/", job$id)) |>
+    req_headers(`X-API-Key` = key) |>
+    req_perform() |>
+    resp_body_json()
+  if (j$status %in% c("done", "error", "cancelled")) break
+  Sys.sleep(0.5)
+}
+j$response$choices[[1]]$message$content
+```
+
+`DELETE /v1/jobs/<id>` cancels a job and frees its slot. Finished jobs
+are kept for 15 minutes.
+
+In a Shiny app, start the job in an `observeEvent()` and poll it in an
+`observe()` with `invalidateLater(500)`. Cancel the job in
+`session$onSessionEnded()`, so a user who closes the page frees the slot.
+`inst/examples/posit-connect/shiny/app.R` is a complete chat app built
+this way:
+
+```{r}
+system.file("examples", "posit-connect", package = "edgemodelr")
+```
+
+## Timings
+
+Chat and text completions include a `timings` object, in the form
+llama.cpp's server uses. A stream has it on its last chunk.
+
+| Field | Meaning |
+| --- | --- |
+| `queue_ms` | Time waiting for a free slot. |
+| `prompt_n` | Prompt tokens. |
+| `prompt_cached_n` | Prompt tokens reused from a slot. |
+| `prompt_ms` | Time reading the prompt. |
+| `first_token_ms` | Time from arrival to the first token. |
+| `predicted_n` | Tokens generated. |
+| `predicted_ms` | Time generating after the first token. |
+| `predicted_per_second` | Generation speed for this request. |
+| `total_ms` | Time from arrival to the end. |
+
+```{r}
+resp$timings$queue_ms
+resp$timings$predicted_per_second
+```
+
+A slot keeps its tokens after an answer. A new request that starts the
+same way, with the same system prompt or the next turn of a chat, skips
+that part of its prompt. `prompt_cached_n` and
+`usage$prompt_tokens_details$cached_tokens` show how many tokens it
+skipped.
+
+If `queue_ms` is large, the server needs more slots or more CPU. If
+`predicted_per_second` is low while `queue_ms` is small, the CPU is the
+limit.
+
+## Metrics and health
+
+`GET /health` needs no key, so a load balancer or Connect can use it:
+
+```{r}
+request(paste0(base, "/health")) |> req_perform() |> resp_body_json()
+# status "ok", model, slots, active, queued
+```
+
+`GET /metrics` returns the engine's counters: `slots`, `active`, `queued`,
+`max_queue`, `n_ctx`, `requests_done`, `requests_failed`,
+`requests_cancelled`, `tokens_generated`, `tokens_prompt`,
+`tokens_reused`, `busy_seconds`, `uptime_seconds` and
+`tokens_per_second` (total generated tokens per busy second).
+
+```{r}
+m <- request(paste0(base, "/metrics")) |>
+  req_headers(`X-API-Key` = key) |>
+  req_perform() |>
+  resp_body_json()
+m$tokens_per_second
+```
+
+## Slots, the queue and CPU sizing
+
+On a CPU, more slots give more tokens per second in total, until the
+cores are busy. That is usually at about 8 slots. Beyond that each answer
+gets slower and the total barely grows. On an 8 core laptop, Gemma 3 1B
+went from 13 tokens per second with 1 slot to 44 to 54 with 8 slots.
+
+Each slot reserves `n_ctx` tokens of KV cache, so memory is the model
+file plus `n_slots * n_ctx` tokens of cache. For Gemma 3 1B (Q4_K_M) with
+8 slots of 2048 tokens that is about 0.8 GB for the model and 0.3 GB for
+the cache.
+
+On a CPU-only container:
+
+- Give the API whole cores. The engine uses one thread per core.
+- Inside a container, the default thread count follows the container's
+  CPU limit (cgroup v1 or v2), not the host's core count. Set
+  `n_threads` or `EDGEMODELR_THREADS` only if that guess is wrong.
+- More cores shorten the wait almost linearly. More slots than about 8
+  add little.
+- Wait time grows with the number of users waiting. Nobody gets an error
+  until the queue is full, so set `max_queue` to the most users you
+  expect at once.
+
+## Deploying to Posit Connect
+
+`inst/examples/posit-connect/` has two pieces of content:
+
+- `api/entrypoint.R`, a plumber API that calls `edge_api()` and returns
+  the router. It reads its settings from environment variables.
+- `shiny/app.R`, a chat app that never loads a model. It submits jobs to
+  the API and polls them.
+
+The entrypoint, shortened:
+
+```{r}
+library(edgemodelr)
+
+env <- function(name, default = "") {
+  value <- Sys.getenv(name)
+  if (nzchar(value)) value else default
+}
+
+model <- env("EDGEMODELR_MODEL")
+if (!nzchar(model) || !file.exists(model)) {
+  model <- edge_download_model(
+    env("EDGEMODELR_MODEL_REPO", "unsloth/gemma-3-1b-it-GGUF"),
+    env("EDGEMODELR_MODEL_FILE", "gemma-3-1b-it-Q4_K_M.gguf"),
+    cache_dir = env("EDGEMODELR_CACHE_DIR", tools::R_user_dir("edgemodelr", "cache")),
+    trust_first_use = TRUE
+  )
+}
+
+edge_api(
+  model,
+  n_slots = as.integer(env("EDGEMODELR_SLOTS", "8")),
+  n_ctx = as.integer(env("EDGEMODELR_CTX", "2048")),
+  max_queue = 512L,
+  api_key = env("EDGEMODELR_API_KEY")
+)
+```
+
+An empty `api_key` means no key.
+
+Deploy the two folders:
+
+```{r}
+rsconnect::deployAPI("api", appTitle = "Local model API")
+rsconnect::deployApp("shiny", appTitle = "Local model chat")
+```
+
+Connect installs the packages your local library records, so install
+edgemodelr the same way you want Connect to install it before you deploy.
+
+### Settings for the API
+
+Vars:
+
+| Variable | Value |
+| --- | --- |
+| `EDGEMODELR_MODEL` | Path of a .gguf file on a persistent volume. Or leave it unset to download. |
+| `EDGEMODELR_MODEL_REPO`, `EDGEMODELR_MODEL_FILE` | Hugging Face repo and file to download on first start. |
+| `EDGEMODELR_CACHE_DIR` | A persistent path for the download. Each deploy starts in a fresh folder. |
+| `EDGEMODELR_SLOTS` | Answers generated at once (default 8). |
+| `EDGEMODELR_CTX` | Tokens per answer, prompt included (default 2048). |
+| `EDGEMODELR_THREADS` | CPU threads, if the default is wrong. |
+| `EDGEMODELR_API_KEY` | Optional. Clients send it as `X-API-Key`. |
+
+Runtime:
+
+| Setting | Value | Why |
+| --- | --- | --- |
+| Min processes | 1 | Keeps the model loaded. A cold start loads it again. |
+| Max processes | 1 | Each process loads its own copy of the model. One process with many slots uses the CPU better than several processes. |
+| Max connections per process | 200 | The default, 20, makes Connect start a second process, and a second model, at about 11 users. |
+| Load factor | 1.0 | The default, 0.5, makes Connect start processes early. |
+| Initial timeout | 600 | Time to download and load the model on first start. |
+| Idle timeout | 3600 or more | Keeps the process, and the model, between bursts of use. |
+| Read timeout | 3600 | A long queue can keep a plain chat request open for minutes. Jobs avoid this. |
+
+If a proxy or load balancer sits in front of Connect, check its own read
+timeout as well. `POST /v1/chat/completions` waits for the whole answer,
+`POST /v1/jobs` does not.
+
+### Settings for the Shiny app
+
+Set `EDGEMODELR_API_URL` to the API's content URL, such as
+`https://connect.example.com/content/<guid>`, and `EDGEMODELR_API_KEY` if
+the API has a key. Connect gives the app its own `CONNECT_API_KEY`, which
+the app sends as `Authorization: Key <key>` so it can reach an API whose
+access is restricted. That key belongs to the app's owner, who must have
+access to the API. The app can keep Connect's default runtime settings,
+since it holds no model.
+
+See `inst/examples/posit-connect/README.md` for measurements with 50
+users at once.
