@@ -412,22 +412,13 @@ edge_completion <- function(ctx, prompt, n_predict = 128L, temperature = 0.8, to
 #'
 #' @examples
 #' \dontrun{
-#' # Proper cleanup after model usage
-#' setup <- edge_quick_setup("TinyLlama-1.1B")
-#' if (!is.null(setup$context)) {
-#'   ctx <- setup$context
-#'
-#'   # Use model for various tasks
-#'   result <- edge_completion(ctx, "Hello", n_predict = 20)
-#'   cat(result)
-#'
-#'   # Always clean up when done
-#'   edge_free_model(ctx)
+#' # Requires a downloaded model (not run in checks)
+#' model_path <- "model.gguf"
+#' if (file.exists(model_path)) {
+#'   ctx <- edge_load_model(model_path)
+#'   # ... use model ...
+#'   edge_free_model(ctx)  # Clean up
 #' }
-#'
-#' # Safe cleanup - handles invalid contexts gracefully
-#' edge_free_model(NULL)  # Safe, no error
-#' edge_free_model("invalid")  # Safe, no error
 #' }
 #' @export
 edge_free_model <- function(ctx) {
@@ -455,29 +446,28 @@ is_valid_model <- function(ctx) {
 
 #' Download a GGUF model from Hugging Face
 #'
-#' @param model_id Hugging Face model identifier (e.g., "TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF")
-#' @param filename Specific GGUF file to download
+#' @param model_id Hugging Face model identifier (e.g., "TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF"),
+#'   or a friendly model name from \code{edge_list_models()} (e.g., "Qwen3-0.6B", "mistral-7b")
+#' @param filename Specific GGUF file to download. Optional when using a friendly model name.
 #' @param cache_dir Directory to store downloaded models (default: user cache directory via tools::R_user_dir())
 #' @param force_download Force re-download even if file exists
 #' @param verify_checksum Verify SHA-256 checksum if available (default: TRUE)
 #' @param expected_sha256 Optional expected SHA-256 hash for the model file
 #' @param trust_first_use Store a local hash if no known hash exists (default: FALSE)
+#' @param verbose Whether to print download progress messages
 #' @return Path to the downloaded model file
 #'
 #' @examples
 #' \dontrun{
-#' # Download TinyLlama model
+#' # Download using friendly name (recommended)
+#' model_path <- edge_download_model("Qwen3-0.6B")
+#' model_path <- edge_download_model("mistral-7b")
+#'
+#' # Download using HuggingFace repo ID
 #' model_path <- edge_download_model(
 #'   model_id = "TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF",
 #'   filename = "tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf"
 #' )
-#'
-#' # Use the downloaded model
-#' if (file.exists(model_path)) {
-#'   ctx <- edge_load_model(model_path)
-#'   response <- edge_completion(ctx, "Hello, how are you?")
-#'   edge_free_model(ctx)
-#' }
 #' }
 #' @export
 edge_download_model <- function(model_id, filename = NULL, cache_dir = NULL, force_download = FALSE,
@@ -1079,9 +1069,6 @@ edge_resolve_model_name <- function(model_name, models = NULL) {
 
 #' List popular pre-configured models
 #'
-#' Models are sourced from GPT4All CDN (direct download, no auth required) and Hugging Face.
-#' GPT4All models are recommended for offline use as they don't require any accounts.
-#'
 #' @return Data frame with model information
 #' @export
 edge_list_models <- function() {
@@ -1164,25 +1151,19 @@ edge_list_models <- function() {
 
 #' Quick setup for a popular model
 #'
-#' Downloads a model from the built-in model list and loads it for inference.
-#' GPT4All models are downloaded directly without authentication.
-#'
 #' @param model_name Name of the model from edge_list_models()
-#' @param cache_dir Directory to store downloaded models (default: user cache directory via tools::R_user_dir())
+#' @param cache_dir Directory to store downloaded models
 #' @param verify_checksum Verify SHA-256 checksum if available (default: TRUE)
 #' @param expected_sha256 Optional expected SHA-256 hash for the model file
 #' @param trust_first_use Store a local hash if no known hash exists (default: FALSE)
-#' @param verbose Whether to print status messages (default: TRUE)
+#' @param verbose Whether to print setup progress messages
 #' @return List with model path and context (if llama.cpp is available)
 #'
 #' @examples
 #' \dontrun{
-#' # Quick setup with a 7B model (downloads ~4GB, not run in checks)
-#' setup <- edge_quick_setup("mistral-7b")
+#' # Quick setup with TinyLlama (downloads model, not run in checks)
+#' setup <- edge_quick_setup("TinyLlama-1.1B")
 #' ctx <- setup$context
-#'
-#' # Or use a larger 13B model
-#' setup <- edge_quick_setup("orca2-13b")  # 7.4GB, direct download
 #'
 #' if (!is.null(ctx)) {
 #'   response <- edge_completion(ctx, "Hello!")
@@ -1257,6 +1238,8 @@ edge_quick_setup <- function(model_name, cache_dir = NULL, verify_checksum = TRU
 #' Download a model from a direct URL
 #'
 #' Downloads a GGUF model file from any URL. Supports resume and validates GGUF format.
+#' This function is useful for downloading models from GPT4All CDN or other direct sources
+#' that don't require authentication.
 #'
 #' @param url Direct download URL for the model
 #' @param filename Local filename to save as
@@ -3322,15 +3305,16 @@ edge_extract <- function(ctx, text, schema, instruction = NULL, n_predict = 512L
 
 #' Classify text into predefined categories
 #'
-#' Convenience function that uses grammar-constrained generation to classify
-#' text into one of the provided categories.
+#' Classify text into predefined categories using grammar-constrained generation.
+#' The grammar constraint ensures the model can only output one of the provided categories.
 #'
 #' @param ctx Model context from edge_load_model()
 #' @param text Text to classify (character string or vector for batch)
 #' @param categories Character vector of allowed categories
 #' @param instruction Optional classification instruction
 #' @param temperature Sampling temperature (default: 0.1)
-#' @return Character string (single text) or character vector (batch) with the predicted category
+#' @return Character string (single text) or character vector (batch) with the predicted category.
+#'   Output is guaranteed to be one of the specified categories.
 #'
 #' @examples
 #' \dontrun{
@@ -3348,6 +3332,7 @@ edge_extract <- function(ctx, text, schema, instruction = NULL, n_predict = 512L
 #'
 #' edge_free_model(ctx)
 #' }
+#' @seealso \code{\link{edge_extract}}, \code{\link{edge_grammar_completion}}
 #' @export
 edge_classify <- function(ctx, text, categories, instruction = NULL,
                            temperature = 0.1) {
@@ -3432,13 +3417,12 @@ edge_classify <- function(ctx, text, categories, instruction = NULL,
 #' However, generative models can also produce useful embeddings from their
 #' hidden states.
 #'
-#' The embedding dimension depends on the model architecture (e.g., 768 for
-#' small models, 4096+ for larger ones). Use \code{edge_model_n_embd()} to
-#' query the dimension.
+#' The embedding dimension depends on the model architecture. Use
+#' \code{edge_model_n_embd()} to query the dimension.
 #'
 #' @examples
 #' \dontrun{
-#' ctx <- edge_load_model("nomic-embed-text.gguf")
+#' ctx <- edge_load_model("model.gguf")
 #'
 #' # Single embedding
 #' emb <- edge_embeddings(ctx, "The cat sat on the mat")
@@ -3447,7 +3431,6 @@ edge_classify <- function(ctx, text, categories, instruction = NULL,
 #' # Multiple embeddings
 #' texts <- c("cats are great", "dogs are loyal", "the stock market crashed")
 #' embs <- edge_embeddings(ctx, texts)
-#' dim(embs)  # 3 x n_embd
 #'
 #' # Compute similarity
 #' edge_similarity(embs[1,], embs[2,])  # high (both about pets)
@@ -3455,6 +3438,7 @@ edge_classify <- function(ctx, text, categories, instruction = NULL,
 #'
 #' edge_free_model(ctx)
 #' }
+#' @seealso \code{\link{edge_similarity}}, \code{\link{edge_similarity_matrix}}, \code{\link{edge_model_n_embd}}
 #' @export
 edge_embeddings <- function(ctx, texts, normalize = TRUE) {
   if (!is_valid_model(ctx)) {
@@ -3481,6 +3465,8 @@ edge_embeddings <- function(ctx, texts, normalize = TRUE) {
 
 #' Compute cosine similarity between two embedding vectors
 #'
+#' Computes the cosine similarity between two embedding vectors.
+#'
 #' @param a Numeric vector (embedding)
 #' @param b Numeric vector (embedding)
 #' @return Cosine similarity score between -1 and 1
@@ -3490,9 +3476,10 @@ edge_embeddings <- function(ctx, texts, normalize = TRUE) {
 #' ctx <- edge_load_model("model.gguf")
 #' embs <- edge_embeddings(ctx, c("happy cat", "joyful kitten", "stock market"))
 #'
-#' edge_similarity(embs[1,], embs[2,])  # ~0.9 (similar meaning)
-#' edge_similarity(embs[1,], embs[3,])  # ~0.1 (different topics)
+#' edge_similarity(embs[1,], embs[2,])  # high (similar meaning)
+#' edge_similarity(embs[1,], embs[3,])  # low (different topics)
 #' }
+#' @seealso \code{\link{edge_embeddings}}, \code{\link{edge_similarity_matrix}}
 #' @export
 edge_similarity <- function(a, b) {
   if (!is.numeric(a) || !is.numeric(b)) {
@@ -3510,6 +3497,8 @@ edge_similarity <- function(a, b) {
 
 #' Get the embedding dimension of a loaded model
 #'
+#' Returns the size of the embedding vectors produced by the loaded model.
+#'
 #' @param ctx Model context from edge_load_model()
 #' @return Integer giving the embedding vector dimension
 #'
@@ -3517,7 +3506,9 @@ edge_similarity <- function(a, b) {
 #' \dontrun{
 #' ctx <- edge_load_model("model.gguf")
 #' edge_model_n_embd(ctx)  # e.g., 4096
+#' edge_free_model(ctx)
 #' }
+#' @seealso \code{\link{edge_embeddings}}
 #' @export
 edge_model_n_embd <- function(ctx) {
   if (!is_valid_model(ctx)) {
@@ -3560,6 +3551,9 @@ edge_tokenize <- function(ctx, text, add_special = TRUE) {
 
 #' Compute a similarity matrix for a set of embeddings
 #'
+#' Efficiently computes all pairwise cosine similarities between embedding
+#' vectors using normalized matrix multiplication.
+#'
 #' @param embeddings A numeric matrix where each row is an embedding vector
 #'   (as returned by \code{\link{edge_embeddings}})
 #' @return A symmetric numeric matrix of pairwise cosine similarities
@@ -3571,6 +3565,7 @@ edge_tokenize <- function(ctx, text, add_special = TRUE) {
 #' sim_mat <- edge_similarity_matrix(embs)
 #' # sim_mat[1,2] high (cat~kitten), sim_mat[1,3] low (cat~car)
 #' }
+#' @seealso \code{\link{edge_embeddings}}, \code{\link{edge_similarity}}
 #' @export
 edge_similarity_matrix <- function(embeddings) {
   if (!is.matrix(embeddings) || !is.numeric(embeddings)) {
@@ -4353,43 +4348,35 @@ edge_verify_narrative <- function(ctx, narrative, expected, schema = NULL,
 
 #' Build an embedding index from text documents
 #'
-#' Reads text files from a directory (or accepts text directly), computes
-#' embeddings for chunks, and returns an index object for retrieval.
+#' Reads text files from a directory (or accepts text directly), splits into
+#' chunks, computes embeddings, and returns an index object for semantic search
+#' and retrieval-augmented generation.
 #'
 #' @param source Either a directory path containing text files, or a character
 #'   vector of text chunks to index directly.
 #' @param ctx Model context from edge_load_model() (used for embedding)
-#' @param chunk_size Approximate number of characters per chunk (default: 500).
-#'   Ignored when \code{source} is a character vector.
-#' @param chunk_overlap Number of characters of overlap between chunks (default: 50).
-#'   Ignored when \code{source} is a character vector.
-#' @param file_pattern Glob pattern for files to read (default: "*.txt").
-#'   Also supports "*.md", "*.csv", etc.
+#' @param chunk_size Approximate number of characters per chunk (default: 500)
+#' @param chunk_overlap Number of characters of overlap between chunks (default: 50)
+#' @param file_pattern Glob pattern for files to read (default: "*.txt")
 #' @param normalize Normalize embeddings (default: TRUE)
 #' @param progress Show progress messages (default: TRUE)
-#' @return An \code{edge_index} object (a list) containing:
-#'   \itemize{
-#'     \item \code{chunks}: character vector of text chunks
-#'     \item \code{embeddings}: numeric matrix (n_chunks x n_embd)
-#'     \item \code{sources}: character vector of source file paths (or NA for direct text)
-#'     \item \code{n_chunks}: number of chunks
-#'     \item \code{n_embd}: embedding dimension
-#'   }
+#' @return An \code{edge_index} object containing chunks, embeddings, and source metadata.
 #'
 #' @examples
 #' \dontrun{
 #' ctx <- edge_load_model("model.gguf")
 #'
-#' # Index a directory of text files
+#' # Index a directory
 #' index <- edge_index_documents("./reports/", ctx)
 #'
 #' # Or index text directly
-#' texts <- c("Revenue grew 15% in Q3", "New product launched in Asia")
-#' index <- edge_index_documents(texts, ctx)
+#' index <- edge_index_documents(
+#'   c("Revenue grew 15%", "New product launched"), ctx)
 #'
 #' # Search the index
-#' results <- edge_search(index, ctx, "What happened with revenue?")
+#' results <- edge_search(index, ctx, "revenue growth")
 #' }
+#' @seealso \code{\link{edge_search}}, \code{\link{edge_ask}}
 #' @export
 edge_index_documents <- function(source, ctx, chunk_size = 500L,
                                   chunk_overlap = 50L,
@@ -4494,28 +4481,23 @@ edge_index_documents <- function(source, ctx, chunk_size = 500L,
 
 #' Search an embedding index for relevant chunks
 #'
-#' Finds the most similar text chunks to a query using cosine similarity.
+#' Finds the most similar text chunks to a query using cosine similarity
+#' over the embedding index.
 #'
 #' @param index An \code{edge_index} object from \code{\link{edge_index_documents}}
 #' @param ctx Model context (same model used to build the index)
 #' @param query Query text string
 #' @param top_k Number of results to return (default: 5)
-#' @return A data frame with columns:
-#'   \itemize{
-#'     \item \code{chunk}: the text content
-#'     \item \code{score}: cosine similarity to the query
-#'     \item \code{source}: source file path (or NA)
-#'     \item \code{index}: position in the original index
-#'   }
+#' @return A data frame with columns: \code{chunk}, \code{score}, \code{source}, \code{index}
 #'
 #' @examples
 #' \dontrun{
 #' ctx <- edge_load_model("model.gguf")
 #' index <- edge_index_documents("./docs/", ctx)
-#'
-#' results <- edge_search(index, ctx, "quarterly revenue growth")
-#' print(results)  # top 5 most relevant chunks
+#' results <- edge_search(index, ctx, "quarterly revenue")
+#' print(results)
 #' }
+#' @seealso \code{\link{edge_index_documents}}, \code{\link{edge_ask}}
 #' @export
 edge_search <- function(index, ctx, query, top_k = 5L) {
   if (!inherits(index, "edge_index")) {
@@ -4552,6 +4534,7 @@ edge_search <- function(index, ctx, query, top_k = 5L) {
 #'
 #' Combines semantic search with text generation: retrieves relevant context
 #' from the index, then generates an answer grounded in that context.
+#' This is the core RAG (Retrieval-Augmented Generation) function.
 #'
 #' @param ctx Model context from edge_load_model()
 #' @param question The question to answer
@@ -4562,24 +4545,23 @@ edge_search <- function(index, ctx, query, top_k = 5L) {
 #' @param system_prompt Optional system-level instruction for the model
 #' @param return_context If TRUE, return both answer and retrieved context (default: FALSE)
 #' @return If \code{return_context = FALSE}: a character string with the answer.
-#'   If \code{return_context = TRUE}: a list with \code{answer}, \code{context} (data frame
-#'   from \code{edge_search}), and \code{prompt} (the full constructed prompt).
+#'   If \code{return_context = TRUE}: a list with \code{answer}, \code{context}, and \code{prompt}.
 #'
 #' @examples
 #' \dontrun{
 #' ctx <- edge_load_model("model.gguf")
 #' index <- edge_index_documents("./reports/", ctx)
 #'
-#' # Simple Q&A
 #' answer <- edge_ask(ctx, "What were Q3 revenues?", index)
 #' cat(answer)
 #'
 #' # With context for debugging
 #' result <- edge_ask(ctx, "What were Q3 revenues?", index,
-#'                     return_context = TRUE)
+#'   return_context = TRUE)
 #' cat(result$answer)
-#' print(result$context)  # shows which chunks were used
+#' print(result$context)
 #' }
+#' @seealso \code{\link{edge_index_documents}}, \code{\link{edge_search}}
 #' @export
 edge_ask <- function(ctx, question, index, top_k = 3L, n_predict = 256L,
                       temperature = 0.3, system_prompt = NULL,
