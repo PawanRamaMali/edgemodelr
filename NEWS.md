@@ -19,6 +19,18 @@
   `embed_edge()`) and "Retrieval-augmented generation"
   (`edge_index_documents()`, `edge_search()` and `edge_ask()`).
 
+* `edge_json_grammar()`, `edge_tool()`, `edge_extract()` and the
+  `response_format` and `tools` of `edge_api()` and `edge_serve()` take
+  full JSON Schema, as OpenAI clients and ellmer send it: nested objects
+  and arrays, optional properties, `enum`/`const` of any scalar,
+  `anyOf`/`oneOf`, nullable types, `$ref` to `$defs`, `minItems`/`maxItems`
+  and date and date-time strings. ellmer's `chat_structured()` with nested
+  `type_object()`/`type_array()` and tools with optional arguments now work
+  through `chat_edge()`. `edge_tool()` gains `required`, and optional
+  arguments may be left out of a call. `response_format` `json_object`
+  gives any JSON object, and `response_format` can be combined with tools.
+  Keywords the grammar cannot enforce, such as `pattern`, are an error.
+
 ## Changes
 
 * `edge_ask()` has a `chat_ctx` argument, so an index built with an

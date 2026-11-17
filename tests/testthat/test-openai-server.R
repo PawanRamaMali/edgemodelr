@@ -40,13 +40,17 @@ test_that("OpenAI tools become edge tools", {
   out <- edgemodelr:::.oa_tools(tools)
   expect_s3_class(out[[1]], "edge_tool")
   expect_identical(out[[1]]$parameters,
-                   list(city = "string", unit = c("celsius", "fahrenheit"), days = "integer"))
+                   list(city = "string", unit = c("celsius", "fahrenheit"),
+                        days = list(type = list("integer", "null"))))
   expect_identical(out[[1]]$notes, c("City name", "", ""))
   expect_null(edgemodelr:::.oa_tools(NULL))
 
   nested <- parse_json('[{"type": "function", "function": {"name": "f", "parameters": {
     "type": "object", "properties": {"xs": {"type": "array"}}}}}]')
-  expect_error(edgemodelr:::.oa_tools(nested), class = "edge_bad_request")
+  expect_identical(edgemodelr:::.oa_tools(nested)[[1]]$parameters$xs, list(type = "array"))
+  unsupported <- parse_json('[{"type": "function", "function": {"name": "f", "parameters": {
+    "type": "object", "properties": {"xs": {"type": "string", "pattern": "x"}}}}}]')
+  expect_error(edgemodelr:::.oa_tools(unsupported), class = "edge_bad_request")
 })
 
 test_that("an enum with one value stays an enum", {
@@ -79,7 +83,8 @@ test_that("response_format json_schema becomes a JSON grammar", {
     "age": {"type": "integer"}}, "required": ["name", "age"], "additionalProperties": false}}}')
   expect_identical(edgemodelr:::.oa_response_grammar(rf),
                    edge_json_grammar(list(name = "string", age = "integer")))
-  expect_error(edgemodelr:::.oa_response_grammar(list(type = "json_object")),
+  expect_match(edgemodelr:::.oa_response_grammar(list(type = "json_object")), "json-value")
+  expect_error(edgemodelr:::.oa_response_grammar(list(type = "xml")),
                class = "edge_bad_request")
 })
 

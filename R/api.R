@@ -1847,22 +1847,41 @@ edge_chat_completion <- function(ctx, messages, n_predict = 256L,
 #'   letter.
 #' @param description What the tool does, in one sentence. The model reads
 #'   it to decide when to call the tool.
-#' @param parameters A named list of arguments, in the format of
+#' @param parameters The arguments, either as a named list in the format of
 #'   \code{\link{edge_json_grammar}}: "string", "number", "integer",
 #'   "boolean" or a character vector of allowed values (use \code{I("x")}
-#'   for a single allowed value). An argument can also be
-#'   \code{list(type = ..., description = ...)} to tell the model what it
-#'   means. Every argument is required. Default: no arguments.
+#'   for a single allowed value), or a JSON Schema list for any argument
+#'   (for example \code{list(type = "array", items = list(type = "string"))}).
+#'   An argument can also be \code{list(type = ..., description = ...)} to
+#'   tell the model what it means. \code{parameters} can also be one JSON
+#'   Schema object (\code{list(type = "object", properties = ...,
+#'   required = ...)}), as OpenAI and ellmer write tool parameters; see
+#'   \code{\link{edge_json_grammar}} for the supported subset. Default: no
+#'   arguments.
+#' @param required Names of the arguments the model must give. The others
+#'   are optional and may be left out of a call. Default: the
+#'   \code{required} list of a JSON Schema object, and otherwise every
+#'   argument.
 #' @return An \code{edge_tool} object
 #'
 #' @examples
 #' weather <- edge_tool("get_weather", "Get the current weather for a city",
 #'   list(city = list(type = "string", description = "City name"),
-#'        unit = c("celsius", "fahrenheit")))
+#'        unit = c("celsius", "fahrenheit")),
+#'   required = "city")
 #' weather
+#'
+#' # Nested arguments as JSON Schema
+#' order <- edge_tool("place_order", "Order items from the shop",
+#'   list(items = list(type = "array", minItems = 1,
+#'                     items = list(type = "object",
+#'                                  properties = list(name = list(type = "string"),
+#'                                                    qty = list(type = "integer")))),
+#'        note = list(type = c("string", "null"))))
+#' order
 #' @seealso \code{\link{edge_chat_completion}}
 #' @export
-edge_tool <- function(name, description, parameters = list()) {
+edge_tool <- function(name, description, parameters = list(), required = NULL) {
   ident <- "^[A-Za-z][A-Za-z0-9_]*$"
   if (!is.character(name) || length(name) != 1L || !grepl(ident, name)) {
     stop("name must be a single name of letters, digits and underscores, starting with a letter")
@@ -1870,38 +1889,55 @@ edge_tool <- function(name, description, parameters = list()) {
   if (!is.character(description) || length(description) != 1L || is.na(description)) {
     stop("description must be a single character string")
   }
+  if (is.character(parameters) && length(parameters) == 1L) {
+    parameters <- .parse_schema_text(parameters)
+  }
+  root <- list()
+  if (.is_json_schema(parameters)) {
+    if (!identical(parameters[["type"]], "object")) {
+      stop("a JSON Schema for parameters must be an object schema")
+    }
+    root <- parameters[intersect(names(parameters), c("$defs", "definitions"))]
+    if (is.null(required) && !is.null(parameters[["required"]])) {
+      required <- as.character(unlist(parameters[["required"]]))
+    }
+    parameters <- parameters[["properties"]] %||% list()
+  }
   if (!is.list(parameters) || (length(parameters) > 0L && is.null(names(parameters)))) {
     stop("parameters must be a named list")
   }
-  arg_names <- names(parameters)
-  if (length(parameters) > 0L &&
-      (any(!grepl(ident, arg_names)) || anyDuplicated(arg_names))) {
-    stop("argument names must be unique and made of letters, digits and underscores")
+  arg_names <- names(parameters) %||% character()
+  if (any(!nzchar(arg_names)) || anyDuplicated(arg_names)) {
+    stop("argument names must be unique and not empty")
+  }
+  if (is.null(required)) required <- arg_names
+  if (!is.character(required) || anyNA(required) || length(setdiff(required, arg_names))) {
+    stop("required must name arguments of the tool")
   }
   types <- list()
+  props <- structure(list(), names = character())
   notes <- character()
   for (i in seq_along(parameters)) {
     spec <- parameters[[i]]
-    note <- ""
-    if (is.list(spec)) {
-      note <- if (is.null(spec$description)) "" else as.character(spec$description)
-      spec <- spec$type
-    }
-    enum <- .is_enum(spec)
-    if (!is.character(spec) || length(spec) == 0L || anyNA(spec) ||
-        (!enum && !tolower(spec) %in% c("string", "number", "integer", "boolean"))) {
-      stop("argument '", arg_names[i], "' must have type 'string', 'number', ",
-           "'integer', 'boolean' or a character vector of allowed values")
-    }
-    if (enum && any(grepl('["\\\n]', spec))) {
+    if (is.character(spec) && .is_enum(spec) && any(grepl('["\\\n]', spec))) {
       stop("allowed values of '", arg_names[i], "' must not contain quotes, ",
            "backslashes or line breaks")
     }
-    types[[arg_names[i]]] <- if (enum) spec else tolower(spec)
-    notes <- c(notes, note)
+    field <- tryCatch(.field_schema(spec, arg_names[i]), error = function(e) {
+      stop("argument '", arg_names[i], "': ", conditionMessage(e), call. = FALSE)
+    })
+    types[arg_names[i]] <- list(field$short)
+    props[arg_names[i]] <- list(field$schema)
+    notes <- c(notes, field$note)
   }
+  schema <- c(list(type = "object", properties = props, required = as.list(required),
+                   additionalProperties = FALSE),
+              root)
+  # Fails here, with the argument named, on a schema the grammar cannot express.
+  .json_schema_grammar(schema, compact = TRUE, where = paste0("tool '", name, "'"))
   structure(list(name = name, description = description,
-                 parameters = types, notes = notes),
+                 parameters = types, notes = notes, required = required,
+                 schema = schema),
             class = "edge_tool")
 }
 
@@ -1939,15 +1975,19 @@ print.edge_tool <- function(x, ...) {
 # One tool as the model sees it: name(arg: type, ...): description.
 .describe_tool <- function(tool) {
   args <- vapply(seq_along(tool$parameters), function(i) {
+    arg <- names(tool$parameters)[i]
     type <- tool$parameters[[i]]
-    type <- if (.is_enum(type)) {
+    type <- if (is.list(type)) {
+      .describe_schema(type, tool$schema)
+    } else if (.is_enum(type)) {
       paste0("one of ", paste0('"', type, '"', collapse = ", "))
     } else {
       type
     }
-    note <- tool$notes[i]
-    paste0(names(tool$parameters)[i], ": ", type,
-           if (nzchar(note)) paste0(" (", note, ")") else "")
+    extra <- c(if (!is.null(tool$required) && !arg %in% tool$required) "optional",
+               if (nzchar(tool$notes[i])) tool$notes[i])
+    paste0(arg, ": ", type,
+           if (length(extra)) paste0(" (", paste(extra, collapse = "; "), ")") else "")
   }, character(1))
   paste0(tool$name, "(", paste(args, collapse = ", "), "): ", tool$description)
 }
@@ -2009,68 +2049,44 @@ print.edge_tool <- function(x, ...) {
   usable <- if (is.null(forced)) tools else tools[forced]
   alts <- character()
   defs <- character()
-  needed <- character()
+  # Strings in a call leave out line breaks as well.
+  b <- .gbnf_builder(compact = TRUE, string_char = '[^"\\\\\\n]')
   for (i in seq_along(usable)) {
     t <- usable[[i]]
     prefix <- paste0("t", i, "-")
-    obj <- .json_object_rule(t$parameters, prefix = prefix, compact = TRUE)
+    .gbnf_reset(b, t$schema, prefix)
+    obj <- .gbnf_value(b, t$schema, prefix, paste0("tool '", t$name, "'"))
     defs <- c(defs,
-              paste0(prefix, "call ::= ", '"\\"', t$name, '\\", \\"arguments\\": " ', obj$rule),
-              obj$defs)
-    needed <- c(needed, obj$needed)
+              paste0(prefix, "call ::= ", '"\\"', t$name, '\\", \\"arguments\\": " ', obj),
+              if (length(b$rules)) paste0(names(b$rules), " ::= ", b$rules))
     alts <- c(alts, paste0(prefix, "call"))
   }
   if (is.null(forced)) alts <- c(alts, '"\\"none\\""')
   call <- paste0('call ::= "{\\"tool\\": " (', paste(alts, collapse = " | "), ') "}"')
   root <- "root ::= call"
-  shared <- c(
-    'ws ::= ""',
-    if ("string" %in% needed) 'string ::= "\\"" [^"\\\\\\n]* "\\""',
-    if ("number" %in% needed) 'number ::= "-"? [0-9]+ ("." [0-9]+)?',
-    if ("integer" %in% needed) 'integer ::= "-"? [0-9]+',
-    if ("boolean" %in% needed) 'boolean ::= "true" | "false"'
-  )
-  paste0(paste(c(root, call, defs, shared), collapse = "\n"), "\n")
+  paste0(paste(c(root, call, defs, .gbnf_shared(b)), collapse = "\n"), "\n")
 }
 
 # Turns generated text into the edge_chat_completion() result. The grammar
-# fixes the layout of a call, so the fields can be read in order with
-# regular expressions; string values cannot contain quotes or backslashes.
+# makes the call valid JSON, so it is parsed as JSON and the arguments get
+# the R types of the tool's schema. Optional arguments the model left out
+# are missing from the list.
 .parse_tool_reply <- function(raw, tools) {
   if (identical(raw, '{"tool": "none"}')) return(list(none = TRUE))
   message <- list(role = "assistant", content = raw)
   head <- regmatches(raw, regexec('^\\{"tool": "([A-Za-z][A-Za-z0-9_]*)", "arguments": \\{', raw))[[1]]
-  if (length(head) == 0L) {
+  if (length(head) == 0L || !head[2] %in% names(tools)) {
     return(list(content = raw, tool_calls = list(), message = message))
   }
   tool <- tools[[head[2]]]
-  rest <- substring(raw, nchar(head[1]))
-  args <- list()
-  ok <- TRUE
-  for (arg in names(tool$parameters)) {
-    m <- regmatches(rest, regexec(
-      paste0('"', arg, '": ("[^"]*"|-?[0-9]+(\\.[0-9]+)?|true|false)'), rest))[[1]]
-    if (length(m) == 0L) {
-      ok <- FALSE
-      break
-    }
-    v <- m[2]
-    type <- tool$parameters[[arg]]
-    args[[arg]] <- if (startsWith(v, '"')) {
-      substr(v, 2L, nchar(v) - 1L)
-    } else if (v %in% c("true", "false")) {
-      v == "true"
-    } else if (identical(type, "integer")) {
-      as.integer(v)
-    } else {
-      as.numeric(v)
-    }
-  }
-  if (!ok || !endsWith(raw, "}}")) {
+  parsed <- tryCatch(.json_parse(raw), error = function(e) NULL)
+  args <- if (is.list(parsed)) parsed[["arguments"]]
+  if (!is.list(args) || (length(args) > 0L && is.null(names(args)))) {
     warning("The tool call was cut off; increase n_predict. Returning the text as content.",
             call. = FALSE)
     return(list(content = raw, tool_calls = list(), message = message))
   }
+  args <- if (length(args)) .json_coerce(args, tool$schema, tool$schema) else list()
   list(content = NULL,
        tool_calls = list(list(name = tool$name, arguments = args)),
        message = message)
@@ -3062,55 +3078,12 @@ edge_grammar_completion <- function(ctx, prompt, grammar, grammar_root = "root",
   )
 }
 
-# The GBNF for one JSON object with the fields of a schema (see
-# edge_json_grammar()). Returns the object's rule body, the field rules it
-# uses (named prefix + "field-" + i) and the shared rules they need
-# ("string", "number", ...). The caller adds the shared rules and ws once.
-.json_object_rule <- function(schema, prefix = "", compact = FALSE) {
-  field_rules <- character()
-  field_entries <- character()
-  needed <- character()
-  for (i in seq_along(schema)) {
-    field_name <- names(schema)[i]
-    field_spec <- schema[[i]]
-    rule_name <- paste0(prefix, "field-", i)
-
-    if (is.character(field_spec) && length(field_spec) == 1L && !.is_enum(field_spec)) {
-      type <- tolower(field_spec)
-      if (!type %in% c("string", "number", "integer", "boolean")) {
-        stop("Unknown type '", type, "' for field '", field_name,
-             "'. Use 'string', 'number', 'integer', 'boolean', or a character vector for enum.")
-      }
-      field_rules <- c(field_rules, paste0(rule_name, " ::= ", type))
-      needed <- c(needed, type)
-    } else if (.is_enum(field_spec)) {
-      # Enum values
-      enum_options <- paste0('"\\\"', field_spec, '\\\""', collapse = " | ")
-      field_rules <- c(field_rules, paste0(rule_name, " ::= ", enum_options))
-    } else {
-      stop("Invalid schema for field '", field_name,
-           "'. Use a string type name or character vector for enum.")
-    }
-
-    # The field entry: "key": value
-    sep <- if (isTRUE(compact)) '\\": " ' else '\\"" ws ":" ws '
-    field_entries <- c(field_entries, paste0('"\\"', field_name, sep, rule_name))
-  }
-
-  fields <- paste(field_entries,
-                  collapse = if (isTRUE(compact)) ' ", " ' else ' ws "," ws ')
-  rule <- if (length(field_entries) == 0L) {
-    '"{}"'
-  } else {
-    paste0('"{" ws ', fields, ' ws "}"')
-  }
-  list(rule = rule, defs = field_rules, needed = unique(needed))
-}
-
 #' Generate a GBNF grammar for JSON output from a schema
 #'
-#' Converts a simple R list schema into a GBNF grammar string that constrains
-#' model output to valid JSON matching the schema.
+#' Converts a schema into a GBNF grammar string that constrains model
+#' output to valid JSON matching the schema. The schema is either a simple
+#' named list of fields or a JSON Schema, as OpenAI clients and ellmer send
+#' it.
 #'
 #' @param schema A named list where each element defines a field. Values can be:
 #'   \itemize{
@@ -3120,16 +3093,60 @@ edge_grammar_completion <- function(ctx, prompt, grammar, grammar_root = "root",
 #'     \item \code{"boolean"} - true or false
 #'     \item A character vector - enum of allowed values (e.g., \code{c("positive", "negative")}),
 #'       or \code{I("x")} for a single allowed value
+#'     \item A JSON Schema list for the field, such as
+#'       \code{list(type = "array", items = list(type = "string"))}
 #'   }
+#'   Every field is required and they appear in the order given.
+#'
+#'   \code{schema} can also be a whole JSON Schema, as a list (for example
+#'   from \code{jsonlite::fromJSON(x, simplifyVector = FALSE)}) or as JSON
+#'   text. A list is read as a JSON Schema when its \code{type} is
+#'   \code{"object"}, \code{"array"} or \code{"null"} or a list of types, or
+#'   when it has \code{$ref}, \code{$defs}, \code{anyOf}, \code{oneOf} or
+#'   \code{allOf}. See Details for the supported subset.
 #' @param compact If TRUE, the layout is fixed to \code{{"key": value, "key": value}},
 #'   with one space after each colon and comma. Every key and separator is then
 #'   forced, and \code{edge_grammar_completion()} adds them without sampling.
 #'   If FALSE (default), the model may put no space, one space or a newline and
 #'   indentation around each key and separator.
-#' @return A GBNF grammar string
+#' @return A GBNF grammar string suitable for use with \code{\link{edge_grammar_completion}}
+#'
+#' @details
+#' The JSON Schema support covers what structured output and tool
+#' definitions use:
+#' \itemize{
+#'   \item \code{type}: \code{"object"}, \code{"array"}, \code{"string"},
+#'     \code{"number"}, \code{"integer"}, \code{"boolean"}, \code{"null"}, or
+#'     a list of these, such as \code{["string", "null"]}. OpenAPI's
+#'     \code{nullable: true} also allows null.
+#'   \item \code{properties}, \code{required} and \code{additionalProperties}.
+#'     Properties are written in the order the schema lists them, and
+#'     properties left out of \code{required} may be omitted. Without a
+#'     \code{required} list every property is written. An object with no
+#'     \code{properties} allows any keys, with values of the
+#'     \code{additionalProperties} schema; \code{"properties": {}} or
+#'     \code{additionalProperties: false} gives \code{{}}. Extra keys are
+#'     never generated next to declared properties.
+#'   \item \code{items}, with \code{minItems} and \code{maxItems} up to 100.
+#'   \item \code{enum} and \code{const} with strings, numbers, booleans or
+#'     null.
+#'   \item \code{anyOf} and \code{oneOf} (which, like \code{anyOf}, may match
+#'     more than one alternative), and \code{allOf} with a single schema.
+#'   \item \code{$ref} to \code{#/$defs/...} or \code{#/definitions/...};
+#'     recursive references are an error.
+#'   \item Strings with \code{minLength}/\code{maxLength} up to 100 and
+#'     \code{format} \code{"date"}, \code{"time"}, \code{"date-time"} or
+#'     \code{"uuid"}. Other formats allow any string.
+#'   \item Annotations such as \code{title}, \code{description} and
+#'     \code{default} are ignored.
+#' }
+#' Keywords the grammar cannot enforce, such as \code{pattern},
+#' \code{minimum}, \code{maximum}, \code{multipleOf}, \code{uniqueItems},
+#' \code{prefixItems} and \code{not}, are an error rather than being
+#' ignored. A schema without \code{type} allows any JSON value. Strings
+#' cannot contain quotes or backslashes.
 #'
 #' @examples
-#' \dontrun{
 #' # Schema with enum and free-text fields
 #' grammar <- edge_json_grammar(list(
 #'   sentiment = c("positive", "negative", "neutral"),
@@ -3138,40 +3155,30 @@ edge_grammar_completion <- function(ctx, prompt, grammar, grammar_root = "root",
 #' ))
 #' cat(grammar)
 #'
+#' # A JSON Schema with an array of objects and an optional field
+#' grammar <- edge_json_grammar(list(
+#'   type = "object",
+#'   properties = list(
+#'     items = list(type = "array", items = list(
+#'       type = "object",
+#'       properties = list(name = list(type = "string"),
+#'                         qty = list(type = "integer")),
+#'       required = list("name"))),
+#'     note = list(type = c("string", "null"))),
+#'   required = list("items", "note")))
+#' cat(grammar)
+#'
+#' \dontrun{
 #' # Use with edge_grammar_completion
 #' ctx <- edge_load_model("model.gguf")
 #' result <- edge_grammar_completion(ctx,
 #'   "Analyze: 'Great product!'\nJSON:", grammar)
 #' parsed <- jsonlite::fromJSON(result)
 #' }
+#' @seealso \code{\link{edge_grammar_completion}}, \code{\link{edge_extract}}
 #' @export
 edge_json_grammar <- function(schema, compact = FALSE) {
-  if (!is.list(schema) || is.null(names(schema))) {
-    stop("schema must be a named list")
-  }
-
-  # Nothing, one space, or one newline and indentation, as in llama.cpp's
-  # JSON grammars. With unlimited whitespace, greedy decoding (temperature
-  # 0) loops on newlines until n_predict runs out.
-  ws <- if (isTRUE(compact)) 'ws ::= ""\n' else 'ws ::= "" | " " | "\\n" [ \\t]{0,20}\n'
-  string_rule <- 'string ::= "\\"" [^"\\\\]* "\\""\n'
-  number_rule <- 'number ::= "-"? [0-9]+ ("." [0-9]+)?\n'
-  integer_rule <- 'integer ::= "-"? [0-9]+\n'
-  boolean_rule <- 'boolean ::= "true" | "false"\n'
-
-  obj <- .json_object_rule(schema, compact = compact)
-  root_rule <- paste0("root ::= ", obj$rule, "\n")
-
-  # Assemble grammar
-  grammar_parts <- root_rule
-  grammar_parts <- c(grammar_parts, paste0(obj$defs, "\n"))
-  grammar_parts <- c(grammar_parts, ws)
-  if ("string" %in% obj$needed) grammar_parts <- c(grammar_parts, string_rule)
-  if ("number" %in% obj$needed) grammar_parts <- c(grammar_parts, number_rule)
-  if ("integer" %in% obj$needed) grammar_parts <- c(grammar_parts, integer_rule)
-  if ("boolean" %in% obj$needed) grammar_parts <- c(grammar_parts, boolean_rule)
-
-  paste(grammar_parts, collapse = "")
+  .json_schema_grammar(.as_schema(schema), compact = compact)
 }
 
 #' Extract structured data from text
@@ -3253,11 +3260,29 @@ edge_extract <- function(ctx, text, schema, instruction = NULL, n_predict = 512L
 
 .extract_instruction <- function(schema, instruction) {
   if (!is.null(instruction)) return(instruction)
+  if (is.character(schema) || .is_json_schema(schema)) {
+    schema <- .as_schema(schema)
+    props <- schema[["properties"]]
+    if (length(props) == 0L) {
+      return(paste0("Extract the data from the text as JSON: ",
+                    .describe_schema(schema, schema), "."))
+    }
+    req <- schema[["required"]]
+    req <- if (is.null(req)) names(props) else as.character(unlist(req))
+    fields <- vapply(names(props), function(nm) {
+      paste0(nm, " (", .describe_schema(props[[nm]], schema),
+             if (!nm %in% req) ", optional", ")")
+    }, character(1))
+    return(paste0("Extract the following fields from the text: ",
+                  paste(fields, collapse = ", "), "."))
+  }
   field_descriptions <- vapply(seq_along(schema), function(i) {
     nm <- names(schema)[i]
     spec <- schema[[i]]
     if (.is_enum(spec)) {
       paste0(nm, " (one of: ", paste(spec, collapse = ", "), ")")
+    } else if (is.list(spec)) {
+      paste0(nm, " (", .describe_schema(spec), ")")
     } else {
       paste0(nm, " (", spec, ")")
     }
@@ -4849,9 +4874,11 @@ print.edge_index <- function(x, ...) {
 # back in the conversation looks the same as one the model made.
 .oa_call_text <- function(name, args) {
   vals <- vapply(args, function(v) {
-    as.character(jsonlite::toJSON(v, auto_unbox = TRUE))
+    if (is.null(v)) return("null")
+    as.character(jsonlite::toJSON(v, auto_unbox = TRUE, null = "null", digits = NA))
   }, character(1))
-  inner <- if (length(args)) paste0('"', names(args), '": ', vals, collapse = ", ") else ""
+  keys <- vapply(names(args), .json_quote, character(1))
+  inner <- if (length(args)) paste0(keys, ": ", vals, collapse = ", ") else ""
   paste0('{"tool": "', name, '", "arguments": {', inner, "}}")
 }
 
@@ -4887,33 +4914,8 @@ print.edge_index <- function(x, ...) {
   })
 }
 
-# The properties of a flat JSON schema object as edge_tool() and
-# edge_json_grammar() fields: strings, numbers, integers, booleans or enums
-# of strings. With descriptions, a field is list(type, description).
-.oa_schema_fields <- function(schema, what, descriptions = TRUE) {
-  props <- schema$properties %||% list()
-  fields <- lapply(names(props), function(arg) {
-    p <- props[[arg]]
-    type <- p$type
-    if (is.list(type) || length(type) > 1L) {
-      type <- setdiff(unlist(type), "null")[1]
-    }
-    spec <- if (!is.null(p$enum)) {
-      values <- as.character(unlist(p$enum))
-      if (length(values) == 1L) I(values) else values
-    } else if (is.character(type) && type %in% c("string", "number", "integer", "boolean")) {
-      type
-    } else {
-      .bad_request("field '", arg, "' of ", what, " has an unsupported type; ",
-                   "use string, number, integer, boolean or an enum")
-    }
-    if (!descriptions || is.null(p$description)) spec else list(type = spec, description = p$description)
-  })
-  names(fields) <- names(props)
-  fields
-}
-
-# OpenAI function tools to edge_tool() objects. Every argument is required.
+# OpenAI function tools to edge_tool() objects. Their parameters are a
+# JSON Schema object; arguments it does not list as required are optional.
 .oa_tools <- function(tools) {
   if (is.null(tools) || length(tools) == 0L) return(NULL)
   lapply(tools, function(t) {
@@ -4921,26 +4923,29 @@ print.edge_index <- function(x, ...) {
     if (!identical(t$type %||% "function", "function") || !is.list(fn) || is.null(fn$name)) {
       .bad_request("only tools of type \"function\" with a name are supported")
     }
-    params <- .oa_schema_fields(fn$parameters, paste0("tool '", fn$name, "'"))
+    params <- fn[["parameters"]]
+    if (length(params) == 0L) params <- list()
+    if (length(params) > 0L && is.null(params[["type"]])) params$type <- "object"
     tryCatch(edge_tool(fn$name, fn$description %||% "", params),
-             error = function(e) .bad_request(conditionMessage(e)))
+             error = function(e) .bad_request("tool '", fn$name, "': ", conditionMessage(e)))
   })
 }
 
-# The grammar for response_format = json_schema, or NULL for plain text.
-# The schema must be a flat object; json_object without a schema is not
-# supported, since the reply could not be constrained.
+# The grammar for response_format, or NULL for plain text: the schema's
+# grammar for json_schema, and any JSON object for json_object.
 .oa_response_grammar <- function(response_format) {
   type <- response_format$type %||% "text"
   if (identical(type, "text")) return(NULL)
+  if (identical(type, "json_object")) return(.json_schema_grammar(list(type = "object")))
   if (!identical(type, "json_schema")) {
-    .bad_request("response_format must be \"text\" or \"json_schema\"")
+    .bad_request("response_format must be \"text\", \"json_object\" or \"json_schema\"")
   }
   schema <- response_format$json_schema$schema
-  if (!is.list(schema) || !identical(schema$type, "object") || length(schema$properties) == 0L) {
-    .bad_request("response_format json_schema must describe an object with properties")
+  if (!is.list(schema) || is.null(names(schema))) {
+    .bad_request("response_format json_schema must have a schema object")
   }
-  edge_json_grammar(.oa_schema_fields(schema, "response_format", descriptions = FALSE))
+  tryCatch(.json_schema_grammar(schema, where = "response_format"),
+           error = function(e) .bad_request(conditionMessage(e)))
 }
 
 .oa_tool_choice <- function(tool_choice) {
@@ -5063,11 +5068,10 @@ print.edge_index <- function(x, ...) {
   id <- .oa_id("chatcmpl-")
   created <- as.integer(Sys.time())
 
+  # With tools as well, the model first chooses between a call and an
+  # answer, and an answer then follows response_format.
   grammar <- .oa_response_grammar(body$response_format)
   use_tools <- !is.null(tools) && !identical(tool_choice, "none")
-  if (!is.null(grammar) && use_tools) {
-    .bad_request("response_format json_schema cannot be combined with tools")
-  }
   if (use_tools) {
     checked <- tryCatch(.check_tools(tools), error = function(e) .bad_request(conditionMessage(e)))
     forced <- tryCatch(.check_tool_choice(tool_choice, checked),
@@ -5979,9 +5983,11 @@ edge_api <- function(model_path, n_slots = 8L, n_ctx = 2048L, n_threads = NULL,
 #'
 #' @details
 #' Tool calling goes through \code{\link{edge_chat_completion}}: tool
-#' arguments may be strings, numbers, integers, booleans or enums, and the
-#' model makes one call per reply. Structured data works for flat objects
-#' of those types. Streamed replies arrive in one piece when
+#' arguments follow ellmer's JSON Schema, including optional, nested and
+#' array arguments, and the model makes one call per reply. Structured data
+#' from \code{chat_structured()} is constrained to its schema, nested
+#' objects and arrays included (see \code{\link{edge_json_grammar}} for the
+#' supported subset). Streamed replies arrive in one piece when
 #' generation ends (see \code{\link{edge_serve}}).
 #'
 #' With \code{n_slots = 1}, the requests that ellmer's

@@ -71,9 +71,11 @@ yourself.
 }
 \details{
 Tool calling goes through \code{\link{edge_chat_completion}}: tool
-arguments may be strings, numbers, integers, booleans or enums, and the
-model makes one call per reply. Structured data works for flat objects
-of those types. Streamed replies arrive in one piece when
+arguments follow ellmer's JSON Schema, including optional, nested and
+array arguments, and the model makes one call per reply. Structured data
+from \code{chat_structured()} is constrained to its schema, nested
+objects and arrays included (see \code{\link{edge_json_grammar}} for the
+supported subset). Streamed replies arrive in one piece when
 generation ends (see \code{\link{edge_serve}}).
 
 With \code{n_slots = 1}, the requests that ellmer's
