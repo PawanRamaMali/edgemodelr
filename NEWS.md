@@ -1,3 +1,61 @@
+# edgemodelr (development)
+
+## New features
+
+* `chat_edge()` takes `n_slots`, so its server answers several requests at
+  once and `ellmer::parallel_chat()` (and mall and vitals) run in parallel,
+  and `n_threads`. The new `chat_edge_stop()` stops its background servers,
+  which also stop when the package is unloaded or R exits.
+
+* `edge_rerank()` scores documents against a query with a reranking model
+  such as bge-reranker-v2-m3, loaded with `edge_load_model(reranking =
+  TRUE)`. `edge_search(rerank = )` uses one to re-order the top hits, and
+  `edge_api(reranking = )` serves `POST /v1/rerank` in the Jina, Cohere and
+  llama.cpp format.
+
+* Three vignettes: "Serving a model with edge_api()" (running locally and
+  on Posit Connect, clients in R, ellmer and Python, jobs, timings and
+  sizing), "Using local models with ellmer" (`chat_edge()` and
+  `embed_edge()`) and "Retrieval-augmented generation"
+  (`edge_index_documents()`, `edge_search()` and `edge_ask()`).
+
+* `edge_json_grammar()`, `edge_tool()`, `edge_extract()` and the
+  `response_format` and `tools` of `edge_api()` and `edge_serve()` take
+  full JSON Schema, as OpenAI clients and ellmer send it: nested objects
+  and arrays, optional properties, `enum`/`const` of any scalar,
+  `anyOf`/`oneOf`, nullable types, `$ref` to `$defs`, `minItems`/`maxItems`
+  and date and date-time strings. ellmer's `chat_structured()` with nested
+  `type_object()`/`type_array()` and tools with optional arguments now work
+  through `chat_edge()`. `edge_tool()` gains `required`, and optional
+  arguments may be left out of a call. `response_format` `json_object`
+  gives any JSON object, and `response_format` can be combined with tools.
+  Keywords the grammar cannot enforce, such as `pattern`, are an error.
+
+* Each loaded model keeps its own CPU thread pool. ggml used to start and
+  join a fresh set of threads for every decode. The pool's threads sleep
+  between decodes instead of spinning, and the engine puts them to sleep
+  when it has no work, so an idle model or engine uses no CPU. With
+  gemma-3-1b on 4 threads, `edge_engine()` with 8 slots generates 8% more
+  tokens per second (41.3 to 44.7) and uses 7% less CPU per token; with 1
+  slot it is 3% faster.
+
+## Changes
+
+* `edge_ask()` has a `chat_ctx` argument, so an index built with an
+  embedding-only model such as Qwen3-Embedding can be answered by a chat
+  model. Before, it failed because the embedding model cannot generate.
+
+* `edge_search()` gives cosine similarities for an index built with
+  `normalize = FALSE` (it gave dot products), and a clear error when the
+  index and the model have different embedding sizes.
+
+* `edge_tokenize()` converts text to UTF-8 first, so latin1 strings give
+  the same tokens as UTF-8 ones, and `edge_index_documents()` gives its own
+  error for a non-character `source`.
+
+* `chat_edge()` has an `api_key` argument (or `EDGEMODELR_API_KEY`) for a
+  server at `base_url` started with a key; it always sent a dummy key.
+
 # edgemodelr 0.7.0
 
 0.5.0 and 0.6.0 were not released on CRAN, so their changes (in their own

@@ -14,7 +14,8 @@ edge_api(
   embeddings = FALSE,
   api_key = NULL,
   model_name = NULL,
-  n_gpu_layers = 0L
+  n_gpu_layers = 0L,
+  reranking = FALSE
 )
 }
 \arguments{
@@ -47,6 +48,11 @@ settings.}
 \item{model_name}{Name reported as the model (default: the file name).}
 
 \item{n_gpu_layers}{GPU layers (default: 0).}
+
+\item{reranking}{FALSE (default), or the path of a .gguf reranking
+model, such as bge-reranker-v2-m3, to serve \code{/v1/rerank} with
+(see \code{\link{edge_rerank}}). TRUE serves it from \code{model_path},
+which must then be a reranker. Its context has \code{n_ctx} tokens.}
 }
 \value{
 A plumber router. Run it with \code{plumber::pr_run()}, or return
@@ -80,6 +86,15 @@ cancels it. Jobs suit a Shiny app: it can show the answer as it is
 written, and no request has to stay open while the model works.
 Finished jobs are kept for 15 minutes.
 \item \code{POST /v1/embeddings} when \code{embeddings} is set.
+\item \code{POST /v1/rerank} when \code{reranking} is set, in the
+format of Jina, Cohere and llama.cpp's server: the request has
+\code{query}, \code{documents} (strings, or objects with
+\code{text}), and optionally \code{top_n} and
+\code{return_documents} (default true); the reply has
+\code{results}, a list of \code{index} (from 0),
+\code{relevance_score} and \code{document}, most relevant first,
+and \code{usage}. Like embeddings, a rerank request is answered at
+once rather than queued, so other requests wait while it runs.
 \item \code{GET /v1/models}, \code{GET /metrics} (engine counters) and
 \code{GET /health} (no key needed).
 }

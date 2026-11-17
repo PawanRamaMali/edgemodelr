@@ -38,6 +38,12 @@
 #'   the cache takes, with almost no change in output, so a larger
 #'   \code{n_ctx} fits; the 4-bit types save more and cost some quality.
 #'   A quantized \code{cache_type_v} needs \code{flash_attn = TRUE}.
+#' @param reranking Load a reranking model, such as bge-reranker, for
+#'   \code{\link{edge_rerank}} (default: FALSE). This turns on
+#'   \code{embeddings} and rank pooling, and fails unless the model has a
+#'   classification head, as rerankers do. A query and document
+#'   must fit in one batch, which holds 512 tokens for an \code{n_ctx}
+#'   from 512 to 2048, and a quarter of \code{n_ctx} (at most 2048) above it.
 #' @return External pointer to the loaded model context
 #'
 #' @examples
@@ -66,7 +72,10 @@
 #' @export
 edge_load_model <- function(model_path, n_ctx = 2048L, n_gpu_layers = 0L, n_threads = NULL, flash_attn = TRUE, embeddings = FALSE,
                             prompt_cache = FALSE, lora = NULL, lora_scale = 1,
-                            n_parallel = 1L, cache_type_k = "f16", cache_type_v = "f16") {
+                            n_parallel = 1L, cache_type_k = "f16", cache_type_v = "f16",
+                            reranking = FALSE) {
+  if (!isTRUE(reranking) && !isFALSE(reranking)) stop("reranking must be TRUE or FALSE")
+  if (reranking) embeddings <- TRUE
   if (!file.exists(model_path)) {
     stop("Model file does not exist: ", model_path, "\n",
          "Try these options:\n",
@@ -162,7 +171,8 @@ edge_load_model <- function(model_path, n_ctx = 2048L, n_gpu_layers = 0L, n_thre
                              lora_scale,
                              as.integer(n_parallel),
                              cache_type_k,
-                             cache_type_v)
+                             cache_type_v,
+                             reranking)
   }, error = function(e) {
     # Provide more context about what went wrong
     if (grepl("llama_load_model_from_file", e$message)) {
@@ -412,22 +422,13 @@ edge_completion <- function(ctx, prompt, n_predict = 128L, temperature = 0.8, to
 #'
 #' @examples
 #' \dontrun{
-#' # Proper cleanup after model usage
-#' setup <- edge_quick_setup("TinyLlama-1.1B")
-#' if (!is.null(setup$context)) {
-#'   ctx <- setup$context
-#'
-#'   # Use model for various tasks
-#'   result <- edge_completion(ctx, "Hello", n_predict = 20)
-#'   cat(result)
-#'
-#'   # Always clean up when done
-#'   edge_free_model(ctx)
+#' # Requires a downloaded model (not run in checks)
+#' model_path <- "model.gguf"
+#' if (file.exists(model_path)) {
+#'   ctx <- edge_load_model(model_path)
+#'   # ... use model ...
+#'   edge_free_model(ctx)  # Clean up
 #' }
-#'
-#' # Safe cleanup - handles invalid contexts gracefully
-#' edge_free_model(NULL)  # Safe, no error
-#' edge_free_model("invalid")  # Safe, no error
 #' }
 #' @export
 edge_free_model <- function(ctx) {
@@ -455,29 +456,28 @@ is_valid_model <- function(ctx) {
 
 #' Download a GGUF model from Hugging Face
 #'
-#' @param model_id Hugging Face model identifier (e.g., "TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF")
-#' @param filename Specific GGUF file to download
+#' @param model_id Hugging Face model identifier (e.g., "TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF"),
+#'   or a friendly model name from \code{edge_list_models()} (e.g., "Qwen3-0.6B", "mistral-7b")
+#' @param filename Specific GGUF file to download. Optional when using a friendly model name.
 #' @param cache_dir Directory to store downloaded models (default: user cache directory via tools::R_user_dir())
 #' @param force_download Force re-download even if file exists
 #' @param verify_checksum Verify SHA-256 checksum if available (default: TRUE)
 #' @param expected_sha256 Optional expected SHA-256 hash for the model file
 #' @param trust_first_use Store a local hash if no known hash exists (default: FALSE)
+#' @param verbose Whether to print download progress messages
 #' @return Path to the downloaded model file
 #'
 #' @examples
 #' \dontrun{
-#' # Download TinyLlama model
+#' # Download using friendly name (recommended)
+#' model_path <- edge_download_model("Qwen3-0.6B")
+#' model_path <- edge_download_model("mistral-7b")
+#'
+#' # Download using HuggingFace repo ID
 #' model_path <- edge_download_model(
 #'   model_id = "TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF",
 #'   filename = "tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf"
 #' )
-#'
-#' # Use the downloaded model
-#' if (file.exists(model_path)) {
-#'   ctx <- edge_load_model(model_path)
-#'   response <- edge_completion(ctx, "Hello, how are you?")
-#'   edge_free_model(ctx)
-#' }
 #' }
 #' @export
 edge_download_model <- function(model_id, filename = NULL, cache_dir = NULL, force_download = FALSE,
@@ -1079,8 +1079,8 @@ edge_resolve_model_name <- function(model_name, models = NULL) {
 
 #' List popular pre-configured models
 #'
-#' Models are sourced from GPT4All CDN (direct download, no auth required) and Hugging Face.
-#' GPT4All models are recommended for offline use as they don't require any accounts.
+#' Models are downloaded from Hugging Face or the GPT4All CDN. Neither needs
+#' an account.
 #'
 #' @return Data frame with model information
 #' @export
@@ -1164,25 +1164,19 @@ edge_list_models <- function() {
 
 #' Quick setup for a popular model
 #'
-#' Downloads a model from the built-in model list and loads it for inference.
-#' GPT4All models are downloaded directly without authentication.
-#'
 #' @param model_name Name of the model from edge_list_models()
-#' @param cache_dir Directory to store downloaded models (default: user cache directory via tools::R_user_dir())
+#' @param cache_dir Directory to store downloaded models
 #' @param verify_checksum Verify SHA-256 checksum if available (default: TRUE)
 #' @param expected_sha256 Optional expected SHA-256 hash for the model file
 #' @param trust_first_use Store a local hash if no known hash exists (default: FALSE)
-#' @param verbose Whether to print status messages (default: TRUE)
+#' @param verbose Whether to print setup progress messages
 #' @return List with model path and context (if llama.cpp is available)
 #'
 #' @examples
 #' \dontrun{
-#' # Quick setup with a 7B model (downloads ~4GB, not run in checks)
-#' setup <- edge_quick_setup("mistral-7b")
+#' # Quick setup with TinyLlama (downloads model, not run in checks)
+#' setup <- edge_quick_setup("TinyLlama-1.1B")
 #' ctx <- setup$context
-#'
-#' # Or use a larger 13B model
-#' setup <- edge_quick_setup("orca2-13b")  # 7.4GB, direct download
 #'
 #' if (!is.null(ctx)) {
 #'   response <- edge_completion(ctx, "Hello!")
@@ -1257,6 +1251,8 @@ edge_quick_setup <- function(model_name, cache_dir = NULL, verify_checksum = TRU
 #' Download a model from a direct URL
 #'
 #' Downloads a GGUF model file from any URL. Supports resume and validates GGUF format.
+#' This function is useful for downloading models from GPT4All CDN or other direct sources
+#' that don't require authentication.
 #'
 #' @param url Direct download URL for the model
 #' @param filename Local filename to save as
@@ -1854,22 +1850,41 @@ edge_chat_completion <- function(ctx, messages, n_predict = 256L,
 #'   letter.
 #' @param description What the tool does, in one sentence. The model reads
 #'   it to decide when to call the tool.
-#' @param parameters A named list of arguments, in the format of
+#' @param parameters The arguments, either as a named list in the format of
 #'   \code{\link{edge_json_grammar}}: "string", "number", "integer",
 #'   "boolean" or a character vector of allowed values (use \code{I("x")}
-#'   for a single allowed value). An argument can also be
-#'   \code{list(type = ..., description = ...)} to tell the model what it
-#'   means. Every argument is required. Default: no arguments.
+#'   for a single allowed value), or a JSON Schema list for any argument
+#'   (for example \code{list(type = "array", items = list(type = "string"))}).
+#'   An argument can also be \code{list(type = ..., description = ...)} to
+#'   tell the model what it means. \code{parameters} can also be one JSON
+#'   Schema object (\code{list(type = "object", properties = ...,
+#'   required = ...)}), as OpenAI and ellmer write tool parameters; see
+#'   \code{\link{edge_json_grammar}} for the supported subset. Default: no
+#'   arguments.
+#' @param required Names of the arguments the model must give. The others
+#'   are optional and may be left out of a call. Default: the
+#'   \code{required} list of a JSON Schema object, and otherwise every
+#'   argument.
 #' @return An \code{edge_tool} object
 #'
 #' @examples
 #' weather <- edge_tool("get_weather", "Get the current weather for a city",
 #'   list(city = list(type = "string", description = "City name"),
-#'        unit = c("celsius", "fahrenheit")))
+#'        unit = c("celsius", "fahrenheit")),
+#'   required = "city")
 #' weather
+#'
+#' # Nested arguments as JSON Schema
+#' order <- edge_tool("place_order", "Order items from the shop",
+#'   list(items = list(type = "array", minItems = 1,
+#'                     items = list(type = "object",
+#'                                  properties = list(name = list(type = "string"),
+#'                                                    qty = list(type = "integer")))),
+#'        note = list(type = c("string", "null"))))
+#' order
 #' @seealso \code{\link{edge_chat_completion}}
 #' @export
-edge_tool <- function(name, description, parameters = list()) {
+edge_tool <- function(name, description, parameters = list(), required = NULL) {
   ident <- "^[A-Za-z][A-Za-z0-9_]*$"
   if (!is.character(name) || length(name) != 1L || !grepl(ident, name)) {
     stop("name must be a single name of letters, digits and underscores, starting with a letter")
@@ -1877,38 +1892,55 @@ edge_tool <- function(name, description, parameters = list()) {
   if (!is.character(description) || length(description) != 1L || is.na(description)) {
     stop("description must be a single character string")
   }
+  if (is.character(parameters) && length(parameters) == 1L) {
+    parameters <- .parse_schema_text(parameters)
+  }
+  root <- list()
+  if (.is_json_schema(parameters)) {
+    if (!identical(parameters[["type"]], "object")) {
+      stop("a JSON Schema for parameters must be an object schema")
+    }
+    root <- parameters[intersect(names(parameters), c("$defs", "definitions"))]
+    if (is.null(required) && !is.null(parameters[["required"]])) {
+      required <- as.character(unlist(parameters[["required"]]))
+    }
+    parameters <- parameters[["properties"]] %||% list()
+  }
   if (!is.list(parameters) || (length(parameters) > 0L && is.null(names(parameters)))) {
     stop("parameters must be a named list")
   }
-  arg_names <- names(parameters)
-  if (length(parameters) > 0L &&
-      (any(!grepl(ident, arg_names)) || anyDuplicated(arg_names))) {
-    stop("argument names must be unique and made of letters, digits and underscores")
+  arg_names <- names(parameters) %||% character()
+  if (any(!nzchar(arg_names)) || anyDuplicated(arg_names)) {
+    stop("argument names must be unique and not empty")
+  }
+  if (is.null(required)) required <- arg_names
+  if (!is.character(required) || anyNA(required) || length(setdiff(required, arg_names))) {
+    stop("required must name arguments of the tool")
   }
   types <- list()
+  props <- structure(list(), names = character())
   notes <- character()
   for (i in seq_along(parameters)) {
     spec <- parameters[[i]]
-    note <- ""
-    if (is.list(spec)) {
-      note <- if (is.null(spec$description)) "" else as.character(spec$description)
-      spec <- spec$type
-    }
-    enum <- .is_enum(spec)
-    if (!is.character(spec) || length(spec) == 0L || anyNA(spec) ||
-        (!enum && !tolower(spec) %in% c("string", "number", "integer", "boolean"))) {
-      stop("argument '", arg_names[i], "' must have type 'string', 'number', ",
-           "'integer', 'boolean' or a character vector of allowed values")
-    }
-    if (enum && any(grepl('["\\\n]', spec))) {
+    if (is.character(spec) && .is_enum(spec) && any(grepl('["\\\n]', spec))) {
       stop("allowed values of '", arg_names[i], "' must not contain quotes, ",
            "backslashes or line breaks")
     }
-    types[[arg_names[i]]] <- if (enum) spec else tolower(spec)
-    notes <- c(notes, note)
+    field <- tryCatch(.field_schema(spec, arg_names[i]), error = function(e) {
+      stop("argument '", arg_names[i], "': ", conditionMessage(e), call. = FALSE)
+    })
+    types[arg_names[i]] <- list(field$short)
+    props[arg_names[i]] <- list(field$schema)
+    notes <- c(notes, field$note)
   }
+  schema <- c(list(type = "object", properties = props, required = as.list(required),
+                   additionalProperties = FALSE),
+              root)
+  # Fails here, with the argument named, on a schema the grammar cannot express.
+  .json_schema_grammar(schema, compact = TRUE, where = paste0("tool '", name, "'"))
   structure(list(name = name, description = description,
-                 parameters = types, notes = notes),
+                 parameters = types, notes = notes, required = required,
+                 schema = schema),
             class = "edge_tool")
 }
 
@@ -1946,15 +1978,19 @@ print.edge_tool <- function(x, ...) {
 # One tool as the model sees it: name(arg: type, ...): description.
 .describe_tool <- function(tool) {
   args <- vapply(seq_along(tool$parameters), function(i) {
+    arg <- names(tool$parameters)[i]
     type <- tool$parameters[[i]]
-    type <- if (.is_enum(type)) {
+    type <- if (is.list(type)) {
+      .describe_schema(type, tool$schema)
+    } else if (.is_enum(type)) {
       paste0("one of ", paste0('"', type, '"', collapse = ", "))
     } else {
       type
     }
-    note <- tool$notes[i]
-    paste0(names(tool$parameters)[i], ": ", type,
-           if (nzchar(note)) paste0(" (", note, ")") else "")
+    extra <- c(if (!is.null(tool$required) && !arg %in% tool$required) "optional",
+               if (nzchar(tool$notes[i])) tool$notes[i])
+    paste0(arg, ": ", type,
+           if (length(extra)) paste0(" (", paste(extra, collapse = "; "), ")") else "")
   }, character(1))
   paste0(tool$name, "(", paste(args, collapse = ", "), "): ", tool$description)
 }
@@ -2016,68 +2052,44 @@ print.edge_tool <- function(x, ...) {
   usable <- if (is.null(forced)) tools else tools[forced]
   alts <- character()
   defs <- character()
-  needed <- character()
+  # Strings in a call leave out line breaks as well.
+  b <- .gbnf_builder(compact = TRUE, string_char = '[^"\\\\\\n]')
   for (i in seq_along(usable)) {
     t <- usable[[i]]
     prefix <- paste0("t", i, "-")
-    obj <- .json_object_rule(t$parameters, prefix = prefix, compact = TRUE)
+    .gbnf_reset(b, t$schema, prefix)
+    obj <- .gbnf_value(b, t$schema, prefix, paste0("tool '", t$name, "'"))
     defs <- c(defs,
-              paste0(prefix, "call ::= ", '"\\"', t$name, '\\", \\"arguments\\": " ', obj$rule),
-              obj$defs)
-    needed <- c(needed, obj$needed)
+              paste0(prefix, "call ::= ", '"\\"', t$name, '\\", \\"arguments\\": " ', obj),
+              if (length(b$rules)) paste0(names(b$rules), " ::= ", b$rules))
     alts <- c(alts, paste0(prefix, "call"))
   }
   if (is.null(forced)) alts <- c(alts, '"\\"none\\""')
   call <- paste0('call ::= "{\\"tool\\": " (', paste(alts, collapse = " | "), ') "}"')
   root <- "root ::= call"
-  shared <- c(
-    'ws ::= ""',
-    if ("string" %in% needed) 'string ::= "\\"" [^"\\\\\\n]* "\\""',
-    if ("number" %in% needed) 'number ::= "-"? [0-9]+ ("." [0-9]+)?',
-    if ("integer" %in% needed) 'integer ::= "-"? [0-9]+',
-    if ("boolean" %in% needed) 'boolean ::= "true" | "false"'
-  )
-  paste0(paste(c(root, call, defs, shared), collapse = "\n"), "\n")
+  paste0(paste(c(root, call, defs, .gbnf_shared(b)), collapse = "\n"), "\n")
 }
 
 # Turns generated text into the edge_chat_completion() result. The grammar
-# fixes the layout of a call, so the fields can be read in order with
-# regular expressions; string values cannot contain quotes or backslashes.
+# makes the call valid JSON, so it is parsed as JSON and the arguments get
+# the R types of the tool's schema. Optional arguments the model left out
+# are missing from the list.
 .parse_tool_reply <- function(raw, tools) {
   if (identical(raw, '{"tool": "none"}')) return(list(none = TRUE))
   message <- list(role = "assistant", content = raw)
   head <- regmatches(raw, regexec('^\\{"tool": "([A-Za-z][A-Za-z0-9_]*)", "arguments": \\{', raw))[[1]]
-  if (length(head) == 0L) {
+  if (length(head) == 0L || !head[2] %in% names(tools)) {
     return(list(content = raw, tool_calls = list(), message = message))
   }
   tool <- tools[[head[2]]]
-  rest <- substring(raw, nchar(head[1]))
-  args <- list()
-  ok <- TRUE
-  for (arg in names(tool$parameters)) {
-    m <- regmatches(rest, regexec(
-      paste0('"', arg, '": ("[^"]*"|-?[0-9]+(\\.[0-9]+)?|true|false)'), rest))[[1]]
-    if (length(m) == 0L) {
-      ok <- FALSE
-      break
-    }
-    v <- m[2]
-    type <- tool$parameters[[arg]]
-    args[[arg]] <- if (startsWith(v, '"')) {
-      substr(v, 2L, nchar(v) - 1L)
-    } else if (v %in% c("true", "false")) {
-      v == "true"
-    } else if (identical(type, "integer")) {
-      as.integer(v)
-    } else {
-      as.numeric(v)
-    }
-  }
-  if (!ok || !endsWith(raw, "}}")) {
+  parsed <- tryCatch(.json_parse(raw), error = function(e) NULL)
+  args <- if (is.list(parsed)) parsed[["arguments"]]
+  if (!is.list(args) || (length(args) > 0L && is.null(names(args)))) {
     warning("The tool call was cut off; increase n_predict. Returning the text as content.",
             call. = FALSE)
     return(list(content = raw, tool_calls = list(), message = message))
   }
+  args <- if (length(args)) .json_coerce(args, tool$schema, tool$schema) else list()
   list(content = NULL,
        tool_calls = list(list(name = tool$name, arguments = args)),
        message = message)
@@ -3069,55 +3081,12 @@ edge_grammar_completion <- function(ctx, prompt, grammar, grammar_root = "root",
   )
 }
 
-# The GBNF for one JSON object with the fields of a schema (see
-# edge_json_grammar()). Returns the object's rule body, the field rules it
-# uses (named prefix + "field-" + i) and the shared rules they need
-# ("string", "number", ...). The caller adds the shared rules and ws once.
-.json_object_rule <- function(schema, prefix = "", compact = FALSE) {
-  field_rules <- character()
-  field_entries <- character()
-  needed <- character()
-  for (i in seq_along(schema)) {
-    field_name <- names(schema)[i]
-    field_spec <- schema[[i]]
-    rule_name <- paste0(prefix, "field-", i)
-
-    if (is.character(field_spec) && length(field_spec) == 1L && !.is_enum(field_spec)) {
-      type <- tolower(field_spec)
-      if (!type %in% c("string", "number", "integer", "boolean")) {
-        stop("Unknown type '", type, "' for field '", field_name,
-             "'. Use 'string', 'number', 'integer', 'boolean', or a character vector for enum.")
-      }
-      field_rules <- c(field_rules, paste0(rule_name, " ::= ", type))
-      needed <- c(needed, type)
-    } else if (.is_enum(field_spec)) {
-      # Enum values
-      enum_options <- paste0('"\\\"', field_spec, '\\\""', collapse = " | ")
-      field_rules <- c(field_rules, paste0(rule_name, " ::= ", enum_options))
-    } else {
-      stop("Invalid schema for field '", field_name,
-           "'. Use a string type name or character vector for enum.")
-    }
-
-    # The field entry: "key": value
-    sep <- if (isTRUE(compact)) '\\": " ' else '\\"" ws ":" ws '
-    field_entries <- c(field_entries, paste0('"\\"', field_name, sep, rule_name))
-  }
-
-  fields <- paste(field_entries,
-                  collapse = if (isTRUE(compact)) ' ", " ' else ' ws "," ws ')
-  rule <- if (length(field_entries) == 0L) {
-    '"{}"'
-  } else {
-    paste0('"{" ws ', fields, ' ws "}"')
-  }
-  list(rule = rule, defs = field_rules, needed = unique(needed))
-}
-
 #' Generate a GBNF grammar for JSON output from a schema
 #'
-#' Converts a simple R list schema into a GBNF grammar string that constrains
-#' model output to valid JSON matching the schema.
+#' Converts a schema into a GBNF grammar string that constrains model
+#' output to valid JSON matching the schema. The schema is either a simple
+#' named list of fields or a JSON Schema, as OpenAI clients and ellmer send
+#' it.
 #'
 #' @param schema A named list where each element defines a field. Values can be:
 #'   \itemize{
@@ -3127,16 +3096,60 @@ edge_grammar_completion <- function(ctx, prompt, grammar, grammar_root = "root",
 #'     \item \code{"boolean"} - true or false
 #'     \item A character vector - enum of allowed values (e.g., \code{c("positive", "negative")}),
 #'       or \code{I("x")} for a single allowed value
+#'     \item A JSON Schema list for the field, such as
+#'       \code{list(type = "array", items = list(type = "string"))}
 #'   }
+#'   Every field is required and they appear in the order given.
+#'
+#'   \code{schema} can also be a whole JSON Schema, as a list (for example
+#'   from \code{jsonlite::fromJSON(x, simplifyVector = FALSE)}) or as JSON
+#'   text. A list is read as a JSON Schema when its \code{type} is
+#'   \code{"object"}, \code{"array"} or \code{"null"} or a list of types, or
+#'   when it has \code{$ref}, \code{$defs}, \code{anyOf}, \code{oneOf} or
+#'   \code{allOf}. See Details for the supported subset.
 #' @param compact If TRUE, the layout is fixed to \code{{"key": value, "key": value}},
 #'   with one space after each colon and comma. Every key and separator is then
 #'   forced, and \code{edge_grammar_completion()} adds them without sampling.
 #'   If FALSE (default), the model may put no space, one space or a newline and
 #'   indentation around each key and separator.
-#' @return A GBNF grammar string
+#' @return A GBNF grammar string suitable for use with \code{\link{edge_grammar_completion}}
+#'
+#' @details
+#' The JSON Schema support covers what structured output and tool
+#' definitions use:
+#' \itemize{
+#'   \item \code{type}: \code{"object"}, \code{"array"}, \code{"string"},
+#'     \code{"number"}, \code{"integer"}, \code{"boolean"}, \code{"null"}, or
+#'     a list of these, such as \code{["string", "null"]}. OpenAPI's
+#'     \code{nullable: true} also allows null.
+#'   \item \code{properties}, \code{required} and \code{additionalProperties}.
+#'     Properties are written in the order the schema lists them, and
+#'     properties left out of \code{required} may be omitted. Without a
+#'     \code{required} list every property is written. An object with no
+#'     \code{properties} allows any keys, with values of the
+#'     \code{additionalProperties} schema; \code{"properties": {}} or
+#'     \code{additionalProperties: false} gives \code{{}}. Extra keys are
+#'     never generated next to declared properties.
+#'   \item \code{items}, with \code{minItems} and \code{maxItems} up to 100.
+#'   \item \code{enum} and \code{const} with strings, numbers, booleans or
+#'     null.
+#'   \item \code{anyOf} and \code{oneOf} (which, like \code{anyOf}, may match
+#'     more than one alternative), and \code{allOf} with a single schema.
+#'   \item \code{$ref} to \code{#/$defs/...} or \code{#/definitions/...};
+#'     recursive references are an error.
+#'   \item Strings with \code{minLength}/\code{maxLength} up to 100 and
+#'     \code{format} \code{"date"}, \code{"time"}, \code{"date-time"} or
+#'     \code{"uuid"}. Other formats allow any string.
+#'   \item Annotations such as \code{title}, \code{description} and
+#'     \code{default} are ignored.
+#' }
+#' Keywords the grammar cannot enforce, such as \code{pattern},
+#' \code{minimum}, \code{maximum}, \code{multipleOf}, \code{uniqueItems},
+#' \code{prefixItems} and \code{not}, are an error rather than being
+#' ignored. A schema without \code{type} allows any JSON value. Strings
+#' cannot contain quotes or backslashes.
 #'
 #' @examples
-#' \dontrun{
 #' # Schema with enum and free-text fields
 #' grammar <- edge_json_grammar(list(
 #'   sentiment = c("positive", "negative", "neutral"),
@@ -3145,40 +3158,30 @@ edge_grammar_completion <- function(ctx, prompt, grammar, grammar_root = "root",
 #' ))
 #' cat(grammar)
 #'
+#' # A JSON Schema with an array of objects and an optional field
+#' grammar <- edge_json_grammar(list(
+#'   type = "object",
+#'   properties = list(
+#'     items = list(type = "array", items = list(
+#'       type = "object",
+#'       properties = list(name = list(type = "string"),
+#'                         qty = list(type = "integer")),
+#'       required = list("name"))),
+#'     note = list(type = c("string", "null"))),
+#'   required = list("items", "note")))
+#' cat(grammar)
+#'
+#' \dontrun{
 #' # Use with edge_grammar_completion
 #' ctx <- edge_load_model("model.gguf")
 #' result <- edge_grammar_completion(ctx,
 #'   "Analyze: 'Great product!'\nJSON:", grammar)
 #' parsed <- jsonlite::fromJSON(result)
 #' }
+#' @seealso \code{\link{edge_grammar_completion}}, \code{\link{edge_extract}}
 #' @export
 edge_json_grammar <- function(schema, compact = FALSE) {
-  if (!is.list(schema) || is.null(names(schema))) {
-    stop("schema must be a named list")
-  }
-
-  # Nothing, one space, or one newline and indentation, as in llama.cpp's
-  # JSON grammars. With unlimited whitespace, greedy decoding (temperature
-  # 0) loops on newlines until n_predict runs out.
-  ws <- if (isTRUE(compact)) 'ws ::= ""\n' else 'ws ::= "" | " " | "\\n" [ \\t]{0,20}\n'
-  string_rule <- 'string ::= "\\"" [^"\\\\]* "\\""\n'
-  number_rule <- 'number ::= "-"? [0-9]+ ("." [0-9]+)?\n'
-  integer_rule <- 'integer ::= "-"? [0-9]+\n'
-  boolean_rule <- 'boolean ::= "true" | "false"\n'
-
-  obj <- .json_object_rule(schema, compact = compact)
-  root_rule <- paste0("root ::= ", obj$rule, "\n")
-
-  # Assemble grammar
-  grammar_parts <- root_rule
-  grammar_parts <- c(grammar_parts, paste0(obj$defs, "\n"))
-  grammar_parts <- c(grammar_parts, ws)
-  if ("string" %in% obj$needed) grammar_parts <- c(grammar_parts, string_rule)
-  if ("number" %in% obj$needed) grammar_parts <- c(grammar_parts, number_rule)
-  if ("integer" %in% obj$needed) grammar_parts <- c(grammar_parts, integer_rule)
-  if ("boolean" %in% obj$needed) grammar_parts <- c(grammar_parts, boolean_rule)
-
-  paste(grammar_parts, collapse = "")
+  .json_schema_grammar(.as_schema(schema), compact = compact)
 }
 
 #' Extract structured data from text
@@ -3260,11 +3263,29 @@ edge_extract <- function(ctx, text, schema, instruction = NULL, n_predict = 512L
 
 .extract_instruction <- function(schema, instruction) {
   if (!is.null(instruction)) return(instruction)
+  if (is.character(schema) || .is_json_schema(schema)) {
+    schema <- .as_schema(schema)
+    props <- schema[["properties"]]
+    if (length(props) == 0L) {
+      return(paste0("Extract the data from the text as JSON: ",
+                    .describe_schema(schema, schema), "."))
+    }
+    req <- schema[["required"]]
+    req <- if (is.null(req)) names(props) else as.character(unlist(req))
+    fields <- vapply(names(props), function(nm) {
+      paste0(nm, " (", .describe_schema(props[[nm]], schema),
+             if (!nm %in% req) ", optional", ")")
+    }, character(1))
+    return(paste0("Extract the following fields from the text: ",
+                  paste(fields, collapse = ", "), "."))
+  }
   field_descriptions <- vapply(seq_along(schema), function(i) {
     nm <- names(schema)[i]
     spec <- schema[[i]]
     if (.is_enum(spec)) {
       paste0(nm, " (one of: ", paste(spec, collapse = ", "), ")")
+    } else if (is.list(spec)) {
+      paste0(nm, " (", .describe_schema(spec), ")")
     } else {
       paste0(nm, " (", spec, ")")
     }
@@ -3322,15 +3343,16 @@ edge_extract <- function(ctx, text, schema, instruction = NULL, n_predict = 512L
 
 #' Classify text into predefined categories
 #'
-#' Convenience function that uses grammar-constrained generation to classify
-#' text into one of the provided categories.
+#' Classify text into predefined categories using grammar-constrained generation.
+#' The grammar constraint ensures the model can only output one of the provided categories.
 #'
 #' @param ctx Model context from edge_load_model()
 #' @param text Text to classify (character string or vector for batch)
 #' @param categories Character vector of allowed categories
 #' @param instruction Optional classification instruction
 #' @param temperature Sampling temperature (default: 0.1)
-#' @return Character string (single text) or character vector (batch) with the predicted category
+#' @return Character string (single text) or character vector (batch) with the predicted category.
+#'   Output is guaranteed to be one of the specified categories.
 #'
 #' @examples
 #' \dontrun{
@@ -3348,6 +3370,7 @@ edge_extract <- function(ctx, text, schema, instruction = NULL, n_predict = 512L
 #'
 #' edge_free_model(ctx)
 #' }
+#' @seealso \code{\link{edge_extract}}, \code{\link{edge_grammar_completion}}
 #' @export
 edge_classify <- function(ctx, text, categories, instruction = NULL,
                            temperature = 0.1) {
@@ -3428,17 +3451,19 @@ edge_classify <- function(ctx, text, categories, instruction = NULL,
 #'   is the embedding vector for the corresponding input text.
 #'
 #' @details
-#' For best results, use a model designed for embeddings (e.g., nomic-embed-text).
-#' However, generative models can also produce useful embeddings from their
-#' hidden states.
+#' Load the model with \code{edge_load_model(..., embeddings = TRUE)};
+#' without it the model keeps no embeddings and this function warns and
+#' returns zeros. For best results, use a model designed for embeddings
+#' (e.g., Qwen3-Embedding or nomic-embed-text). However, generative models
+#' can also produce useful embeddings from their hidden states.
 #'
 #' The embedding dimension depends on the model architecture (e.g., 768 for
-#' small models, 4096+ for larger ones). Use \code{edge_model_n_embd()} to
-#' query the dimension.
+#' small models, 4096 or more for larger ones). Use
+#' \code{edge_model_n_embd()} to query the dimension.
 #'
 #' @examples
 #' \dontrun{
-#' ctx <- edge_load_model("nomic-embed-text.gguf")
+#' ctx <- edge_load_model("Qwen3-Embedding-0.6B-Q8_0.gguf", embeddings = TRUE)
 #'
 #' # Single embedding
 #' emb <- edge_embeddings(ctx, "The cat sat on the mat")
@@ -3447,7 +3472,6 @@ edge_classify <- function(ctx, text, categories, instruction = NULL,
 #' # Multiple embeddings
 #' texts <- c("cats are great", "dogs are loyal", "the stock market crashed")
 #' embs <- edge_embeddings(ctx, texts)
-#' dim(embs)  # 3 x n_embd
 #'
 #' # Compute similarity
 #' edge_similarity(embs[1,], embs[2,])  # high (both about pets)
@@ -3455,6 +3479,7 @@ edge_classify <- function(ctx, text, categories, instruction = NULL,
 #'
 #' edge_free_model(ctx)
 #' }
+#' @seealso \code{\link{edge_similarity}}, \code{\link{edge_similarity_matrix}}, \code{\link{edge_model_n_embd}}
 #' @export
 edge_embeddings <- function(ctx, texts, normalize = TRUE) {
   if (!is_valid_model(ctx)) {
@@ -3481,18 +3506,21 @@ edge_embeddings <- function(ctx, texts, normalize = TRUE) {
 
 #' Compute cosine similarity between two embedding vectors
 #'
+#' Computes the cosine similarity between two embedding vectors.
+#'
 #' @param a Numeric vector (embedding)
 #' @param b Numeric vector (embedding)
 #' @return Cosine similarity score between -1 and 1
 #'
 #' @examples
 #' \dontrun{
-#' ctx <- edge_load_model("model.gguf")
+#' ctx <- edge_load_model("Qwen3-Embedding-0.6B-Q8_0.gguf", embeddings = TRUE)
 #' embs <- edge_embeddings(ctx, c("happy cat", "joyful kitten", "stock market"))
 #'
-#' edge_similarity(embs[1,], embs[2,])  # ~0.9 (similar meaning)
-#' edge_similarity(embs[1,], embs[3,])  # ~0.1 (different topics)
+#' edge_similarity(embs[1,], embs[2,])  # high (similar meaning)
+#' edge_similarity(embs[1,], embs[3,])  # low (different topics)
 #' }
+#' @seealso \code{\link{edge_embeddings}}, \code{\link{edge_similarity_matrix}}
 #' @export
 edge_similarity <- function(a, b) {
   if (!is.numeric(a) || !is.numeric(b)) {
@@ -3510,6 +3538,8 @@ edge_similarity <- function(a, b) {
 
 #' Get the embedding dimension of a loaded model
 #'
+#' Returns the size of the embedding vectors produced by the loaded model.
+#'
 #' @param ctx Model context from edge_load_model()
 #' @return Integer giving the embedding vector dimension
 #'
@@ -3517,7 +3547,9 @@ edge_similarity <- function(a, b) {
 #' \dontrun{
 #' ctx <- edge_load_model("model.gguf")
 #' edge_model_n_embd(ctx)  # e.g., 4096
+#' edge_free_model(ctx)
 #' }
+#' @seealso \code{\link{edge_embeddings}}
 #' @export
 edge_model_n_embd <- function(ctx) {
   if (!is_valid_model(ctx)) {
@@ -3555,10 +3587,13 @@ edge_tokenize <- function(ctx, text, add_special = TRUE) {
   if (!is.logical(add_special) || length(add_special) != 1L || is.na(add_special)) {
     stop("add_special must be TRUE or FALSE")
   }
-  edge_tokenize_internal(ctx, text, add_special)
+  edge_tokenize_internal(ctx, enc2utf8(text), add_special)
 }
 
 #' Compute a similarity matrix for a set of embeddings
+#'
+#' Efficiently computes all pairwise cosine similarities between embedding
+#' vectors using normalized matrix multiplication.
 #'
 #' @param embeddings A numeric matrix where each row is an embedding vector
 #'   (as returned by \code{\link{edge_embeddings}})
@@ -3566,11 +3601,12 @@ edge_tokenize <- function(ctx, text, add_special = TRUE) {
 #'
 #' @examples
 #' \dontrun{
-#' ctx <- edge_load_model("model.gguf")
+#' ctx <- edge_load_model("Qwen3-Embedding-0.6B-Q8_0.gguf", embeddings = TRUE)
 #' embs <- edge_embeddings(ctx, c("cat", "kitten", "car", "automobile"))
 #' sim_mat <- edge_similarity_matrix(embs)
 #' # sim_mat[1,2] high (cat~kitten), sim_mat[1,3] low (cat~car)
 #' }
+#' @seealso \code{\link{edge_embeddings}}, \code{\link{edge_similarity}}
 #' @export
 edge_similarity_matrix <- function(embeddings) {
   if (!is.matrix(embeddings) || !is.numeric(embeddings)) {
@@ -3583,6 +3619,74 @@ edge_similarity_matrix <- function(embeddings) {
   normed <- embeddings / norms
   # Cosine similarity = dot product of normalized vectors
   tcrossprod(normed)
+}
+
+#' Rank documents by relevance to a query with a reranker
+#'
+#' Scores each document against the query with a reranking model (a
+#' cross-encoder such as bge-reranker-v2-m3), which reads the query and the
+#' document together and so judges relevance better than comparing
+#' embeddings. A common use is to re-order the top hits of an embedding
+#' search; see the \code{rerank} argument of \code{\link{edge_search}}.
+#'
+#' @param ctx A reranker context from
+#'   \code{edge_load_model(path, reranking = TRUE)}.
+#' @param query The query, a single string.
+#' @param documents Character vector of documents to score.
+#' @param top_n Number of best documents to return (default: NULL, all).
+#' @param truncate What to do when a query and document do not fit in one
+#'   batch: TRUE (default) cuts the end off the document, FALSE raises an
+#'   error.
+#' @return A data frame sorted from most to least relevant, with columns
+#'   \code{index} (position in \code{documents}), \code{document} and
+#'   \code{score}. Scores are the model's raw relevance scores: higher is
+#'   more relevant, and they are comparable between documents for one
+#'   query, but they are not probabilities. For bge rerankers,
+#'   \code{plogis(score)} gives a value between 0 and 1.
+#'
+#' @details
+#' Each pair is built with the model's rerank template when its GGUF file
+#' has one, and otherwise as the query and the document separated by the
+#' model's separator tokens, as llama.cpp's server does. Several pairs are
+#' scored in one batch. A pair must fit in one batch, which depends on
+#' \code{n_ctx}: load the model with a larger \code{n_ctx} for long
+#' documents.
+#'
+#' @examples
+#' \dontrun{
+#' rr <- edge_load_model("bge-reranker-v2-m3-Q4_K_M.gguf", reranking = TRUE)
+#' edge_rerank(rr, "What is the capital of France?",
+#'             c("Paris is the capital of France.", "Berlin is in Germany.",
+#'               "Bananas are yellow."))
+#' edge_free_model(rr)
+#' }
+#' @seealso \code{\link{edge_search}}, \code{\link{edge_embeddings}}
+#' @export
+edge_rerank <- function(ctx, query, documents, top_n = NULL, truncate = TRUE) {
+  if (!is.character(query) || length(query) != 1L || is.na(query)) {
+    stop("query must be a single character string")
+  }
+  if (!is.character(documents) || anyNA(documents)) {
+    stop("documents must be a character vector without NA")
+  }
+  if (!is.null(top_n) && (!is.numeric(top_n) || length(top_n) != 1L || is.na(top_n) ||
+                            top_n < 1 || top_n != round(top_n))) {
+    stop("top_n must be NULL or a positive whole number")
+  }
+  if (!isTRUE(truncate) && !isFALSE(truncate)) stop("truncate must be TRUE or FALSE")
+  if (!is_valid_model(ctx)) stop("Invalid model context")
+  if (!edge_is_reranker_internal(ctx)) {
+    stop("ctx is not a reranker; load one with edge_load_model(path, reranking = TRUE)")
+  }
+  scores <- if (length(documents)) {
+    as.numeric(edge_rerank_internal(ctx, enc2utf8(query), enc2utf8(documents), truncate))
+  } else {
+    numeric()
+  }
+  ord <- order(scores, decreasing = TRUE)
+  if (!is.null(top_n)) ord <- utils::head(ord, top_n)
+  data.frame(index = ord, document = documents[ord], score = scores[ord],
+             stringsAsFactors = FALSE)
 }
 
 
@@ -4353,18 +4457,19 @@ edge_verify_narrative <- function(ctx, narrative, expected, schema = NULL,
 
 #' Build an embedding index from text documents
 #'
-#' Reads text files from a directory (or accepts text directly), computes
-#' embeddings for chunks, and returns an index object for retrieval.
+#' Reads text files from a directory (or accepts text directly), splits into
+#' chunks, computes embeddings, and returns an index object for semantic search
+#' and retrieval-augmented generation.
 #'
 #' @param source Either a directory path containing text files, or a character
 #'   vector of text chunks to index directly.
 #' @param ctx Model context from edge_load_model() (used for embedding)
 #' @param chunk_size Approximate number of characters per chunk (default: 500).
-#'   Ignored when \code{source} is a character vector.
-#' @param chunk_overlap Number of characters of overlap between chunks (default: 50).
-#'   Ignored when \code{source} is a character vector.
+#'   Texts passed directly in \code{source} are split only when they are
+#'   longer than twice \code{chunk_size}.
+#' @param chunk_overlap Number of characters of overlap between chunks (default: 50)
 #' @param file_pattern Glob pattern for files to read (default: "*.txt").
-#'   Also supports "*.md", "*.csv", etc.
+#'   Other patterns such as "*.md" or "*.csv" work too.
 #' @param normalize Normalize embeddings (default: TRUE)
 #' @param progress Show progress messages (default: TRUE)
 #' @return An \code{edge_index} object (a list) containing:
@@ -4378,18 +4483,19 @@ edge_verify_narrative <- function(ctx, narrative, expected, schema = NULL,
 #'
 #' @examples
 #' \dontrun{
-#' ctx <- edge_load_model("model.gguf")
+#' ctx <- edge_load_model("Qwen3-Embedding-0.6B-Q8_0.gguf", embeddings = TRUE)
 #'
-#' # Index a directory of text files
+#' # Index a directory
 #' index <- edge_index_documents("./reports/", ctx)
 #'
 #' # Or index text directly
-#' texts <- c("Revenue grew 15% in Q3", "New product launched in Asia")
-#' index <- edge_index_documents(texts, ctx)
+#' index <- edge_index_documents(
+#'   c("Revenue grew 15%", "New product launched"), ctx)
 #'
 #' # Search the index
-#' results <- edge_search(index, ctx, "What happened with revenue?")
+#' results <- edge_search(index, ctx, "revenue growth")
 #' }
+#' @seealso \code{\link{edge_search}}, \code{\link{edge_ask}}
 #' @export
 edge_index_documents <- function(source, ctx, chunk_size = 500L,
                                   chunk_overlap = 50L,
@@ -4408,6 +4514,10 @@ edge_index_documents <- function(source, ctx, chunk_size = 500L,
   }
   chunk_size <- as.integer(chunk_size)
   chunk_overlap <- as.integer(chunk_overlap)
+
+  if (!is.character(source) || length(source) == 0L || anyNA(source)) {
+    stop("source must be a directory path or a character vector of texts")
+  }
 
   chunks <- character()
   sources <- character()
@@ -4436,7 +4546,7 @@ edge_index_documents <- function(source, ctx, chunk_size = 500L,
       chunks <- c(chunks, file_chunks)
       sources <- c(sources, rep(filepath, length(file_chunks)))
     }
-  } else if (is.character(source) && length(source) > 0L) {
+  } else {
     # Direct text input - optionally chunk long texts
     for (i in seq_along(source)) {
       if (nchar(source[i]) > chunk_size * 2L) {
@@ -4448,8 +4558,6 @@ edge_index_documents <- function(source, ctx, chunk_size = 500L,
         sources <- c(sources, NA_character_)
       }
     }
-  } else {
-    stop("source must be a directory path or a character vector of texts")
   }
 
   if (length(chunks) == 0L) {
@@ -4494,30 +4602,33 @@ edge_index_documents <- function(source, ctx, chunk_size = 500L,
 
 #' Search an embedding index for relevant chunks
 #'
-#' Finds the most similar text chunks to a query using cosine similarity.
+#' Finds the most similar text chunks to a query using cosine similarity
+#' over the embedding index.
 #'
 #' @param index An \code{edge_index} object from \code{\link{edge_index_documents}}
 #' @param ctx Model context (same model used to build the index)
 #' @param query Query text string
 #' @param top_k Number of results to return (default: 5)
-#' @return A data frame with columns:
-#'   \itemize{
-#'     \item \code{chunk}: the text content
-#'     \item \code{score}: cosine similarity to the query
-#'     \item \code{source}: source file path (or NA)
-#'     \item \code{index}: position in the original index
-#'   }
+#' @param rerank Optional reranker context from
+#'   \code{edge_load_model(path, reranking = TRUE)} (default: NULL). When
+#'   given, the top \code{max(4 * top_k, 20)} embedding hits are scored with
+#'   \code{\link{edge_rerank}}, the best \code{top_k} are returned in that
+#'   order, and a \code{rerank_score} column is added.
+#' @return A data frame with columns: \code{chunk}, \code{score}, \code{source}, \code{index},
+#'   and \code{rerank_score} when \code{rerank} is given
 #'
 #' @examples
 #' \dontrun{
-#' ctx <- edge_load_model("model.gguf")
+#' ctx <- edge_load_model("Qwen3-Embedding-0.6B-Q8_0.gguf", embeddings = TRUE)
 #' index <- edge_index_documents("./docs/", ctx)
-#'
-#' results <- edge_search(index, ctx, "quarterly revenue growth")
-#' print(results)  # top 5 most relevant chunks
+#' results <- edge_search(index, ctx, "quarterly revenue")
+#' reranker <- edge_load_model("bge-reranker-v2-m3-Q4_K_M.gguf", reranking = TRUE)
+#' results <- edge_search(index, ctx, "quarterly revenue", rerank = reranker)
+#' print(results)
 #' }
+#' @seealso \code{\link{edge_index_documents}}, \code{\link{edge_ask}}
 #' @export
-edge_search <- function(index, ctx, query, top_k = 5L) {
+edge_search <- function(index, ctx, query, top_k = 5L, rerank = NULL) {
   if (!inherits(index, "edge_index")) {
     stop("index must be an edge_index object from edge_index_documents()")
   }
@@ -4532,28 +4643,48 @@ edge_search <- function(index, ctx, query, top_k = 5L) {
 
   # Embed the query
   query_emb <- edge_embeddings(ctx, query, normalize = TRUE)
+  if (ncol(query_emb) != ncol(index$embeddings)) {
+    stop(sprintf(paste0("The index has %d-dimensional embeddings but this model gives %d; ",
+                        "search with the model that built the index"),
+                 ncol(index$embeddings), ncol(query_emb)))
+  }
 
-  # Compute similarities: query_emb (1 x d) %*% t(index_emb) (d x n)
-  scores <- as.numeric(query_emb %*% t(index$embeddings))
+  # Cosine similarity. The query is unit length; the index rows are too
+  # unless the index was built with normalize = FALSE.
+  scores <- as.numeric(index$embeddings %*% t(query_emb))
+  row_norms <- sqrt(rowSums(index$embeddings^2))
+  scores <- ifelse(row_norms > 0, scores / row_norms, 0)
 
   # Get top-k indices
   top_indices <- order(scores, decreasing = TRUE)[seq_len(top_k)]
 
-  data.frame(
+  if (!is.null(rerank)) {
+    # The reranker re-orders a wider pool of embedding hits.
+    pool <- order(scores, decreasing = TRUE)[seq_len(min(index$n_chunks, max(4L * top_k, 20L)))]
+    rr <- edge_rerank(rerank, query, index$chunks[pool], top_n = top_k)
+    top_indices <- pool[rr$index]
+  }
+
+  out <- data.frame(
     chunk = index$chunks[top_indices],
     score = scores[top_indices],
     source = index$sources[top_indices],
     index = top_indices,
     stringsAsFactors = FALSE
   )
+  if (!is.null(rerank)) out$rerank_score <- rr$score
+  out
 }
 
 #' Ask a question using retrieval-augmented generation
 #'
 #' Combines semantic search with text generation: retrieves relevant context
 #' from the index, then generates an answer grounded in that context.
+#' This is the core RAG (Retrieval-Augmented Generation) function.
 #'
-#' @param ctx Model context from edge_load_model()
+#' @param ctx Model context from edge_load_model(), the same model that built
+#'   the index. It is used for the search, and for the answer unless
+#'   \code{chat_ctx} is given.
 #' @param question The question to answer
 #' @param index An \code{edge_index} object from \code{\link{edge_index_documents}}
 #' @param top_k Number of context chunks to retrieve (default: 3)
@@ -4561,31 +4692,43 @@ edge_search <- function(index, ctx, query, top_k = 5L) {
 #' @param temperature Sampling temperature (default: 0.3)
 #' @param system_prompt Optional system-level instruction for the model
 #' @param return_context If TRUE, return both answer and retrieved context (default: FALSE)
+#' @param chat_ctx Optional context of a model that writes the answer
+#'   (default: \code{ctx}). Use it when the index was built with an
+#'   embedding-only model, such as Qwen3-Embedding, which cannot generate text.
 #' @return If \code{return_context = FALSE}: a character string with the answer.
-#'   If \code{return_context = TRUE}: a list with \code{answer}, \code{context} (data frame
-#'   from \code{edge_search}), and \code{prompt} (the full constructed prompt).
+#'   If \code{return_context = TRUE}: a list with \code{answer}, \code{context}, and \code{prompt}.
 #'
 #' @examples
 #' \dontrun{
-#' ctx <- edge_load_model("model.gguf")
+#' # One chat model, loaded with embeddings on, both searches and answers
+#' ctx <- edge_load_model("model.gguf", embeddings = TRUE)
 #' index <- edge_index_documents("./reports/", ctx)
 #'
-#' # Simple Q&A
 #' answer <- edge_ask(ctx, "What were Q3 revenues?", index)
 #' cat(answer)
 #'
+#' # Search with an embedding model and answer with a chat model
+#' emb <- edge_load_model("Qwen3-Embedding-0.6B-Q8_0.gguf", embeddings = TRUE)
+#' chat <- edge_load_model("gemma-3-1b-it-Q4_K_M.gguf")
+#' index <- edge_index_documents("./reports/", emb)
+#' answer <- edge_ask(emb, "What were Q3 revenues?", index, chat_ctx = chat)
+#'
 #' # With context for debugging
 #' result <- edge_ask(ctx, "What were Q3 revenues?", index,
-#'                     return_context = TRUE)
+#'   return_context = TRUE)
 #' cat(result$answer)
-#' print(result$context)  # shows which chunks were used
+#' print(result$context)
 #' }
+#' @seealso \code{\link{edge_index_documents}}, \code{\link{edge_search}}
 #' @export
 edge_ask <- function(ctx, question, index, top_k = 3L, n_predict = 256L,
                       temperature = 0.3, system_prompt = NULL,
-                      return_context = FALSE) {
+                      return_context = FALSE, chat_ctx = ctx) {
   if (!is_valid_model(ctx)) {
     stop("Invalid model context. Load a model first with edge_load_model()")
+  }
+  if (!is_valid_model(chat_ctx)) {
+    stop("Invalid chat_ctx. Load a model first with edge_load_model()")
   }
   if (!inherits(index, "edge_index")) {
     stop("index must be an edge_index object from edge_index_documents()")
@@ -4623,7 +4766,7 @@ edge_ask <- function(ctx, question, index, top_k = 3L, n_predict = 256L,
   )
 
   # Generate answer
-  raw <- edge_completion_internal(ctx, prompt, as.integer(n_predict),
+  raw <- edge_completion_internal(chat_ctx, prompt, as.integer(n_predict),
                                   .sampling_options(temperature, 0.95))
 
   # Strip prompt
@@ -4746,9 +4889,11 @@ print.edge_index <- function(x, ...) {
 # back in the conversation looks the same as one the model made.
 .oa_call_text <- function(name, args) {
   vals <- vapply(args, function(v) {
-    as.character(jsonlite::toJSON(v, auto_unbox = TRUE))
+    if (is.null(v)) return("null")
+    as.character(jsonlite::toJSON(v, auto_unbox = TRUE, null = "null", digits = NA))
   }, character(1))
-  inner <- if (length(args)) paste0('"', names(args), '": ', vals, collapse = ", ") else ""
+  keys <- vapply(names(args), .json_quote, character(1))
+  inner <- if (length(args)) paste0(keys, ": ", vals, collapse = ", ") else ""
   paste0('{"tool": "', name, '", "arguments": {', inner, "}}")
 }
 
@@ -4784,33 +4929,8 @@ print.edge_index <- function(x, ...) {
   })
 }
 
-# The properties of a flat JSON schema object as edge_tool() and
-# edge_json_grammar() fields: strings, numbers, integers, booleans or enums
-# of strings. With descriptions, a field is list(type, description).
-.oa_schema_fields <- function(schema, what, descriptions = TRUE) {
-  props <- schema$properties %||% list()
-  fields <- lapply(names(props), function(arg) {
-    p <- props[[arg]]
-    type <- p$type
-    if (is.list(type) || length(type) > 1L) {
-      type <- setdiff(unlist(type), "null")[1]
-    }
-    spec <- if (!is.null(p$enum)) {
-      values <- as.character(unlist(p$enum))
-      if (length(values) == 1L) I(values) else values
-    } else if (is.character(type) && type %in% c("string", "number", "integer", "boolean")) {
-      type
-    } else {
-      .bad_request("field '", arg, "' of ", what, " has an unsupported type; ",
-                   "use string, number, integer, boolean or an enum")
-    }
-    if (!descriptions || is.null(p$description)) spec else list(type = spec, description = p$description)
-  })
-  names(fields) <- names(props)
-  fields
-}
-
-# OpenAI function tools to edge_tool() objects. Every argument is required.
+# OpenAI function tools to edge_tool() objects. Their parameters are a
+# JSON Schema object; arguments it does not list as required are optional.
 .oa_tools <- function(tools) {
   if (is.null(tools) || length(tools) == 0L) return(NULL)
   lapply(tools, function(t) {
@@ -4818,26 +4938,29 @@ print.edge_index <- function(x, ...) {
     if (!identical(t$type %||% "function", "function") || !is.list(fn) || is.null(fn$name)) {
       .bad_request("only tools of type \"function\" with a name are supported")
     }
-    params <- .oa_schema_fields(fn$parameters, paste0("tool '", fn$name, "'"))
+    params <- fn[["parameters"]]
+    if (length(params) == 0L) params <- list()
+    if (length(params) > 0L && is.null(params[["type"]])) params$type <- "object"
     tryCatch(edge_tool(fn$name, fn$description %||% "", params),
-             error = function(e) .bad_request(conditionMessage(e)))
+             error = function(e) .bad_request("tool '", fn$name, "': ", conditionMessage(e)))
   })
 }
 
-# The grammar for response_format = json_schema, or NULL for plain text.
-# The schema must be a flat object; json_object without a schema is not
-# supported, since the reply could not be constrained.
+# The grammar for response_format, or NULL for plain text: the schema's
+# grammar for json_schema, and any JSON object for json_object.
 .oa_response_grammar <- function(response_format) {
   type <- response_format$type %||% "text"
   if (identical(type, "text")) return(NULL)
+  if (identical(type, "json_object")) return(.json_schema_grammar(list(type = "object")))
   if (!identical(type, "json_schema")) {
-    .bad_request("response_format must be \"text\" or \"json_schema\"")
+    .bad_request("response_format must be \"text\", \"json_object\" or \"json_schema\"")
   }
   schema <- response_format$json_schema$schema
-  if (!is.list(schema) || !identical(schema$type, "object") || length(schema$properties) == 0L) {
-    .bad_request("response_format json_schema must describe an object with properties")
+  if (!is.list(schema) || is.null(names(schema))) {
+    .bad_request("response_format json_schema must have a schema object")
   }
-  edge_json_grammar(.oa_schema_fields(schema, "response_format", descriptions = FALSE))
+  tryCatch(.json_schema_grammar(schema, where = "response_format"),
+           error = function(e) .bad_request(conditionMessage(e)))
 }
 
 .oa_tool_choice <- function(tool_choice) {
@@ -4960,11 +5083,10 @@ print.edge_index <- function(x, ...) {
   id <- .oa_id("chatcmpl-")
   created <- as.integer(Sys.time())
 
+  # With tools as well, the model first chooses between a call and an
+  # answer, and an answer then follows response_format.
   grammar <- .oa_response_grammar(body$response_format)
   use_tools <- !is.null(tools) && !identical(tool_choice, "none")
-  if (!is.null(grammar) && use_tools) {
-    .bad_request("response_format json_schema cannot be combined with tools")
-  }
   if (use_tools) {
     checked <- tryCatch(.check_tools(tools), error = function(e) .bad_request(conditionMessage(e)))
     forced <- tryCatch(.check_tool_choice(tool_choice, checked),
@@ -5072,6 +5194,41 @@ print.edge_index <- function(x, ...) {
   list(error = list(message = conditionMessage(e), type = type))
 }
 
+# A rerank request in the Jina / Cohere / llama.cpp format: query,
+# documents (strings or objects with text), top_n and return_documents.
+# Indices in the reply count from 0.
+.oa_rerank <- function(rerank_ctx, body, model_name) {
+  if (!is.character(body$query) || length(body$query) != 1L) {
+    .bad_request("query must be a string")
+  }
+  docs <- body$documents
+  if (!is.list(docs) || !length(docs)) .bad_request("documents must be a non-empty array")
+  docs <- vapply(docs, function(d) {
+    if (is.list(d)) d <- d$text
+    if (!is.character(d) || length(d) != 1L) {
+      .bad_request("each document must be a string or an object with a text field")
+    }
+    d
+  }, character(1), USE.NAMES = FALSE)
+  top_n <- body$top_n
+  if (!is.null(top_n) && (!is.numeric(top_n) || length(top_n) != 1L || top_n < 1)) {
+    .bad_request("top_n must be a positive integer")
+  }
+  scores <- edge_rerank_internal(rerank_ctx, enc2utf8(body$query), enc2utf8(docs), TRUE)
+  n_tokens <- sum(attr(scores, "tokens"))
+  scores <- as.numeric(scores)
+  ord <- order(scores, decreasing = TRUE)
+  if (!is.null(top_n)) ord <- utils::head(ord, as.integer(top_n))
+  with_docs <- !isFALSE(body$return_documents)
+  results <- lapply(ord, function(i) {
+    r <- list(index = i - 1L, relevance_score = scores[i])
+    if (with_docs) r$document <- list(text = docs[[i]])
+    r
+  })
+  list(response = list(object = "list", model = body$model %||% model_name, results = results,
+                       usage = list(prompt_tokens = n_tokens, total_tokens = n_tokens)))
+}
+
 # Runs one endpoint. fun returns the output of .oa_chat() or
 # .oa_completion(), or a promise of it.
 .oa_handle <- function(res, fun) {
@@ -5104,7 +5261,8 @@ print.edge_index <- function(x, ...) {
 #' @param n_slots Requests generated at once (default: 1); see
 #'   \code{\link{edge_api}}.
 #' @param ... More arguments for \code{\link{edge_api}}, such as
-#'   \code{n_threads}, \code{max_queue} or \code{cache_type}.
+#'   \code{n_threads}, \code{max_queue}, \code{cache_type} or
+#'   \code{reranking}.
 #'
 #' @details
 #' Endpoints served:
@@ -5112,6 +5270,8 @@ print.edge_index <- function(x, ...) {
 #'   \item \code{POST /v1/completions}: Text completion
 #'   \item \code{POST /v1/chat/completions}: Chat completion (uses model's native template)
 #'   \item \code{POST /v1/embeddings}: Text embeddings (if \code{embeddings = TRUE})
+#'   \item \code{POST /v1/rerank}: Document reranking, when \code{reranking}
+#'     is passed on to \code{\link{edge_api}}
 #'   \item \code{GET /v1/models}: List loaded model info
 #'   \item \code{GET /health}: Health check
 #' }
@@ -5169,10 +5329,12 @@ edgemodelr API server starting")
   message("  Endpoints:")
   message("    POST ", host, ":", port, "/v1/completions")
   message("    POST ", host, ":", port, "/v1/chat/completions")
-  message("    POST ", host, ":", port, "/v1/jobs")
+  message("    POST ", host, ":", port, "/v1/jobs (GET and DELETE /v1/jobs/<id>)")
   if (!isFALSE(embeddings)) message("    POST ", host, ":", port, "/v1/embeddings")
+  if (!isFALSE(list(...)$reranking %||% FALSE)) message("    POST ", host, ":", port, "/v1/rerank")
   message("    GET  ", host, ":", port, "/v1/models")
   message("    GET  ", host, ":", port, "/health")
+  message("    GET  ", host, ":", port, "/metrics")
   if (!is.null(api_key)) message("  Auth: API key required")
   message("
 Press Ctrl+C to stop.
@@ -5505,6 +5667,15 @@ edge_engine_stop <- function(engine) {
 #'     written, and no request has to stay open while the model works.
 #'     Finished jobs are kept for 15 minutes.
 #'   \item \code{POST /v1/embeddings} when \code{embeddings} is set.
+#'   \item \code{POST /v1/rerank} when \code{reranking} is set, in the
+#'     format of Jina, Cohere and llama.cpp's server: the request has
+#'     \code{query}, \code{documents} (strings, or objects with
+#'     \code{text}), and optionally \code{top_n} and
+#'     \code{return_documents} (default true); the reply has
+#'     \code{results}, a list of \code{index} (from 0),
+#'     \code{relevance_score} and \code{document}, most relevant first,
+#'     and \code{usage}. Like embeddings, a rerank request is answered at
+#'     once rather than queued, so other requests wait while it runs.
 #'   \item \code{GET /v1/models}, \code{GET /metrics} (engine counters) and
 #'     \code{GET /health} (no key needed).
 #' }
@@ -5538,6 +5709,10 @@ edge_engine_stop <- function(engine) {
 #'   settings.
 #' @param model_name Name reported as the model (default: the file name).
 #' @param n_gpu_layers GPU layers (default: 0).
+#' @param reranking FALSE (default), or the path of a .gguf reranking
+#'   model, such as bge-reranker-v2-m3, to serve \code{/v1/rerank} with
+#'   (see \code{\link{edge_rerank}}). TRUE serves it from \code{model_path},
+#'   which must then be a reranker. Its context has \code{n_ctx} tokens.
 #' @return A plumber router. Run it with \code{plumber::pr_run()}, or return
 #'   it from \code{entrypoint.R} on Posit Connect. The engine is in
 #'   \code{attr(router, "edge_engine")}.
@@ -5554,7 +5729,12 @@ edge_engine_stop <- function(engine) {
 #' @export
 edge_api <- function(model_path, n_slots = 8L, n_ctx = 2048L, n_threads = NULL,
                      max_queue = 256L, cache_type = "q8_0", embeddings = FALSE,
-                     api_key = NULL, model_name = NULL, n_gpu_layers = 0L) {
+                     api_key = NULL, model_name = NULL, n_gpu_layers = 0L,
+                     reranking = FALSE) {
+  if (!isFALSE(reranking) && !isTRUE(reranking) &&
+      !(is.character(reranking) && length(reranking) == 1L && file.exists(reranking))) {
+    stop("reranking must be FALSE, TRUE or the path of a .gguf reranking model")
+  }
   for (pkg in c("plumber", "jsonlite", "promises", "later")) {
     if (!requireNamespace(pkg, quietly = TRUE)) {
       stop("The '", pkg, "' package is required for edge_api().\n",
@@ -5596,6 +5776,14 @@ edge_api <- function(model_path, n_slots = 8L, n_ctx = 2048L, n_threads = NULL,
     embed_ctx <- edge_load_model(embed_path, n_ctx = n_ctx, n_gpu_layers = n_gpu_layers,
                                  n_threads = if (n_threads > 0) n_threads else NULL,
                                  embeddings = TRUE)
+  }
+  rerank_ctx <- NULL
+  if (!isFALSE(reranking)) {
+    rerank_path <- if (is.character(reranking)) reranking else model_path
+    rerank_ctx <- edge_load_model(rerank_path, n_ctx = n_ctx, n_gpu_layers = n_gpu_layers,
+                                  n_threads = if (n_threads > 0) n_threads else NULL,
+                                  reranking = TRUE)
+    rerank_name <- tools::file_path_sans_ext(basename(rerank_path))
   }
   if (is.null(model_name)) model_name <- tools::file_path_sans_ext(basename(model_path))
   jobs <- new.env(parent = emptyenv())
@@ -5725,6 +5913,12 @@ edge_api <- function(model_path, n_slots = 8L, n_ctx = 2048L, n_threads = NULL,
     job_view(job)
   })
 
+  if (!is.null(rerank_ctx)) {
+    pr <- plumber::pr_post(pr, "/v1/rerank", function(req, res) {
+      .oa_handle(res, function() .oa_rerank(rerank_ctx, .oa_body(req), rerank_name))
+    })
+  }
+
   if (!is.null(embed_ctx)) {
     pr <- plumber::pr_post(pr, "/v1/embeddings", function(req, res) {
       .oa_handle(res, function() {
@@ -5748,14 +5942,17 @@ edge_api <- function(model_path, n_slots = 8L, n_ctx = 2048L, n_threads = NULL,
     edge_engine_stop(engine)
     tryCatch(edge_free_model(ctx), error = function(e) NULL)
     if (!is.null(embed_ctx)) tryCatch(edge_free_model(embed_ctx), error = function(e) NULL)
+    if (!is.null(rerank_ctx)) tryCatch(edge_free_model(rerank_ctx), error = function(e) NULL)
   })
   attr(pr, "edge_engine") <- engine
   pr
 }
 
-# Servers started by chat_edge(), by model path, so a second chat on the
-# same model reuses the running server.
+# Servers started by chat_edge(), by model path, n_ctx, n_slots and
+# embeddings, so a second chat with the same settings reuses the running
+# server. Each entry holds the callr process and its URL.
 .edge_servers <- new.env(parent = emptyenv())
+.edge_servers_state <- new.env(parent = emptyenv())
 
 #' Chat with a local model through ellmer
 #'
@@ -5763,8 +5960,9 @@ edge_api <- function(model_path, n_slots = 8L, n_ctx = 2048L, n_threads = NULL,
 #' model works with ellmer's chat, streaming, tool calling and structured
 #' data functions. With \code{model_path}, the model is served by
 #' \code{\link{edge_serve}} in a background R process, which keeps running
-#' until the R session ends and is reused by later calls with the same
-#' model. With \code{base_url}, the chat connects to a server you started
+#' until \code{\link{chat_edge_stop}} is called, the package is unloaded or
+#' the R session ends, and is reused by later calls with the same model and
+#' settings. With \code{base_url}, the chat connects to a server you started
 #' yourself.
 #'
 #' @param model_path Path to a .gguf model file. Either this or
@@ -5772,7 +5970,8 @@ edge_api <- function(model_path, n_slots = 8L, n_ctx = 2048L, n_threads = NULL,
 #' @param system_prompt Optional system prompt for the chat.
 #' @param base_url URL of a running \code{\link{edge_serve}} server, such as
 #'   \code{"http://127.0.0.1:8080"}.
-#' @param n_ctx Context size for a server started here (default: 4096).
+#' @param n_ctx Context size of each slot for a server started here
+#'   (default: 4096).
 #' @param n_gpu_layers GPU layers for a server started here (default: 0).
 #' @param port Port for a server started here (default: a free one).
 #' @param params Optional \code{ellmer::params()} with sampling settings such
@@ -5785,14 +5984,33 @@ edge_api <- function(model_path, n_slots = 8L, n_ctx = 2048L, n_threads = NULL,
 #'   memory, and a chat model gives weaker embeddings than an embedding model.
 #'   For embeddings inside R, \code{\link{embed_edge}} with an embedding
 #'   model needs no server.
+#' @param n_slots Requests a server started here generates at once
+#'   (default: 1). Set it above 1 for \code{ellmer::parallel_chat()} and
+#'   packages built on it, such as mall and vitals. \code{n_slots * n_ctx}
+#'   may be at most 32768.
+#' @param n_threads CPU threads for a server started here (default: NULL,
+#'   the \code{EDGEMODELR_THREADS} environment variable or the number of
+#'   physical cores).
+#' @param api_key Key for a server at \code{base_url} that was started with
+#'   an \code{api_key} (default: NULL, the \code{EDGEMODELR_API_KEY}
+#'   environment variable if set). It is sent as a Bearer token.
 #' @return An ellmer \code{Chat} object.
 #'
 #' @details
 #' Tool calling goes through \code{\link{edge_chat_completion}}: tool
-#' arguments may be strings, numbers, integers, booleans or enums, and the
-#' model makes one call per reply. Structured data works for flat objects
-#' of those types. Streamed replies arrive in one piece when
+#' arguments follow ellmer's JSON Schema, including optional, nested and
+#' array arguments, and the model makes one call per reply. Structured data
+#' from \code{chat_structured()} is constrained to its schema, nested
+#' objects and arrays included (see \code{\link{edge_json_grammar}} for the
+#' supported subset). Streamed replies arrive in one piece when
 #' generation ends (see \code{\link{edge_serve}}).
+#'
+#' With \code{n_slots = 1}, the requests that ellmer's
+#' \code{parallel_chat()} sends at once are answered one after another.
+#' With more slots they are generated together by continuous batching,
+#' which on a CPU gives more tokens per second in total, though each
+#' reply takes longer. Each slot holds its own \code{n_ctx} tokens, so the
+#' memory the context takes grows with \code{n_slots}.
 #'
 #' @examples
 #' \dontrun{
@@ -5808,12 +6026,24 @@ edge_api <- function(model_path, n_slots = 8L, n_ctx = 2048L, n_threads = NULL,
 #' )
 #' chat$register_tool(get_weather)
 #' chat$chat("What is the weather in Paris?")
+#'
+#' # Answer several prompts at once with four slots
+#' chat4 <- chat_edge("gemma-3-1b-it-Q4_K_M.gguf", n_slots = 4)
+#' ellmer::parallel_chat_text(chat4, list("Name a fruit.", "Name a colour."))
+#' chat_edge_stop(chat4)
 #' }
-#' @seealso \code{\link{edge_serve}}
+#' @seealso \code{\link{chat_edge_stop}}, \code{\link{edge_serve}}
 #' @export
 chat_edge <- function(model_path = NULL, system_prompt = NULL, base_url = NULL,
                       n_ctx = 4096L, n_gpu_layers = 0L, port = NULL,
-                      params = NULL, echo = "none", embeddings = FALSE) {
+                      params = NULL, echo = "none", embeddings = FALSE,
+                      n_slots = 1L, n_threads = NULL, api_key = NULL) {
+  if (is.null(api_key)) api_key <- Sys.getenv("EDGEMODELR_API_KEY", "")
+  if (!is.character(api_key) || length(api_key) != 1L || is.na(api_key)) {
+    stop("api_key must be NULL or a single string")
+  }
+  # A local server started without a key accepts any token.
+  token <- if (nzchar(api_key)) api_key else "edgemodelr"
   if (!requireNamespace("ellmer", quietly = TRUE)) {
     stop("The 'ellmer' package is required for chat_edge().\n",
          "Install it with: install.packages('ellmer')")
@@ -5822,9 +6052,15 @@ chat_edge <- function(model_path = NULL, system_prompt = NULL, base_url = NULL,
     stop("give either model_path or base_url")
   }
   if (is.null(base_url)) {
+    .check_server_size(n_slots, n_ctx)
+    if (!is.null(n_threads) && (!is.numeric(n_threads) || length(n_threads) != 1L ||
+                                  is.na(n_threads) || n_threads < 1)) {
+      stop("n_threads must be NULL or a positive number")
+    }
     base_url <- .edge_start_server(model_path, n_ctx = n_ctx,
                                    n_gpu_layers = n_gpu_layers, port = port,
-                                   embeddings = isTRUE(embeddings))
+                                   embeddings = isTRUE(embeddings),
+                                   n_slots = n_slots, n_threads = n_threads)
   }
   base_url <- sub("/+$", "", base_url)
   base_url <- sub("/v1$", "", base_url)
@@ -5837,17 +6073,105 @@ chat_edge <- function(model_path = NULL, system_prompt = NULL, base_url = NULL,
     base_url = paste0(base_url, "/v1"),
     name = "edgemodelr",
     system_prompt = system_prompt,
-    credentials = function() "edgemodelr",
+    credentials = function() token,
     model = model_name,
     params = params,
     echo = echo
   )
 }
 
+# Checks n_slots and n_ctx for a chat_edge() server before it starts, with
+# the limits of edge_api().
+.check_server_size <- function(n_slots, n_ctx) {
+  if (!is.numeric(n_slots) || length(n_slots) != 1L || is.na(n_slots) || n_slots < 1 ||
+      n_slots > 64 || n_slots != round(n_slots)) {
+    stop("n_slots must be a whole number from 1 to 64")
+  }
+  if (!is.numeric(n_ctx) || length(n_ctx) != 1L || is.na(n_ctx) || n_ctx < 128) {
+    stop("n_ctx must be at least 128")
+  }
+  if (n_slots * n_ctx > 32768) {
+    stop("n_slots * n_ctx is ", format(n_slots * n_ctx, scientific = FALSE),
+         " tokens, more than the 32768 a server can hold; with n_ctx = ", n_ctx,
+         " use at most n_slots = ", max(1, floor(32768 / n_ctx)), ", or lower n_ctx")
+  }
+  invisible(TRUE)
+}
+
+#' Stop model servers started by chat_edge()
+#'
+#' Stops the background R processes that \code{\link{chat_edge}} started to
+#' serve a model, which frees the memory they hold. Servers also stop on
+#' their own when the package is unloaded or the R session ends.
+#'
+#' @param chat A chat returned by \code{\link{chat_edge}}, or the URL of
+#'   its server. With \code{NULL} (the default), every server started by
+#'   \code{chat_edge()} in this session is stopped.
+#' @return Invisibly, the number of servers stopped. A chat whose server was
+#'   not started by \code{chat_edge()}, such as one given \code{base_url},
+#'   stops nothing and returns 0.
+#'
+#' @details
+#' Other chats that share the stopped server (made by \code{chat_edge()}
+#' with the same model and settings) stop working too. Calling
+#' \code{chat_edge()} again starts a new server.
+#'
+#' @examples
+#' \dontrun{
+#' chat <- chat_edge("gemma-3-1b-it-Q4_K_M.gguf")
+#' chat$chat("Hello!")
+#' chat_edge_stop(chat)
+#'
+#' # Stop every server chat_edge() started
+#' chat_edge_stop()
+#' }
+#' @seealso \code{\link{chat_edge}}
+#' @export
+chat_edge_stop <- function(chat = NULL) {
+  keys <- ls(.edge_servers, all.names = TRUE)
+  if (!is.null(chat)) {
+    url <- if (is.character(chat) && length(chat) == 1L && !is.na(chat)) {
+      chat
+    } else if (inherits(chat, "Chat")) {
+      chat$get_provider()@base_url
+    } else {
+      stop("chat must be a chat from chat_edge(), a server URL or NULL")
+    }
+    url <- sub("/v1$", "", sub("/+$", "", url))
+    keys <- keys[vapply(keys, function(k) identical(.edge_servers[[k]]$server_url, url),
+                        logical(1))]
+  }
+  for (k in keys) {
+    .stop_server_process(.edge_servers[[k]]$process)
+    rm(list = k, envir = .edge_servers)
+  }
+  invisible(length(keys))
+}
+
+# Kills a server process and any process it started.
+.stop_server_process <- function(process) {
+  if (is.null(process)) return(invisible(FALSE))
+  tryCatch(process$kill_tree(), error = function(e) {
+    tryCatch(process$kill(), error = function(e) NULL)
+  })
+  invisible(TRUE)
+}
+
+# Registers, once per session, a finalizer that stops every chat_edge()
+# server when R exits.
+.stop_servers_on_exit <- function() {
+  if (isTRUE(.edge_servers_state$exit_hook)) return(invisible())
+  reg.finalizer(.edge_servers_state, function(e) {
+    try(chat_edge_stop(), silent = TRUE)
+  }, onexit = TRUE)
+  .edge_servers_state$exit_hook <- TRUE
+  invisible()
+}
+
 # Starts edge_serve() in a background R process, or reuses the one already
-# serving this model, and waits until it answers /health.
+# serving this model with these settings, and waits until it answers /health.
 .edge_start_server <- function(model_path, n_ctx, n_gpu_layers, port,
-                               embeddings = FALSE) {
+                               embeddings = FALSE, n_slots = 1L, n_threads = NULL) {
   if (!requireNamespace("callr", quietly = TRUE)) {
     stop("The 'callr' package is required to start a server for chat_edge().\n",
          "Install it with: install.packages('callr'), or pass base_url.")
@@ -5858,18 +6182,27 @@ chat_edge <- function(model_path = NULL, system_prompt = NULL, base_url = NULL,
   }
   if (!file.exists(model_path)) stop("Model file not found: ", model_path)
   path <- normalizePath(model_path, winslash = "/")
-  key <- paste0(path, if (embeddings) " +embeddings")
+  key <- paste0(path, " n_ctx=", as.integer(n_ctx), " n_slots=", as.integer(n_slots),
+                if (embeddings) " +embeddings")
   running <- .edge_servers[[key]]
   if (!is.null(running) && running$process$is_alive()) return(running$server_url)
+  if (!is.null(running)) rm(list = key, envir = .edge_servers)
 
   if (is.null(port)) port <- httpuv::randomPort()
   server_url <- sprintf("http://127.0.0.1:%d", as.integer(port))
-  process <- callr::r_bg(function(model_path, port, n_ctx, n_gpu_layers, embeddings) {
+  # With supervise = TRUE, callr's supervisor kills the server if this R
+  # session dies without running its exit finalizers.
+  process <- callr::r_bg(function(model_path, port, n_ctx, n_gpu_layers, embeddings,
+                                  n_slots, n_threads) {
     edgemodelr::edge_serve(model_path, port = port, n_ctx = n_ctx,
-                           n_gpu_layers = n_gpu_layers, embeddings = embeddings)
+                           n_gpu_layers = n_gpu_layers, embeddings = embeddings,
+                           n_slots = n_slots, n_threads = n_threads)
   }, args = list(model_path = path, port = as.integer(port), n_ctx = as.integer(n_ctx),
-                 n_gpu_layers = as.integer(n_gpu_layers), embeddings = embeddings),
+                 n_gpu_layers = as.integer(n_gpu_layers), embeddings = embeddings,
+                 n_slots = as.integer(n_slots),
+                 n_threads = if (is.null(n_threads)) NULL else as.integer(n_threads)),
   supervise = TRUE)
+  .stop_servers_on_exit()
 
   deadline <- Sys.time() + 300
   repeat {
@@ -5879,7 +6212,7 @@ chat_edge <- function(model_path = NULL, system_prompt = NULL, base_url = NULL,
     }
     if (.server_answers(paste0(server_url, "/health"))) break
     if (Sys.time() > deadline) {
-      process$kill()
+      .stop_server_process(process)
       stop("The model server did not start within 5 minutes")
     }
     Sys.sleep(0.5)

@@ -4,7 +4,7 @@
 \alias{edge_tool}
 \title{Define a tool the model can call}
 \usage{
-edge_tool(name, description, parameters = list())
+edge_tool(name, description, parameters = list(), required = NULL)
 }
 \arguments{
 \item{name}{Tool name: letters, digits and underscores, starting with a
@@ -13,12 +13,22 @@ letter.}
 \item{description}{What the tool does, in one sentence. The model reads
 it to decide when to call the tool.}
 
-\item{parameters}{A named list of arguments, in the format of
+\item{parameters}{The arguments, either as a named list in the format of
 \code{\link{edge_json_grammar}}: "string", "number", "integer",
 "boolean" or a character vector of allowed values (use \code{I("x")}
-for a single allowed value). An argument can also be
-\code{list(type = ..., description = ...)} to tell the model what it
-means. Every argument is required. Default: no arguments.}
+for a single allowed value), or a JSON Schema list for any argument
+(for example \code{list(type = "array", items = list(type = "string"))}).
+An argument can also be \code{list(type = ..., description = ...)} to
+tell the model what it means. \code{parameters} can also be one JSON
+Schema object (\code{list(type = "object", properties = ...,
+required = ...)}), as OpenAI and ellmer write tool parameters; see
+\code{\link{edge_json_grammar}} for the supported subset. Default: no
+arguments.}
+
+\item{required}{Names of the arguments the model must give. The others
+are optional and may be left out of a call. Default: the
+\code{required} list of a JSON Schema object, and otherwise every
+argument.}
 }
 \value{
 An \code{edge_tool} object
@@ -31,8 +41,18 @@ arguments always come back with the types given here.
 \examples{
 weather <- edge_tool("get_weather", "Get the current weather for a city",
   list(city = list(type = "string", description = "City name"),
-       unit = c("celsius", "fahrenheit")))
+       unit = c("celsius", "fahrenheit")),
+  required = "city")
 weather
+
+# Nested arguments as JSON Schema
+order <- edge_tool("place_order", "Order items from the shop",
+  list(items = list(type = "array", minItems = 1,
+                    items = list(type = "object",
+                                 properties = list(name = list(type = "string"),
+                                                   qty = list(type = "integer")))),
+       note = list(type = c("string", "null"))))
+order
 }
 \seealso{
 \code{\link{edge_chat_completion}}

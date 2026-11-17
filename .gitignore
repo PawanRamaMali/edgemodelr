@@ -52,3 +52,7 @@ _pkgdown.yml
 .Rcheck/
 *.log
 *.tar.gz
+
+# Vignette output
+vignettes/*.html
+vignettes/*.R

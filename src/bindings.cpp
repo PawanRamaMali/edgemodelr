@@ -20,6 +20,7 @@
 
 #include "llama.h"
 #include "llama-grammar.h"
+#include "llama-model.h"
 #include "ggml-backend.h"
 #include "ggml-cpu.h"
 #include "r_output_redirect.h"
@@ -318,6 +319,11 @@ struct EdgeModelContext {
   // The serving engine using this context, if any (see ServeEngine).
   ServeEngine * engine = nullptr;
 
+  // CPU thread pools attached to ctx, one per thread count in use (see
+  // set_threads()). The CPU backend keeps a pointer to the last pool it ran
+  // on, so a pool is only freed after the context.
+  std::map<int, ggml_threadpool *> pools;
+
   EdgeModelContext() = default;
 
   // Copy constructor and assignment deleted to prevent double-free
@@ -332,9 +338,12 @@ struct EdgeModelContext {
     // An engine thread may be decoding with the context: stop it first.
     if (engine) engine_detach(engine);
     if (ctx) {
+      llama_detach_threadpool(ctx);
       llama_free(ctx);
       ctx = NULL;
     }
+    for (auto & kv : pools) ggml_threadpool_free(kv.second);
+    pools.clear();
     if (model) {
       llama_model_free(model);
       model = NULL;
@@ -358,6 +367,38 @@ struct EdgeModelContext {
 };
 
 static void check_no_engine(const EdgeModelContext & e);
+
+// Without a pool of its own, ggml starts and joins a fresh set of threads
+// for every graph it computes, that is for every decode. A pool kept with
+// the context avoids that. Its threads sleep between graphs (poll = 0)
+// instead of spinning, as ggml's default poll of 50 has them do for a tenth
+// of a second or more after each graph, so they leave the cores to R and to
+// other processes. On gemma-3-1b with 4 threads, poll = 0 was no slower
+// than polling.
+static ggml_threadpool * get_pool(EdgeModelContext & e, int n_threads) {
+  auto it = e.pools.find(n_threads);
+  if (it != e.pools.end()) return it->second;
+  ggml_threadpool_params params = ggml_threadpool_params_default(n_threads);
+  params.poll = 0;
+  params.paused = true;   // the first graph wakes it
+  ggml_threadpool * tp = ggml_threadpool_new(&params);
+  if (!tp) stop("Failed to create the CPU thread pool");
+  e.pools[n_threads] = tp;
+  return tp;
+}
+
+// Sets the threads for one token at a time and for batches, each with its
+// pool. Not while a decode runs: R's thread calls it with no engine.
+static void set_threads(EdgeModelContext & e, int n_threads, int n_threads_batch) {
+  llama_set_n_threads(e.ctx, n_threads, n_threads_batch);
+  llama_attach_threadpool(e.ctx, get_pool(e, n_threads), get_pool(e, n_threads_batch));
+}
+
+// Puts the pools' threads to sleep until the next graph, which resumes the
+// pool it runs on.
+static void pause_pools(EdgeModelContext & e) {
+  for (auto & kv : e.pools) ggml_threadpool_pause(kv.second);
+}
 
 // Sets the context's LoRA adapters to the loaded ones at their scales. An
 // adapter at scale 0 is left out instead of being computed for nothing.
@@ -435,7 +476,8 @@ SEXP edge_load_model_internal(std::string model_path, int n_ctx, int n_gpu_layer
                               std::vector<double> lora_scales,
                               int n_parallel,
                               std::string cache_type_k = "f16",
-                              std::string cache_type_v = "f16") {
+                              std::string cache_type_v = "f16",
+                              bool reranking = false) {
   try {
     // Ensure llama is properly initialized
     ensure_llama_initialized();
@@ -535,6 +577,17 @@ SEXP edge_load_model_internal(std::string model_path, int n_ctx, int n_gpu_layer
       ctx_params.kv_unified = true;
       ctx_params.n_ubatch = ctx_params.n_batch;
     }
+    if (reranking) {
+      // A reranker is a model with a classification head. Many GGUF files
+      // do not record the rank pooling, so it is set here, as llama.cpp's
+      // server does with --reranking.
+      if (model->cls == nullptr && model->cls_out == nullptr) {
+        llama_model_free(model);
+        stop("reranking = TRUE needs a reranking model, such as bge-reranker; "
+             "this model has no classification head: " + model_path);
+      }
+      ctx_params.pooling_type = LLAMA_POOLING_TYPE_RANK;
+    }
     if (n_parallel > 1) {
       // edge_completion_batch_internal() runs up to n_parallel prompts as
       // separate sequences. A unified KV cache lets them share the whole
@@ -560,6 +613,7 @@ SEXP edge_load_model_internal(std::string model_path, int n_ctx, int n_gpu_layer
     edge_ctx->prompt_cache = prompt_cache;
     edge_ctx->ctx = ctx;
     edge_ctx->n_parallel = std::max(1, n_parallel);
+    set_threads(*edge_ctx, effective_threads, hardware_threads);
 
     // LoRA adapters. On any failure edge_ctx frees the context and the model,
     // and the model frees the adapters loaded so far.
@@ -1775,6 +1829,14 @@ struct ServeEngine {
     BatchOwner owner_batch(n_batch + static_cast<int>(slots.size()) * 66, 1);
     std::vector<int> row_slot;
     while (true) {
+      bool idle;
+      {
+        std::lock_guard<std::mutex> lock(mu);
+        idle = stopping || (queue.empty() && n_active == 0);
+      }
+      // This thread is the only one that decodes while the engine runs, so
+      // no graph is being computed here. The next decode resumes the pool.
+      if (idle) pause_pools(*owner);
       {
         std::unique_lock<std::mutex> lock(mu);
         cv.wait(lock, [&] { return stopping || !queue.empty() || n_active > 0; });
@@ -1783,6 +1845,7 @@ struct ServeEngine {
       try {
         if (!step(owner_batch.b, row_slot)) {
           // Nothing could run yet: wait for a submit, a cancel or a stop.
+          pause_pools(*owner);
           std::unique_lock<std::mutex> lock(mu);
           cv.wait_for(lock, std::chrono::milliseconds(20));
         }
@@ -1875,7 +1938,8 @@ SEXP edge_engine_start_internal(SEXP model_ptr, int n_slots, int max_queue) {
   // Batches of a few tokens per slot behave like generation, which is
   // fastest on one thread per core: with every hardware thread (the batch
   // default) the engine ran several times slower, worst on a busy machine.
-  llama_set_n_threads(ctx, llama_n_threads(ctx), llama_n_threads(ctx));
+  set_threads(*edge_ctx, llama_n_threads(ctx), llama_n_threads(ctx));
+  pause_pools(*edge_ctx);
 
   // The prompt cache of the direct functions is gone once the slots use
   // the KV cache.
@@ -2330,6 +2394,170 @@ NumericMatrix edge_embeddings_internal(SEXP model_ptr, std::vector<std::string> 
   }
 }
 
+// TRUE when the context pools to rank scores, as a reranker loaded with
+// embeddings on does.
+// [[Rcpp::export]]
+bool edge_is_reranker_internal(SEXP model_ptr) {
+  if (TYPEOF(model_ptr) != EXTPTRSXP) stop("Invalid model context");
+  XPtr<EdgeModelContext> edge_ctx(model_ptr);
+  if (!edge_ctx->is_valid() || edge_ctx->ctx == nullptr) stop("Invalid model context");
+  return llama_pooling_type(edge_ctx->ctx) == LLAMA_POOLING_TYPE_RANK;
+}
+
+// Scores each document against the query with a reranker (a cross-encoder
+// whose context pools to rank scores). Each pair is one sequence, built from
+// the model's "rerank" template when it has one, and otherwise as
+// BOS query EOS SEP document EOS, the way llama.cpp's server does. Several
+// pairs go through one decode. The scores come back with the number of
+// tokens of each pair in attribute "tokens".
+// [[Rcpp::export]]
+NumericVector edge_rerank_internal(SEXP model_ptr, std::string query,
+                                   std::vector<std::string> documents,
+                                   bool truncate = true) {
+  if (TYPEOF(model_ptr) != EXTPTRSXP) stop("Invalid model context");
+  XPtr<EdgeModelContext> edge_ctx(model_ptr);
+  if (!edge_ctx->is_valid() || edge_ctx->ctx == nullptr || edge_ctx->model == nullptr) {
+    stop("Invalid model context or null pointers");
+  }
+  check_no_engine(*edge_ctx);
+  llama_context * ctx = edge_ctx->ctx;
+  if (llama_pooling_type(ctx) != LLAMA_POOLING_TYPE_RANK) {
+    stop("This context is not a reranker. Load a reranking model with "
+         "edge_load_model(path, reranking = TRUE)");
+  }
+  const struct llama_vocab * vocab = llama_model_get_vocab(edge_ctx->model);
+  if (!vocab) stop("Failed to get vocabulary from model");
+
+  auto tokenize = [&](const std::string & s, bool parse_special) {
+    std::vector<llama_token> out;
+    if (s.empty()) return out;
+    const int n = -llama_tokenize(vocab, s.c_str(), (int32_t)s.size(), NULL, 0, false, parse_special);
+    if (n <= 0) return out;
+    out.resize(n);
+    if (llama_tokenize(vocab, s.c_str(), (int32_t)s.size(), out.data(), n, false, parse_special) < 0) {
+      stop("Failed to tokenize text");
+    }
+    return out;
+  };
+  auto replace_all = [](std::string s, const std::string & from, const std::string & to) {
+    for (size_t pos = s.find(from); pos != std::string::npos; pos = s.find(from, pos + to.size())) {
+      s.replace(pos, from.size(), to);
+    }
+    return s;
+  };
+
+  // The tokens before and after the document. A template is split at
+  // {document}; without one the pair is BOS query EOS SEP doc EOS.
+  const char * tmpl = llama_model_chat_template(edge_ctx->model, "rerank");
+  std::string tmpl_prefix, tmpl_suffix;
+  std::vector<llama_token> prefix, suffix;
+  if (tmpl != nullptr) {
+    const std::string t(tmpl);
+    const size_t at = t.find("{document}");
+    tmpl_prefix = replace_all(at == std::string::npos ? t : t.substr(0, at), "{query}", query);
+    tmpl_suffix = at == std::string::npos ? "" : replace_all(t.substr(at + 10), "{query}", query);
+    prefix = tokenize(tmpl_prefix, true);
+    suffix = tokenize(tmpl_suffix, true);
+  } else {
+    llama_token eos = llama_vocab_eos(vocab);
+    if (eos == LLAMA_TOKEN_NULL) eos = llama_vocab_sep(vocab);
+    if (llama_vocab_get_add_bos(vocab)) prefix.push_back(llama_vocab_bos(vocab));
+    std::vector<llama_token> q = tokenize(query, false);
+    prefix.insert(prefix.end(), q.begin(), q.end());
+    if (llama_vocab_get_add_eos(vocab)) prefix.push_back(eos);
+    if (llama_vocab_get_add_sep(vocab)) prefix.push_back(llama_vocab_sep(vocab));
+    if (llama_vocab_get_add_eos(vocab)) suffix.push_back(eos);
+  }
+
+  // A pooled sequence must fit in one micro-batch. n_ctx is never changed.
+  const int n_max = static_cast<int>(std::min({llama_n_batch(ctx), llama_n_ubatch(ctx), llama_n_ctx(ctx)}));
+  const int n_fixed = static_cast<int>(prefix.size() + suffix.size());
+  const int n_docs = static_cast<int>(documents.size());
+  std::vector<std::vector<llama_token>> pairs(n_docs);
+  for (int d = 0; d < n_docs; ++d) {
+    std::vector<llama_token> & p = pairs[d];
+    if (tmpl != nullptr) {
+      p = tokenize(tmpl_prefix + documents[d] + tmpl_suffix, true);
+    } else {
+      std::vector<llama_token> doc = tokenize(documents[d], false);
+      p = prefix;
+      p.insert(p.end(), doc.begin(), doc.end());
+      p.insert(p.end(), suffix.begin(), suffix.end());
+    }
+    if (static_cast<int>(p.size()) <= n_max) continue;
+    if (!truncate) {
+      stop("The query and document " + std::to_string(d + 1) + " take " +
+           std::to_string(p.size()) + " tokens, more than the " + std::to_string(n_max) +
+           " one batch holds. Shorten the document, load the model with a larger n_ctx, "
+           "or use truncate = TRUE");
+    }
+    if (n_fixed >= n_max) {
+      stop("The query takes " + std::to_string(n_fixed) + " tokens in the rerank format, "
+           "which leaves no room for a document in a batch of " + std::to_string(n_max) +
+           " tokens. Shorten the query or load the model with a larger n_ctx");
+    }
+    std::vector<llama_token> doc = tokenize(documents[d], false);
+    doc.resize(std::min<size_t>(doc.size(), static_cast<size_t>(n_max - n_fixed)));
+    p = prefix;
+    p.insert(p.end(), doc.begin(), doc.end());
+    p.insert(p.end(), suffix.begin(), suffix.end());
+  }
+
+  NumericVector scores(n_docs, NA_REAL);
+  IntegerVector n_tokens(n_docs);
+  for (int d = 0; d < n_docs; ++d) n_tokens[d] = static_cast<int>(pairs[d].size());
+
+  const int n_seq = std::max<int>(1, static_cast<int>(llama_n_seq_max(ctx)));
+  const bool has_encoder = llama_model_has_encoder(edge_ctx->model);
+  struct BatchGuard {
+    llama_batch b;
+    explicit BatchGuard(int n) : b(llama_batch_init(n, 0, 1)) {}
+    ~BatchGuard() { llama_batch_free(b); }
+  } guard(n_max);
+  llama_batch & batch = guard.b;
+
+  int d = 0;
+  while (d < n_docs) {
+    Rcpp::checkUserInterrupt();
+    llama_memory_t mem = llama_get_memory(ctx);
+    if (mem) llama_memory_clear(mem, true);
+    edge_ctx->cache_valid = false;
+    edge_ctx->cached_tokens.clear();
+
+    // Pairs d .. d + group - 1, one sequence each, as many as fit.
+    std::vector<int> members;
+    batch.n_tokens = 0;
+    while (d < n_docs && static_cast<int>(members.size()) < n_seq) {
+      const auto & tk = pairs[d];
+      if (!members.empty() && batch.n_tokens + static_cast<int>(tk.size()) > n_max) break;
+      const int seq = static_cast<int>(members.size());
+      for (size_t i = 0; i < tk.size(); ++i) {
+        const int j = batch.n_tokens++;
+        batch.token[j] = tk[i];
+        batch.pos[j] = static_cast<llama_pos>(i);
+        batch.n_seq_id[j] = 1;
+        batch.seq_id[j][0] = seq;
+        batch.logits[j] = 1;
+      }
+      members.push_back(d);
+      ++d;
+    }
+
+    const int rc = has_encoder ? llama_encode(ctx, batch) : llama_decode(ctx, batch);
+    if (rc != 0) stop("Failed to score the documents (llama.cpp error " + std::to_string(rc) + ")");
+    // A reranker may pool to several outputs (n_cls_out); the first is the score.
+    for (size_t s = 0; s < members.size(); ++s) {
+      const float * out = llama_get_embeddings_seq(ctx, static_cast<llama_seq_id>(s));
+      if (out) scores[members[s]] = out[0];
+    }
+  }
+  llama_memory_t mem = llama_get_memory(ctx);
+  if (mem) llama_memory_clear(mem, true);
+
+  scores.attr("tokens") = n_tokens;
+  return scores;
+}
+
 // Changes the scales of the LoRA adapters loaded with the model. The KV
 // cache was computed with the old weights, so it is cleared.
 // [[Rcpp::export]]
@@ -2361,7 +2589,7 @@ void edge_set_threads_internal(SEXP model_ptr, int n_threads, int n_threads_batc
   if (!edge_ctx->is_valid()) stop("Invalid model context");
   if (n_threads < 1 || n_threads_batch < 1) stop("Thread counts must be positive");
   check_no_engine(*edge_ctx);
-  llama_set_n_threads(edge_ctx->ctx, n_threads, n_threads_batch);
+  set_threads(*edge_ctx, n_threads, n_threads_batch);
 }
 
 // [[Rcpp::export]]
