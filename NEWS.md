@@ -1,3 +1,7 @@
+# edgemodelr (development)
+
+## New features
+
 # edgemodelr 0.7.0
 
 0.5.0 and 0.6.0 were not released on CRAN, so their changes (in their own
