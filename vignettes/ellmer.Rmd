@@ -56,8 +56,35 @@ The arguments:
 | `params` | none | `ellmer::params()`, such as `temperature`. |
 | `echo` | `"none"` | Passed to ellmer. |
 | `embeddings` | `FALSE` | Also serve `/v1/embeddings` from a server started here. |
+| `n_slots` | 1 | Requests a server started here generates at once. |
+| `n_threads` | physical cores | CPU threads of a server started here. |
+| `api_key` | `EDGEMODELR_API_KEY` | Key for a server at `base_url` that needs one. |
 
-<!-- n_slots -->
+## Parallel requests
+
+`ellmer::parallel_chat()`, and packages built on it such as mall and
+vitals, send many requests at once. With one slot the server answers
+them one after another. With more slots it generates them together:
+
+```{r}
+chat4 <- chat_edge(model, n_slots = 4)
+ellmer::parallel_chat_text(chat4, list("Name a fruit.", "Name a colour.",
+                                       "Name a planet.", "Name a river."))
+```
+
+Each slot holds its own `n_ctx` tokens, and `n_slots * n_ctx` may be at
+most 32768. On a CPU, more slots give more tokens per second in total,
+but each reply takes longer, so measure on your machine before you raise
+it.
+
+## Stopping the server
+
+`chat_edge_stop(chat)` stops the server behind a chat, and
+`chat_edge_stop()` stops all of them. Servers also stop when R exits.
+
+```{r}
+chat_edge_stop(chat4)
+```
 
 ## Chat
 
@@ -131,8 +158,10 @@ chat$get_turns()
 
 Limits of local tool calls:
 
-- Arguments may be strings, numbers, integers, booleans or enums
-  (`type_enum()`). Every argument is required.
+- Arguments follow the tool's JSON Schema: strings, numbers, integers,
+  booleans, enums, arrays and nested objects. Arguments with
+  `required = FALSE` may be left out. String values cannot contain quotes
+  or backslashes.
 - The model makes one call per reply. ellmer sends the result back, so a
   model can still make several calls in a row.
 - The call is generated under a grammar, so it is always valid JSON that
@@ -164,8 +193,23 @@ str(person)
 #>  $ city: chr "Valencia"
 ```
 
-Use a flat object with string, number, integer, boolean or enum fields.
-Nested objects and arrays are not supported.
+Nested objects and arrays work too, for example a list of people:
+
+```{r}
+people <- chat$chat_structured(
+  "Maria is 34 and lives in Valencia. Tom is 51 and lives in Leeds.",
+  type = type_object(people = type_array(type_object(
+    name = type_string(),
+    age = type_integer(),
+    city = type_string(required = FALSE)
+  )))
+)
+people$people
+```
+
+Unsupported schema keywords, such as `pattern` or `minimum`, give an
+error instead of being ignored. See `?edge_json_grammar` for the subset
+that is supported.
 
 Without ellmer, `edge_extract()` does the same directly on a loaded model.
 

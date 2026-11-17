@@ -156,7 +156,32 @@ hits
 ```
 
 `score` is the cosine similarity, `source` the file and `index` the row in
-the index. Use the same model for the query that built the index.
+the index. Use the same model for the query that built the index;
+`edge_search()` stops with an error if the embedding sizes differ.
+
+## Reranking
+
+Embedding search is fast but rough. A reranking model reads the query and
+each chunk together and scores how well the chunk answers it, which is
+slower but more accurate. Give `edge_search()` a reranker and it rescores
+the best `max(4 * top_k, 20)` embedding hits and returns the best `top_k`
+in the reranker's order, with a `rerank_score` column:
+
+```{r}
+reranker <- edge_load_model("bge-reranker-v2-m3-Q4_K_M.gguf", reranking = TRUE)
+edge_search(index, embedder, "When is the library open on Saturday?",
+            top_k = 2, rerank = reranker)
+```
+
+`edge_rerank()` scores any documents against a query directly:
+
+```{r}
+edge_rerank(reranker, "What is the capital of France?",
+            c("Paris is the capital of France.", "Berlin is in Germany."))
+```
+
+The scores are the model's raw scores, not probabilities, so compare them
+only with each other.
 
 ## Answering with a separate chat model
 
@@ -186,11 +211,17 @@ models need to follow instructions well.
 
 ## Answering with edge_ask()
 
-`edge_ask()` does retrieval and generation in one call, but with a single
-model: the same `ctx` embeds the question and writes the answer. That
-model must be a chat model loaded with `embeddings = TRUE`, and the index
-must be built with it. An embedding-only model fails here, because it
-cannot generate text.
+`edge_ask()` does retrieval and generation in one call. `ctx` embeds the
+question, so it must be the model that built the index. By default the
+same `ctx` also writes the answer; with an embedding-only model, pass a
+chat model as `chat_ctx`:
+
+```{r}
+edge_ask(embedder, "How much is the late fee per day?", index, top_k = 2,
+         chat_ctx = chat_model)
+```
+
+A chat model loaded with `embeddings = TRUE` can do both:
 
 ```{r}
 ctx <- edge_load_model("gemma-3-1b-it-Q4_K_M.gguf", embeddings = TRUE)
@@ -248,6 +279,7 @@ index$n_chunks <- length(index$chunks)
 ```{r}
 edge_free_model(embedder)
 edge_free_model(chat_model)
+edge_free_model(reranker)
 edge_free_model(ctx)
 ```
 
