@@ -7,6 +7,12 @@
   and `n_threads`. The new `chat_edge_stop()` stops its background servers,
   which also stop when the package is unloaded or R exits.
 
+* `edge_rerank()` scores documents against a query with a reranking model
+  such as bge-reranker-v2-m3, loaded with `edge_load_model(reranking =
+  TRUE)`. `edge_search(rerank = )` uses one to re-order the top hits, and
+  `edge_api(reranking = )` serves `POST /v1/rerank` in the Jina, Cohere and
+  llama.cpp format.
+
 # edgemodelr 0.7.0
 
 0.5.0 and 0.6.0 were not released on CRAN, so their changes (in their own

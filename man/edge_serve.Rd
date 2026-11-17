@@ -37,7 +37,8 @@ header.}
 \code{\link{edge_api}}.}
 
 \item{...}{More arguments for \code{\link{edge_api}}, such as
-\code{n_threads}, \code{max_queue} or \code{cache_type}.}
+\code{n_threads}, \code{max_queue}, \code{cache_type} or
+\code{reranking}.}
 }
 \value{
 Does not return while the server runs.
@@ -55,6 +56,8 @@ Endpoints served:
 \item \code{POST /v1/completions}: Text completion
 \item \code{POST /v1/chat/completions}: Chat completion (uses model's native template)
 \item \code{POST /v1/embeddings}: Text embeddings (if \code{embeddings = TRUE})
+\item \code{POST /v1/rerank}: Document reranking, when \code{reranking}
+is passed on to \code{\link{edge_api}}
 \item \code{GET /v1/models}: List loaded model info
 \item \code{GET /health}: Health check
 }

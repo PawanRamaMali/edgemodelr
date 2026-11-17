@@ -20,6 +20,7 @@
 
 #include "llama.h"
 #include "llama-grammar.h"
+#include "llama-model.h"
 #include "ggml-backend.h"
 #include "ggml-cpu.h"
 #include "r_output_redirect.h"
@@ -435,7 +436,8 @@ SEXP edge_load_model_internal(std::string model_path, int n_ctx, int n_gpu_layer
                               std::vector<double> lora_scales,
                               int n_parallel,
                               std::string cache_type_k = "f16",
-                              std::string cache_type_v = "f16") {
+                              std::string cache_type_v = "f16",
+                              bool reranking = false) {
   try {
     // Ensure llama is properly initialized
     ensure_llama_initialized();
@@ -534,6 +536,17 @@ SEXP edge_load_model_internal(std::string model_path, int n_ctx, int n_gpu_layer
       ctx_params.n_seq_max = 16;
       ctx_params.kv_unified = true;
       ctx_params.n_ubatch = ctx_params.n_batch;
+    }
+    if (reranking) {
+      // A reranker is a model with a classification head. Many GGUF files
+      // do not record the rank pooling, so it is set here, as llama.cpp's
+      // server does with --reranking.
+      if (model->cls == nullptr && model->cls_out == nullptr) {
+        llama_model_free(model);
+        stop("reranking = TRUE needs a reranking model, such as bge-reranker; "
+             "this model has no classification head: " + model_path);
+      }
+      ctx_params.pooling_type = LLAMA_POOLING_TYPE_RANK;
     }
     if (n_parallel > 1) {
       // edge_completion_batch_internal() runs up to n_parallel prompts as
@@ -2328,6 +2341,170 @@ NumericMatrix edge_embeddings_internal(SEXP model_ptr, std::vector<std::string> 
   } catch (const std::exception& e) {
     stop("Error during embedding extraction: " + std::string(e.what()));
   }
+}
+
+// TRUE when the context pools to rank scores, as a reranker loaded with
+// embeddings on does.
+// [[Rcpp::export]]
+bool edge_is_reranker_internal(SEXP model_ptr) {
+  if (TYPEOF(model_ptr) != EXTPTRSXP) stop("Invalid model context");
+  XPtr<EdgeModelContext> edge_ctx(model_ptr);
+  if (!edge_ctx->is_valid() || edge_ctx->ctx == nullptr) stop("Invalid model context");
+  return llama_pooling_type(edge_ctx->ctx) == LLAMA_POOLING_TYPE_RANK;
+}
+
+// Scores each document against the query with a reranker (a cross-encoder
+// whose context pools to rank scores). Each pair is one sequence, built from
+// the model's "rerank" template when it has one, and otherwise as
+// BOS query EOS SEP document EOS, the way llama.cpp's server does. Several
+// pairs go through one decode. The scores come back with the number of
+// tokens of each pair in attribute "tokens".
+// [[Rcpp::export]]
+NumericVector edge_rerank_internal(SEXP model_ptr, std::string query,
+                                   std::vector<std::string> documents,
+                                   bool truncate = true) {
+  if (TYPEOF(model_ptr) != EXTPTRSXP) stop("Invalid model context");
+  XPtr<EdgeModelContext> edge_ctx(model_ptr);
+  if (!edge_ctx->is_valid() || edge_ctx->ctx == nullptr || edge_ctx->model == nullptr) {
+    stop("Invalid model context or null pointers");
+  }
+  check_no_engine(*edge_ctx);
+  llama_context * ctx = edge_ctx->ctx;
+  if (llama_pooling_type(ctx) != LLAMA_POOLING_TYPE_RANK) {
+    stop("This context is not a reranker. Load a reranking model with "
+         "edge_load_model(path, reranking = TRUE)");
+  }
+  const struct llama_vocab * vocab = llama_model_get_vocab(edge_ctx->model);
+  if (!vocab) stop("Failed to get vocabulary from model");
+
+  auto tokenize = [&](const std::string & s, bool parse_special) {
+    std::vector<llama_token> out;
+    if (s.empty()) return out;
+    const int n = -llama_tokenize(vocab, s.c_str(), (int32_t)s.size(), NULL, 0, false, parse_special);
+    if (n <= 0) return out;
+    out.resize(n);
+    if (llama_tokenize(vocab, s.c_str(), (int32_t)s.size(), out.data(), n, false, parse_special) < 0) {
+      stop("Failed to tokenize text");
+    }
+    return out;
+  };
+  auto replace_all = [](std::string s, const std::string & from, const std::string & to) {
+    for (size_t pos = s.find(from); pos != std::string::npos; pos = s.find(from, pos + to.size())) {
+      s.replace(pos, from.size(), to);
+    }
+    return s;
+  };
+
+  // The tokens before and after the document. A template is split at
+  // {document}; without one the pair is BOS query EOS SEP doc EOS.
+  const char * tmpl = llama_model_chat_template(edge_ctx->model, "rerank");
+  std::string tmpl_prefix, tmpl_suffix;
+  std::vector<llama_token> prefix, suffix;
+  if (tmpl != nullptr) {
+    const std::string t(tmpl);
+    const size_t at = t.find("{document}");
+    tmpl_prefix = replace_all(at == std::string::npos ? t : t.substr(0, at), "{query}", query);
+    tmpl_suffix = at == std::string::npos ? "" : replace_all(t.substr(at + 10), "{query}", query);
+    prefix = tokenize(tmpl_prefix, true);
+    suffix = tokenize(tmpl_suffix, true);
+  } else {
+    llama_token eos = llama_vocab_eos(vocab);
+    if (eos == LLAMA_TOKEN_NULL) eos = llama_vocab_sep(vocab);
+    if (llama_vocab_get_add_bos(vocab)) prefix.push_back(llama_vocab_bos(vocab));
+    std::vector<llama_token> q = tokenize(query, false);
+    prefix.insert(prefix.end(), q.begin(), q.end());
+    if (llama_vocab_get_add_eos(vocab)) prefix.push_back(eos);
+    if (llama_vocab_get_add_sep(vocab)) prefix.push_back(llama_vocab_sep(vocab));
+    if (llama_vocab_get_add_eos(vocab)) suffix.push_back(eos);
+  }
+
+  // A pooled sequence must fit in one micro-batch. n_ctx is never changed.
+  const int n_max = static_cast<int>(std::min({llama_n_batch(ctx), llama_n_ubatch(ctx), llama_n_ctx(ctx)}));
+  const int n_fixed = static_cast<int>(prefix.size() + suffix.size());
+  const int n_docs = static_cast<int>(documents.size());
+  std::vector<std::vector<llama_token>> pairs(n_docs);
+  for (int d = 0; d < n_docs; ++d) {
+    std::vector<llama_token> & p = pairs[d];
+    if (tmpl != nullptr) {
+      p = tokenize(tmpl_prefix + documents[d] + tmpl_suffix, true);
+    } else {
+      std::vector<llama_token> doc = tokenize(documents[d], false);
+      p = prefix;
+      p.insert(p.end(), doc.begin(), doc.end());
+      p.insert(p.end(), suffix.begin(), suffix.end());
+    }
+    if (static_cast<int>(p.size()) <= n_max) continue;
+    if (!truncate) {
+      stop("The query and document " + std::to_string(d + 1) + " take " +
+           std::to_string(p.size()) + " tokens, more than the " + std::to_string(n_max) +
+           " one batch holds. Shorten the document, load the model with a larger n_ctx, "
+           "or use truncate = TRUE");
+    }
+    if (n_fixed >= n_max) {
+      stop("The query takes " + std::to_string(n_fixed) + " tokens in the rerank format, "
+           "which leaves no room for a document in a batch of " + std::to_string(n_max) +
+           " tokens. Shorten the query or load the model with a larger n_ctx");
+    }
+    std::vector<llama_token> doc = tokenize(documents[d], false);
+    doc.resize(std::min<size_t>(doc.size(), static_cast<size_t>(n_max - n_fixed)));
+    p = prefix;
+    p.insert(p.end(), doc.begin(), doc.end());
+    p.insert(p.end(), suffix.begin(), suffix.end());
+  }
+
+  NumericVector scores(n_docs, NA_REAL);
+  IntegerVector n_tokens(n_docs);
+  for (int d = 0; d < n_docs; ++d) n_tokens[d] = static_cast<int>(pairs[d].size());
+
+  const int n_seq = std::max<int>(1, static_cast<int>(llama_n_seq_max(ctx)));
+  const bool has_encoder = llama_model_has_encoder(edge_ctx->model);
+  struct BatchGuard {
+    llama_batch b;
+    explicit BatchGuard(int n) : b(llama_batch_init(n, 0, 1)) {}
+    ~BatchGuard() { llama_batch_free(b); }
+  } guard(n_max);
+  llama_batch & batch = guard.b;
+
+  int d = 0;
+  while (d < n_docs) {
+    Rcpp::checkUserInterrupt();
+    llama_memory_t mem = llama_get_memory(ctx);
+    if (mem) llama_memory_clear(mem, true);
+    edge_ctx->cache_valid = false;
+    edge_ctx->cached_tokens.clear();
+
+    // Pairs d .. d + group - 1, one sequence each, as many as fit.
+    std::vector<int> members;
+    batch.n_tokens = 0;
+    while (d < n_docs && static_cast<int>(members.size()) < n_seq) {
+      const auto & tk = pairs[d];
+      if (!members.empty() && batch.n_tokens + static_cast<int>(tk.size()) > n_max) break;
+      const int seq = static_cast<int>(members.size());
+      for (size_t i = 0; i < tk.size(); ++i) {
+        const int j = batch.n_tokens++;
+        batch.token[j] = tk[i];
+        batch.pos[j] = static_cast<llama_pos>(i);
+        batch.n_seq_id[j] = 1;
+        batch.seq_id[j][0] = seq;
+        batch.logits[j] = 1;
+      }
+      members.push_back(d);
+      ++d;
+    }
+
+    const int rc = has_encoder ? llama_encode(ctx, batch) : llama_decode(ctx, batch);
+    if (rc != 0) stop("Failed to score the documents (llama.cpp error " + std::to_string(rc) + ")");
+    // A reranker may pool to several outputs (n_cls_out); the first is the score.
+    for (size_t s = 0; s < members.size(); ++s) {
+      const float * out = llama_get_embeddings_seq(ctx, static_cast<llama_seq_id>(s));
+      if (out) scores[members[s]] = out[0];
+    }
+  }
+  llama_memory_t mem = llama_get_memory(ctx);
+  if (mem) llama_memory_clear(mem, true);
+
+  scores.attr("tokens") = n_tokens;
+  return scores;
 }
 
 // Changes the scales of the LoRA adapters loaded with the model. The KV

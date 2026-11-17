@@ -16,7 +16,8 @@ edge_load_model(
   lora_scale = 1,
   n_parallel = 1L,
   cache_type_k = "f16",
-  cache_type_v = "f16"
+  cache_type_v = "f16",
+  reranking = FALSE
 )
 }
 \arguments{
@@ -68,6 +69,13 @@ the KV cache (default: "f16"). One of "f16", "bf16", "q8_0", "q5_1",
 the cache takes, with almost no change in output, so a larger
 \code{n_ctx} fits; the 4-bit types save more and cost some quality.
 A quantized \code{cache_type_v} needs \code{flash_attn = TRUE}.}
+
+\item{reranking}{Load a reranking model, such as bge-reranker, for
+\code{\link{edge_rerank}} (default: FALSE). This turns on
+\code{embeddings} and rank pooling, and fails unless the model has a
+classification head, as rerankers do. A query and document
+must fit in one batch, which holds 512 tokens for an \code{n_ctx}
+from 512 to 2048, and a quarter of \code{n_ctx} (at most 2048) above it.}
 }
 \value{
 External pointer to the loaded model context

@@ -38,6 +38,12 @@
 #'   the cache takes, with almost no change in output, so a larger
 #'   \code{n_ctx} fits; the 4-bit types save more and cost some quality.
 #'   A quantized \code{cache_type_v} needs \code{flash_attn = TRUE}.
+#' @param reranking Load a reranking model, such as bge-reranker, for
+#'   \code{\link{edge_rerank}} (default: FALSE). This turns on
+#'   \code{embeddings} and rank pooling, and fails unless the model has a
+#'   classification head, as rerankers do. A query and document
+#'   must fit in one batch, which holds 512 tokens for an \code{n_ctx}
+#'   from 512 to 2048, and a quarter of \code{n_ctx} (at most 2048) above it.
 #' @return External pointer to the loaded model context
 #'
 #' @examples
@@ -66,7 +72,10 @@
 #' @export
 edge_load_model <- function(model_path, n_ctx = 2048L, n_gpu_layers = 0L, n_threads = NULL, flash_attn = TRUE, embeddings = FALSE,
                             prompt_cache = FALSE, lora = NULL, lora_scale = 1,
-                            n_parallel = 1L, cache_type_k = "f16", cache_type_v = "f16") {
+                            n_parallel = 1L, cache_type_k = "f16", cache_type_v = "f16",
+                            reranking = FALSE) {
+  if (!isTRUE(reranking) && !isFALSE(reranking)) stop("reranking must be TRUE or FALSE")
+  if (reranking) embeddings <- TRUE
   if (!file.exists(model_path)) {
     stop("Model file does not exist: ", model_path, "\n",
          "Try these options:\n",
@@ -162,7 +171,8 @@ edge_load_model <- function(model_path, n_ctx = 2048L, n_gpu_layers = 0L, n_thre
                              lora_scale,
                              as.integer(n_parallel),
                              cache_type_k,
-                             cache_type_v)
+                             cache_type_v,
+                             reranking)
   }, error = function(e) {
     # Provide more context about what went wrong
     if (grepl("llama_load_model_from_file", e$message)) {
@@ -3580,6 +3590,74 @@ edge_similarity_matrix <- function(embeddings) {
   tcrossprod(normed)
 }
 
+#' Rank documents by relevance to a query with a reranker
+#'
+#' Scores each document against the query with a reranking model (a
+#' cross-encoder such as bge-reranker-v2-m3), which reads the query and the
+#' document together and so judges relevance better than comparing
+#' embeddings. A common use is to re-order the top hits of an embedding
+#' search; see the \code{rerank} argument of \code{\link{edge_search}}.
+#'
+#' @param ctx A reranker context from
+#'   \code{edge_load_model(path, reranking = TRUE)}.
+#' @param query The query, a single string.
+#' @param documents Character vector of documents to score.
+#' @param top_n Number of best documents to return (default: NULL, all).
+#' @param truncate What to do when a query and document do not fit in one
+#'   batch: TRUE (default) cuts the end off the document, FALSE raises an
+#'   error.
+#' @return A data frame sorted from most to least relevant, with columns
+#'   \code{index} (position in \code{documents}), \code{document} and
+#'   \code{score}. Scores are the model's raw relevance scores: higher is
+#'   more relevant, and they are comparable between documents for one
+#'   query, but they are not probabilities. For bge rerankers,
+#'   \code{plogis(score)} gives a value between 0 and 1.
+#'
+#' @details
+#' Each pair is built with the model's rerank template when its GGUF file
+#' has one, and otherwise as the query and the document separated by the
+#' model's separator tokens, as llama.cpp's server does. Several pairs are
+#' scored in one batch. A pair must fit in one batch, which depends on
+#' \code{n_ctx}: load the model with a larger \code{n_ctx} for long
+#' documents.
+#'
+#' @examples
+#' \dontrun{
+#' rr <- edge_load_model("bge-reranker-v2-m3-Q4_K_M.gguf", reranking = TRUE)
+#' edge_rerank(rr, "What is the capital of France?",
+#'             c("Paris is the capital of France.", "Berlin is in Germany.",
+#'               "Bananas are yellow."))
+#' edge_free_model(rr)
+#' }
+#' @seealso \code{\link{edge_search}}, \code{\link{edge_embeddings}}
+#' @export
+edge_rerank <- function(ctx, query, documents, top_n = NULL, truncate = TRUE) {
+  if (!is.character(query) || length(query) != 1L || is.na(query)) {
+    stop("query must be a single character string")
+  }
+  if (!is.character(documents) || anyNA(documents)) {
+    stop("documents must be a character vector without NA")
+  }
+  if (!is.null(top_n) && (!is.numeric(top_n) || length(top_n) != 1L || is.na(top_n) ||
+                            top_n < 1 || top_n != round(top_n))) {
+    stop("top_n must be NULL or a positive whole number")
+  }
+  if (!isTRUE(truncate) && !isFALSE(truncate)) stop("truncate must be TRUE or FALSE")
+  if (!is_valid_model(ctx)) stop("Invalid model context")
+  if (!edge_is_reranker_internal(ctx)) {
+    stop("ctx is not a reranker; load one with edge_load_model(path, reranking = TRUE)")
+  }
+  scores <- if (length(documents)) {
+    as.numeric(edge_rerank_internal(ctx, enc2utf8(query), enc2utf8(documents), truncate))
+  } else {
+    numeric()
+  }
+  ord <- order(scores, decreasing = TRUE)
+  if (!is.null(top_n)) ord <- utils::head(ord, top_n)
+  data.frame(index = ord, document = documents[ord], score = scores[ord],
+             stringsAsFactors = FALSE)
+}
+
 
 # ============================================================================
 # Batch Processing / Vectorized API
@@ -4488,18 +4566,26 @@ edge_index_documents <- function(source, ctx, chunk_size = 500L,
 #' @param ctx Model context (same model used to build the index)
 #' @param query Query text string
 #' @param top_k Number of results to return (default: 5)
-#' @return A data frame with columns: \code{chunk}, \code{score}, \code{source}, \code{index}
+#' @param rerank Optional reranker context from
+#'   \code{edge_load_model(path, reranking = TRUE)} (default: NULL). When
+#'   given, the top \code{max(4 * top_k, 20)} embedding hits are scored with
+#'   \code{\link{edge_rerank}}, the best \code{top_k} are returned in that
+#'   order, and a \code{rerank_score} column is added.
+#' @return A data frame with columns: \code{chunk}, \code{score}, \code{source}, \code{index},
+#'   and \code{rerank_score} when \code{rerank} is given
 #'
 #' @examples
 #' \dontrun{
 #' ctx <- edge_load_model("model.gguf")
 #' index <- edge_index_documents("./docs/", ctx)
 #' results <- edge_search(index, ctx, "quarterly revenue")
+#' reranker <- edge_load_model("bge-reranker-v2-m3-Q4_K_M.gguf", reranking = TRUE)
+#' results <- edge_search(index, ctx, "quarterly revenue", rerank = reranker)
 #' print(results)
 #' }
 #' @seealso \code{\link{edge_index_documents}}, \code{\link{edge_ask}}
 #' @export
-edge_search <- function(index, ctx, query, top_k = 5L) {
+edge_search <- function(index, ctx, query, top_k = 5L, rerank = NULL) {
   if (!inherits(index, "edge_index")) {
     stop("index must be an edge_index object from edge_index_documents()")
   }
@@ -4521,13 +4607,22 @@ edge_search <- function(index, ctx, query, top_k = 5L) {
   # Get top-k indices
   top_indices <- order(scores, decreasing = TRUE)[seq_len(top_k)]
 
-  data.frame(
+  if (!is.null(rerank)) {
+    # The reranker re-orders a wider pool of embedding hits.
+    pool <- order(scores, decreasing = TRUE)[seq_len(min(index$n_chunks, max(4L * top_k, 20L)))]
+    rr <- edge_rerank(rerank, query, index$chunks[pool], top_n = top_k)
+    top_indices <- pool[rr$index]
+  }
+
+  out <- data.frame(
     chunk = index$chunks[top_indices],
     score = scores[top_indices],
     source = index$sources[top_indices],
     index = top_indices,
     stringsAsFactors = FALSE
   )
+  if (!is.null(rerank)) out$rerank_score <- rr$score
+  out
 }
 
 #' Ask a question using retrieval-augmented generation
@@ -5054,6 +5149,41 @@ print.edge_index <- function(x, ...) {
   list(error = list(message = conditionMessage(e), type = type))
 }
 
+# A rerank request in the Jina / Cohere / llama.cpp format: query,
+# documents (strings or objects with text), top_n and return_documents.
+# Indices in the reply count from 0.
+.oa_rerank <- function(rerank_ctx, body, model_name) {
+  if (!is.character(body$query) || length(body$query) != 1L) {
+    .bad_request("query must be a string")
+  }
+  docs <- body$documents
+  if (!is.list(docs) || !length(docs)) .bad_request("documents must be a non-empty array")
+  docs <- vapply(docs, function(d) {
+    if (is.list(d)) d <- d$text
+    if (!is.character(d) || length(d) != 1L) {
+      .bad_request("each document must be a string or an object with a text field")
+    }
+    d
+  }, character(1), USE.NAMES = FALSE)
+  top_n <- body$top_n
+  if (!is.null(top_n) && (!is.numeric(top_n) || length(top_n) != 1L || top_n < 1)) {
+    .bad_request("top_n must be a positive integer")
+  }
+  scores <- edge_rerank_internal(rerank_ctx, enc2utf8(body$query), enc2utf8(docs), TRUE)
+  n_tokens <- sum(attr(scores, "tokens"))
+  scores <- as.numeric(scores)
+  ord <- order(scores, decreasing = TRUE)
+  if (!is.null(top_n)) ord <- utils::head(ord, as.integer(top_n))
+  with_docs <- !isFALSE(body$return_documents)
+  results <- lapply(ord, function(i) {
+    r <- list(index = i - 1L, relevance_score = scores[i])
+    if (with_docs) r$document <- list(text = docs[[i]])
+    r
+  })
+  list(response = list(object = "list", model = body$model %||% model_name, results = results,
+                       usage = list(prompt_tokens = n_tokens, total_tokens = n_tokens)))
+}
+
 # Runs one endpoint. fun returns the output of .oa_chat() or
 # .oa_completion(), or a promise of it.
 .oa_handle <- function(res, fun) {
@@ -5086,7 +5216,8 @@ print.edge_index <- function(x, ...) {
 #' @param n_slots Requests generated at once (default: 1); see
 #'   \code{\link{edge_api}}.
 #' @param ... More arguments for \code{\link{edge_api}}, such as
-#'   \code{n_threads}, \code{max_queue} or \code{cache_type}.
+#'   \code{n_threads}, \code{max_queue}, \code{cache_type} or
+#'   \code{reranking}.
 #'
 #' @details
 #' Endpoints served:
@@ -5094,6 +5225,8 @@ print.edge_index <- function(x, ...) {
 #'   \item \code{POST /v1/completions}: Text completion
 #'   \item \code{POST /v1/chat/completions}: Chat completion (uses model's native template)
 #'   \item \code{POST /v1/embeddings}: Text embeddings (if \code{embeddings = TRUE})
+#'   \item \code{POST /v1/rerank}: Document reranking, when \code{reranking}
+#'     is passed on to \code{\link{edge_api}}
 #'   \item \code{GET /v1/models}: List loaded model info
 #'   \item \code{GET /health}: Health check
 #' }
@@ -5153,6 +5286,7 @@ edgemodelr API server starting")
   message("    POST ", host, ":", port, "/v1/chat/completions")
   message("    POST ", host, ":", port, "/v1/jobs")
   if (!isFALSE(embeddings)) message("    POST ", host, ":", port, "/v1/embeddings")
+  if (!isFALSE(list(...)$reranking %||% FALSE)) message("    POST ", host, ":", port, "/v1/rerank")
   message("    GET  ", host, ":", port, "/v1/models")
   message("    GET  ", host, ":", port, "/health")
   if (!is.null(api_key)) message("  Auth: API key required")
@@ -5487,6 +5621,15 @@ edge_engine_stop <- function(engine) {
 #'     written, and no request has to stay open while the model works.
 #'     Finished jobs are kept for 15 minutes.
 #'   \item \code{POST /v1/embeddings} when \code{embeddings} is set.
+#'   \item \code{POST /v1/rerank} when \code{reranking} is set, in the
+#'     format of Jina, Cohere and llama.cpp's server: the request has
+#'     \code{query}, \code{documents} (strings, or objects with
+#'     \code{text}), and optionally \code{top_n} and
+#'     \code{return_documents} (default true); the reply has
+#'     \code{results}, a list of \code{index} (from 0),
+#'     \code{relevance_score} and \code{document}, most relevant first,
+#'     and \code{usage}. Like embeddings, a rerank request is answered at
+#'     once rather than queued, so other requests wait while it runs.
 #'   \item \code{GET /v1/models}, \code{GET /metrics} (engine counters) and
 #'     \code{GET /health} (no key needed).
 #' }
@@ -5520,6 +5663,10 @@ edge_engine_stop <- function(engine) {
 #'   settings.
 #' @param model_name Name reported as the model (default: the file name).
 #' @param n_gpu_layers GPU layers (default: 0).
+#' @param reranking FALSE (default), or the path of a .gguf reranking
+#'   model, such as bge-reranker-v2-m3, to serve \code{/v1/rerank} with
+#'   (see \code{\link{edge_rerank}}). TRUE serves it from \code{model_path},
+#'   which must then be a reranker. Its context has \code{n_ctx} tokens.
 #' @return A plumber router. Run it with \code{plumber::pr_run()}, or return
 #'   it from \code{entrypoint.R} on Posit Connect. The engine is in
 #'   \code{attr(router, "edge_engine")}.
@@ -5536,7 +5683,12 @@ edge_engine_stop <- function(engine) {
 #' @export
 edge_api <- function(model_path, n_slots = 8L, n_ctx = 2048L, n_threads = NULL,
                      max_queue = 256L, cache_type = "q8_0", embeddings = FALSE,
-                     api_key = NULL, model_name = NULL, n_gpu_layers = 0L) {
+                     api_key = NULL, model_name = NULL, n_gpu_layers = 0L,
+                     reranking = FALSE) {
+  if (!isFALSE(reranking) && !isTRUE(reranking) &&
+      !(is.character(reranking) && length(reranking) == 1L && file.exists(reranking))) {
+    stop("reranking must be FALSE, TRUE or the path of a .gguf reranking model")
+  }
   for (pkg in c("plumber", "jsonlite", "promises", "later")) {
     if (!requireNamespace(pkg, quietly = TRUE)) {
       stop("The '", pkg, "' package is required for edge_api().\n",
@@ -5578,6 +5730,14 @@ edge_api <- function(model_path, n_slots = 8L, n_ctx = 2048L, n_threads = NULL,
     embed_ctx <- edge_load_model(embed_path, n_ctx = n_ctx, n_gpu_layers = n_gpu_layers,
                                  n_threads = if (n_threads > 0) n_threads else NULL,
                                  embeddings = TRUE)
+  }
+  rerank_ctx <- NULL
+  if (!isFALSE(reranking)) {
+    rerank_path <- if (is.character(reranking)) reranking else model_path
+    rerank_ctx <- edge_load_model(rerank_path, n_ctx = n_ctx, n_gpu_layers = n_gpu_layers,
+                                  n_threads = if (n_threads > 0) n_threads else NULL,
+                                  reranking = TRUE)
+    rerank_name <- tools::file_path_sans_ext(basename(rerank_path))
   }
   if (is.null(model_name)) model_name <- tools::file_path_sans_ext(basename(model_path))
   jobs <- new.env(parent = emptyenv())
@@ -5707,6 +5867,12 @@ edge_api <- function(model_path, n_slots = 8L, n_ctx = 2048L, n_threads = NULL,
     job_view(job)
   })
 
+  if (!is.null(rerank_ctx)) {
+    pr <- plumber::pr_post(pr, "/v1/rerank", function(req, res) {
+      .oa_handle(res, function() .oa_rerank(rerank_ctx, .oa_body(req), rerank_name))
+    })
+  }
+
   if (!is.null(embed_ctx)) {
     pr <- plumber::pr_post(pr, "/v1/embeddings", function(req, res) {
       .oa_handle(res, function() {
@@ -5730,6 +5896,7 @@ edge_api <- function(model_path, n_slots = 8L, n_ctx = 2048L, n_threads = NULL,
     edge_engine_stop(engine)
     tryCatch(edge_free_model(ctx), error = function(e) NULL)
     if (!is.null(embed_ctx)) tryCatch(edge_free_model(embed_ctx), error = function(e) NULL)
+    if (!is.null(rerank_ctx)) tryCatch(edge_free_model(rerank_ctx), error = function(e) NULL)
   })
   attr(pr, "edge_engine") <- engine
   pr

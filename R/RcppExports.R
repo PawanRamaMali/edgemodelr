@@ -13,8 +13,8 @@ edge_cuda_backend_loaded_internal <- function() {
     .Call(`_edgemodelr_edge_cuda_backend_loaded_internal`)
 }
 
-edge_load_model_internal <- function(model_path, n_ctx, n_gpu_layers, n_threads, flash_attn, embeddings, prompt_cache, lora_paths, lora_scales, n_parallel, cache_type_k = "f16", cache_type_v = "f16") {
-    .Call(`_edgemodelr_edge_load_model_internal`, model_path, n_ctx, n_gpu_layers, n_threads, flash_attn, embeddings, prompt_cache, lora_paths, lora_scales, n_parallel, cache_type_k, cache_type_v)
+edge_load_model_internal <- function(model_path, n_ctx, n_gpu_layers, n_threads, flash_attn, embeddings, prompt_cache, lora_paths, lora_scales, n_parallel, cache_type_k = "f16", cache_type_v = "f16", reranking = FALSE) {
+    .Call(`_edgemodelr_edge_load_model_internal`, model_path, n_ctx, n_gpu_layers, n_threads, flash_attn, embeddings, prompt_cache, lora_paths, lora_scales, n_parallel, cache_type_k, cache_type_v, reranking)
 }
 
 edge_completion_internal <- function(model_ptr, prompt, n_predict, sampling, timeout_seconds = 0.0) {
@@ -83,6 +83,14 @@ edge_load_state_internal <- function(model_ptr, path) {
 
 edge_embeddings_internal <- function(model_ptr, texts, normalize = TRUE) {
     .Call(`_edgemodelr_edge_embeddings_internal`, model_ptr, texts, normalize)
+}
+
+edge_is_reranker_internal <- function(model_ptr) {
+    .Call(`_edgemodelr_edge_is_reranker_internal`, model_ptr)
+}
+
+edge_rerank_internal <- function(model_ptr, query, documents, truncate = TRUE) {
+    .Call(`_edgemodelr_edge_rerank_internal`, model_ptr, query, documents, truncate)
 }
 
 edge_lora_scales_internal <- function(model_ptr, scales = NULL) {
