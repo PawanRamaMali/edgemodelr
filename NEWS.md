@@ -31,6 +31,14 @@
   gives any JSON object, and `response_format` can be combined with tools.
   Keywords the grammar cannot enforce, such as `pattern`, are an error.
 
+* Each loaded model keeps its own CPU thread pool. ggml used to start and
+  join a fresh set of threads for every decode. The pool's threads sleep
+  between decodes instead of spinning, and the engine puts them to sleep
+  when it has no work, so an idle model or engine uses no CPU. With
+  gemma-3-1b on 4 threads, `edge_engine()` with 8 slots generates 8% more
+  tokens per second (41.3 to 44.7) and uses 7% less CPU per token; with 1
+  slot it is 3% faster.
+
 ## Changes
 
 * `edge_ask()` has a `chat_ctx` argument, so an index built with an

@@ -319,6 +319,11 @@ struct EdgeModelContext {
   // The serving engine using this context, if any (see ServeEngine).
   ServeEngine * engine = nullptr;
 
+  // CPU thread pools attached to ctx, one per thread count in use (see
+  // set_threads()). The CPU backend keeps a pointer to the last pool it ran
+  // on, so a pool is only freed after the context.
+  std::map<int, ggml_threadpool *> pools;
+
   EdgeModelContext() = default;
 
   // Copy constructor and assignment deleted to prevent double-free
@@ -333,9 +338,12 @@ struct EdgeModelContext {
     // An engine thread may be decoding with the context: stop it first.
     if (engine) engine_detach(engine);
     if (ctx) {
+      llama_detach_threadpool(ctx);
       llama_free(ctx);
       ctx = NULL;
     }
+    for (auto & kv : pools) ggml_threadpool_free(kv.second);
+    pools.clear();
     if (model) {
       llama_model_free(model);
       model = NULL;
@@ -359,6 +367,38 @@ struct EdgeModelContext {
 };
 
 static void check_no_engine(const EdgeModelContext & e);
+
+// Without a pool of its own, ggml starts and joins a fresh set of threads
+// for every graph it computes, that is for every decode. A pool kept with
+// the context avoids that. Its threads sleep between graphs (poll = 0)
+// instead of spinning, as ggml's default poll of 50 has them do for a tenth
+// of a second or more after each graph, so they leave the cores to R and to
+// other processes. On gemma-3-1b with 4 threads, poll = 0 was no slower
+// than polling.
+static ggml_threadpool * get_pool(EdgeModelContext & e, int n_threads) {
+  auto it = e.pools.find(n_threads);
+  if (it != e.pools.end()) return it->second;
+  ggml_threadpool_params params = ggml_threadpool_params_default(n_threads);
+  params.poll = 0;
+  params.paused = true;   // the first graph wakes it
+  ggml_threadpool * tp = ggml_threadpool_new(&params);
+  if (!tp) stop("Failed to create the CPU thread pool");
+  e.pools[n_threads] = tp;
+  return tp;
+}
+
+// Sets the threads for one token at a time and for batches, each with its
+// pool. Not while a decode runs: R's thread calls it with no engine.
+static void set_threads(EdgeModelContext & e, int n_threads, int n_threads_batch) {
+  llama_set_n_threads(e.ctx, n_threads, n_threads_batch);
+  llama_attach_threadpool(e.ctx, get_pool(e, n_threads), get_pool(e, n_threads_batch));
+}
+
+// Puts the pools' threads to sleep until the next graph, which resumes the
+// pool it runs on.
+static void pause_pools(EdgeModelContext & e) {
+  for (auto & kv : e.pools) ggml_threadpool_pause(kv.second);
+}
 
 // Sets the context's LoRA adapters to the loaded ones at their scales. An
 // adapter at scale 0 is left out instead of being computed for nothing.
@@ -573,6 +613,7 @@ SEXP edge_load_model_internal(std::string model_path, int n_ctx, int n_gpu_layer
     edge_ctx->prompt_cache = prompt_cache;
     edge_ctx->ctx = ctx;
     edge_ctx->n_parallel = std::max(1, n_parallel);
+    set_threads(*edge_ctx, effective_threads, hardware_threads);
 
     // LoRA adapters. On any failure edge_ctx frees the context and the model,
     // and the model frees the adapters loaded so far.
@@ -1788,6 +1829,14 @@ struct ServeEngine {
     BatchOwner owner_batch(n_batch + static_cast<int>(slots.size()) * 66, 1);
     std::vector<int> row_slot;
     while (true) {
+      bool idle;
+      {
+        std::lock_guard<std::mutex> lock(mu);
+        idle = stopping || (queue.empty() && n_active == 0);
+      }
+      // This thread is the only one that decodes while the engine runs, so
+      // no graph is being computed here. The next decode resumes the pool.
+      if (idle) pause_pools(*owner);
       {
         std::unique_lock<std::mutex> lock(mu);
         cv.wait(lock, [&] { return stopping || !queue.empty() || n_active > 0; });
@@ -1796,6 +1845,7 @@ struct ServeEngine {
       try {
         if (!step(owner_batch.b, row_slot)) {
           // Nothing could run yet: wait for a submit, a cancel or a stop.
+          pause_pools(*owner);
           std::unique_lock<std::mutex> lock(mu);
           cv.wait_for(lock, std::chrono::milliseconds(20));
         }
@@ -1888,7 +1938,8 @@ SEXP edge_engine_start_internal(SEXP model_ptr, int n_slots, int max_queue) {
   // Batches of a few tokens per slot behave like generation, which is
   // fastest on one thread per core: with every hardware thread (the batch
   // default) the engine ran several times slower, worst on a busy machine.
-  llama_set_n_threads(ctx, llama_n_threads(ctx), llama_n_threads(ctx));
+  set_threads(*edge_ctx, llama_n_threads(ctx), llama_n_threads(ctx));
+  pause_pools(*edge_ctx);
 
   // The prompt cache of the direct functions is gone once the slots use
   // the KV cache.
@@ -2538,7 +2589,7 @@ void edge_set_threads_internal(SEXP model_ptr, int n_threads, int n_threads_batc
   if (!edge_ctx->is_valid()) stop("Invalid model context");
   if (n_threads < 1 || n_threads_batch < 1) stop("Thread counts must be positive");
   check_no_engine(*edge_ctx);
-  llama_set_n_threads(edge_ctx->ctx, n_threads, n_threads_batch);
+  set_threads(*edge_ctx, n_threads, n_threads_batch);
 }
 
 // [[Rcpp::export]]
