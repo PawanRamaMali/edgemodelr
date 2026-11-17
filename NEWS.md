@@ -19,6 +19,23 @@
   `embed_edge()`) and "Retrieval-augmented generation"
   (`edge_index_documents()`, `edge_search()` and `edge_ask()`).
 
+## Changes
+
+* `edge_ask()` has a `chat_ctx` argument, so an index built with an
+  embedding-only model such as Qwen3-Embedding can be answered by a chat
+  model. Before, it failed because the embedding model cannot generate.
+
+* `edge_search()` gives cosine similarities for an index built with
+  `normalize = FALSE` (it gave dot products), and a clear error when the
+  index and the model have different embedding sizes.
+
+* `edge_tokenize()` converts text to UTF-8 first, so latin1 strings give
+  the same tokens as UTF-8 ones, and `edge_index_documents()` gives its own
+  error for a non-character `source`.
+
+* `chat_edge()` has an `api_key` argument (or `EDGEMODELR_API_KEY`) for a
+  server at `base_url` started with a key; it always sent a dummy key.
+
 # edgemodelr 0.7.0
 
 0.5.0 and 0.6.0 were not released on CRAN, so their changes (in their own

@@ -75,9 +75,6 @@ test_that("edge_tokenize counts match the prompt_tokens generation reports", {
 })
 
 test_that("edge_tokenize treats latin1 and UTF-8 strings alike", {
-  skip(paste("bug: edge_tokenize() passes the string bytes to C++ without",
-             "enc2utf8(), so a latin1-encoded string is tokenized as invalid",
-             "UTF-8 (R/api.R:3558); edge_engine_submit() already converts"))
   model <- coverage_tinyllama()
   skip_without_model(model, "TinyLlama")
   ctx <- edge_load_model(model, n_ctx = 256L, n_threads = 2L)

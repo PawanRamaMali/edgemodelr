@@ -3556,7 +3556,7 @@ edge_tokenize <- function(ctx, text, add_special = TRUE) {
   if (!is.logical(add_special) || length(add_special) != 1L || is.na(add_special)) {
     stop("add_special must be TRUE or FALSE")
   }
-  edge_tokenize_internal(ctx, text, add_special)
+  edge_tokenize_internal(ctx, enc2utf8(text), add_special)
 }
 
 #' Compute a similarity matrix for a set of embeddings
@@ -4433,7 +4433,9 @@ edge_verify_narrative <- function(ctx, narrative, expected, schema = NULL,
 #' @param source Either a directory path containing text files, or a character
 #'   vector of text chunks to index directly.
 #' @param ctx Model context from edge_load_model() (used for embedding)
-#' @param chunk_size Approximate number of characters per chunk (default: 500)
+#' @param chunk_size Approximate number of characters per chunk (default: 500).
+#'   Texts passed directly in \code{source} are split only when they are
+#'   longer than twice \code{chunk_size}.
 #' @param chunk_overlap Number of characters of overlap between chunks (default: 50)
 #' @param file_pattern Glob pattern for files to read (default: "*.txt")
 #' @param normalize Normalize embeddings (default: TRUE)
@@ -4474,6 +4476,10 @@ edge_index_documents <- function(source, ctx, chunk_size = 500L,
   chunk_size <- as.integer(chunk_size)
   chunk_overlap <- as.integer(chunk_overlap)
 
+  if (!is.character(source) || length(source) == 0L || anyNA(source)) {
+    stop("source must be a directory path or a character vector of texts")
+  }
+
   chunks <- character()
   sources <- character()
 
@@ -4501,7 +4507,7 @@ edge_index_documents <- function(source, ctx, chunk_size = 500L,
       chunks <- c(chunks, file_chunks)
       sources <- c(sources, rep(filepath, length(file_chunks)))
     }
-  } else if (is.character(source) && length(source) > 0L) {
+  } else {
     # Direct text input - optionally chunk long texts
     for (i in seq_along(source)) {
       if (nchar(source[i]) > chunk_size * 2L) {
@@ -4513,8 +4519,6 @@ edge_index_documents <- function(source, ctx, chunk_size = 500L,
         sources <- c(sources, NA_character_)
       }
     }
-  } else {
-    stop("source must be a directory path or a character vector of texts")
   }
 
   if (length(chunks) == 0L) {
@@ -4600,9 +4604,17 @@ edge_search <- function(index, ctx, query, top_k = 5L, rerank = NULL) {
 
   # Embed the query
   query_emb <- edge_embeddings(ctx, query, normalize = TRUE)
+  if (ncol(query_emb) != ncol(index$embeddings)) {
+    stop(sprintf(paste0("The index has %d-dimensional embeddings but this model gives %d; ",
+                        "search with the model that built the index"),
+                 ncol(index$embeddings), ncol(query_emb)))
+  }
 
-  # Compute similarities: query_emb (1 x d) %*% t(index_emb) (d x n)
-  scores <- as.numeric(query_emb %*% t(index$embeddings))
+  # Cosine similarity. The query is unit length; the index rows are too
+  # unless the index was built with normalize = FALSE.
+  scores <- as.numeric(index$embeddings %*% t(query_emb))
+  row_norms <- sqrt(rowSums(index$embeddings^2))
+  scores <- ifelse(row_norms > 0, scores / row_norms, 0)
 
   # Get top-k indices
   top_indices <- order(scores, decreasing = TRUE)[seq_len(top_k)]
@@ -4631,7 +4643,9 @@ edge_search <- function(index, ctx, query, top_k = 5L, rerank = NULL) {
 #' from the index, then generates an answer grounded in that context.
 #' This is the core RAG (Retrieval-Augmented Generation) function.
 #'
-#' @param ctx Model context from edge_load_model()
+#' @param ctx Model context from edge_load_model(), the same model that built
+#'   the index. It is used for the search, and for the answer unless
+#'   \code{chat_ctx} is given.
 #' @param question The question to answer
 #' @param index An \code{edge_index} object from \code{\link{edge_index_documents}}
 #' @param top_k Number of context chunks to retrieve (default: 3)
@@ -4639,6 +4653,9 @@ edge_search <- function(index, ctx, query, top_k = 5L, rerank = NULL) {
 #' @param temperature Sampling temperature (default: 0.3)
 #' @param system_prompt Optional system-level instruction for the model
 #' @param return_context If TRUE, return both answer and retrieved context (default: FALSE)
+#' @param chat_ctx Optional context of a model that writes the answer
+#'   (default: \code{ctx}). Use it when the index was built with an
+#'   embedding-only model, such as Qwen3-Embedding, which cannot generate text.
 #' @return If \code{return_context = FALSE}: a character string with the answer.
 #'   If \code{return_context = TRUE}: a list with \code{answer}, \code{context}, and \code{prompt}.
 #'
@@ -4650,6 +4667,12 @@ edge_search <- function(index, ctx, query, top_k = 5L, rerank = NULL) {
 #' answer <- edge_ask(ctx, "What were Q3 revenues?", index)
 #' cat(answer)
 #'
+#' # Search with an embedding model and answer with a chat model
+#' emb <- edge_load_model("Qwen3-Embedding-0.6B-Q8_0.gguf", embeddings = TRUE)
+#' chat <- edge_load_model("gemma-3-1b-it-Q4_K_M.gguf")
+#' index <- edge_index_documents("./reports/", emb)
+#' answer <- edge_ask(emb, "What were Q3 revenues?", index, chat_ctx = chat)
+#'
 #' # With context for debugging
 #' result <- edge_ask(ctx, "What were Q3 revenues?", index,
 #'   return_context = TRUE)
@@ -4660,9 +4683,12 @@ edge_search <- function(index, ctx, query, top_k = 5L, rerank = NULL) {
 #' @export
 edge_ask <- function(ctx, question, index, top_k = 3L, n_predict = 256L,
                       temperature = 0.3, system_prompt = NULL,
-                      return_context = FALSE) {
+                      return_context = FALSE, chat_ctx = ctx) {
   if (!is_valid_model(ctx)) {
     stop("Invalid model context. Load a model first with edge_load_model()")
+  }
+  if (!is_valid_model(chat_ctx)) {
+    stop("Invalid chat_ctx. Load a model first with edge_load_model()")
   }
   if (!inherits(index, "edge_index")) {
     stop("index must be an edge_index object from edge_index_documents()")
@@ -4700,7 +4726,7 @@ edge_ask <- function(ctx, question, index, top_k = 3L, n_predict = 256L,
   )
 
   # Generate answer
-  raw <- edge_completion_internal(ctx, prompt, as.integer(n_predict),
+  raw <- edge_completion_internal(chat_ctx, prompt, as.integer(n_predict),
                                   .sampling_options(temperature, 0.95))
 
   # Strip prompt
@@ -5284,11 +5310,12 @@ edgemodelr API server starting")
   message("  Endpoints:")
   message("    POST ", host, ":", port, "/v1/completions")
   message("    POST ", host, ":", port, "/v1/chat/completions")
-  message("    POST ", host, ":", port, "/v1/jobs")
+  message("    POST ", host, ":", port, "/v1/jobs (GET and DELETE /v1/jobs/<id>)")
   if (!isFALSE(embeddings)) message("    POST ", host, ":", port, "/v1/embeddings")
   if (!isFALSE(list(...)$reranking %||% FALSE)) message("    POST ", host, ":", port, "/v1/rerank")
   message("    GET  ", host, ":", port, "/v1/models")
   message("    GET  ", host, ":", port, "/health")
+  message("    GET  ", host, ":", port, "/metrics")
   if (!is.null(api_key)) message("  Auth: API key required")
   message("
 Press Ctrl+C to stop.
@@ -5945,6 +5972,9 @@ edge_api <- function(model_path, n_slots = 8L, n_ctx = 2048L, n_threads = NULL,
 #' @param n_threads CPU threads for a server started here (default: NULL,
 #'   the \code{EDGEMODELR_THREADS} environment variable or the number of
 #'   physical cores).
+#' @param api_key Key for a server at \code{base_url} that was started with
+#'   an \code{api_key} (default: NULL, the \code{EDGEMODELR_API_KEY}
+#'   environment variable if set). It is sent as a Bearer token.
 #' @return An ellmer \code{Chat} object.
 #'
 #' @details
@@ -5986,7 +6016,13 @@ edge_api <- function(model_path, n_slots = 8L, n_ctx = 2048L, n_threads = NULL,
 chat_edge <- function(model_path = NULL, system_prompt = NULL, base_url = NULL,
                       n_ctx = 4096L, n_gpu_layers = 0L, port = NULL,
                       params = NULL, echo = "none", embeddings = FALSE,
-                      n_slots = 1L, n_threads = NULL) {
+                      n_slots = 1L, n_threads = NULL, api_key = NULL) {
+  if (is.null(api_key)) api_key <- Sys.getenv("EDGEMODELR_API_KEY", "")
+  if (!is.character(api_key) || length(api_key) != 1L || is.na(api_key)) {
+    stop("api_key must be NULL or a single string")
+  }
+  # A local server started without a key accepts any token.
+  token <- if (nzchar(api_key)) api_key else "edgemodelr"
   if (!requireNamespace("ellmer", quietly = TRUE)) {
     stop("The 'ellmer' package is required for chat_edge().\n",
          "Install it with: install.packages('ellmer')")
@@ -6016,7 +6052,7 @@ chat_edge <- function(model_path = NULL, system_prompt = NULL, base_url = NULL,
     base_url = paste0(base_url, "/v1"),
     name = "edgemodelr",
     system_prompt = system_prompt,
-    credentials = function() "edgemodelr",
+    credentials = function() token,
     model = model_name,
     params = params,
     echo = echo

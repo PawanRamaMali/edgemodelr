@@ -103,9 +103,6 @@ test_that("edge_index_documents validates its arguments", {
 })
 
 test_that("edge_index_documents gives its own error for a single non-character source", {
-  skip(paste("bug: a length-1 non-character source reaches dir.exists() first,",
-             "which fails with 'invalid filename argument' instead of the",
-             "function's own message (R/api.R:4415)"))
   local_fake_model()
   expect_error(edge_index_documents(42, "fake-ctx", progress = FALSE),
                "source must be a directory path or a character vector")
@@ -143,13 +140,15 @@ test_that("edge_search validates its arguments", {
 })
 
 test_that("edge_search scores are cosine similarities for an unnormalized index", {
-  skip(paste("bug: edge_search() normalizes the query but not the index rows,",
-             "so with edge_index_documents(normalize = FALSE) the scores are dot",
-             "products, not the documented cosine similarities (R/api.R:4537)"))
   local_fake_model()
   idx <- edge_index_documents(rag_docs, "fake-ctx", normalize = FALSE, progress = FALSE)
   res <- edge_search(idx, "fake-ctx", "stock market", top_k = 4L)
   expect_true(all(res$score >= -1 - 1e-12 & res$score <= 1 + 1e-12))
+  # The same ranking and scores as a normalized index.
+  idx_n <- edge_index_documents(rag_docs, "fake-ctx", progress = FALSE)
+  res_n <- edge_search(idx_n, "fake-ctx", "stock market", top_k = 4L)
+  expect_identical(res$index, res_n$index)
+  expect_equal(res$score, res_n$score)
 })
 
 test_that("edge_ask builds a grounded prompt and returns the answer with sources", {
@@ -243,17 +242,26 @@ test_that("edge_ask answers from the index with TinyLlama", {
   expect_true(nzchar(ans))
 })
 
-test_that("edge_ask works with an index built by an embedding model", {
-  skip(paste("bug: edge_ask() uses one ctx for both retrieval and generation,",
-             "and a Qwen3-Embedding context cannot generate (GGML_ASSERT(logits != nullptr)",
-             "in llama-sampler.cpp), so an embedding-model index cannot be used with",
-             "edge_ask() (R/api.R:4584, R/api.R:4626)"))
+test_that("edge_ask answers with chat_ctx from an embedding-model index", {
   model <- coverage_qwen3_embedding()
   skip_without_model(model, "Qwen3-Embedding-0.6B")
+  chat_model <- coverage_tinyllama()
+  skip_without_model(chat_model, "TinyLlama")
   ctx <- edge_load_model(model, n_ctx = 512L, n_threads = 2L, embeddings = TRUE)
   on.exit(edge_free_model(ctx), add = TRUE)
+  chat <- edge_load_model(chat_model, n_ctx = 1024L, n_threads = 2L)
+  on.exit(edge_free_model(chat), add = TRUE)
   idx <- edge_index_documents(rag_real_docs, ctx, progress = FALSE)
   res <- edge_ask(ctx, "Which landmark is in Paris?", idx, top_k = 2L,
-                  n_predict = 16L, temperature = 0, return_context = TRUE)
+                  n_predict = 16L, temperature = 0, return_context = TRUE,
+                  chat_ctx = chat)
   expect_true(nzchar(res$answer))
+  expect_identical(res$context$index[1], 1L)
+})
+
+test_that("edge_search refuses an index built by a different-sized model", {
+  local_fake_model()
+  idx <- edge_index_documents(rag_docs, "fake-ctx", progress = FALSE)
+  idx$embeddings <- cbind(idx$embeddings, 0)
+  expect_error(edge_search(idx, "fake-ctx", "stock market"), "dimensional embeddings")
 })
