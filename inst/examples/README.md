@@ -61,8 +61,8 @@ results <- analyzer$analyze_documents(your_texts)
 
 ## 📖 Additional Documentation
 
-- `../../MODERN_MODELS.md` - Guide to 2024 small language models
-- `../../EXAMPLES_GUIDE.md` - Complete navigation guide
+- `browseVignettes("edgemodelr")` - the package vignettes
+- `posit-connect/README.md` - deploying a model API and a Shiny app to Posit Connect
 
 ---
 
