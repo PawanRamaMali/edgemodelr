@@ -25,6 +25,12 @@
   "unevaluatedItems", "$dynamicRef", "$recursiveRef"
 )
 
+# Keywords that describe a value without constraining it.
+.schema_annotations <- c(
+  "description", "title", "default", "examples", "$comment", "$schema",
+  "$id", "$defs", "definitions", "deprecated", "readOnly", "writeOnly"
+)
+
 # Largest minItems/maxItems/minLength/maxLength: llama.cpp expands bounded
 # repetitions into copies of the rule.
 .schema_max_repeat <- 100L
@@ -158,6 +164,14 @@
   if (!is.null(s[["allOf"]])) {
     if (length(s[["allOf"]]) != 1L) {
       .schema_error(where, "allOf is supported only with a single schema")
+    }
+    # Annotations next to allOf (pydantic writes a description there) are
+    # fine to drop; a constraint would be lost, so it is refused.
+    siblings <- setdiff(names(s), c("allOf", "nullable", .schema_annotations))
+    if (length(siblings)) {
+      .schema_error(where, "allOf with other keywords next to it (",
+                    paste(siblings, collapse = ", "),
+                    ") is not supported; move them inside the allOf schema")
     }
     s2 <- s[["allOf"]][[1]]
     if (isTRUE(s[["nullable"]]) && is.list(s2)) s2$nullable <- TRUE

@@ -121,6 +121,13 @@ test_that("unsupported schemas are an error, not a wrong grammar", {
   expect_error(edge_json_grammar(obj(list(`$ref` = "https://example.com/s.json"))), "local")
   expect_error(edge_json_grammar(obj(list(allOf = list(list(type = "string"), list(type = "string"))))),
                "allOf")
+  # A constraint next to a single allOf would be lost, so it is refused;
+  # an annotation such as description is fine.
+  expect_error(edge_json_grammar(obj(list(allOf = list(list(type = "string")), maxLength = 3))),
+               "maxLength")
+  expect_identical(
+    edge_json_grammar(obj(list(allOf = list(list(type = "string")), description = "A name"))),
+    edge_json_grammar(obj(list(type = "string"))))
   rec <- list(type = "object", properties = list(node = list(`$ref` = "#/$defs/Node")),
               `$defs` = list(Node = list(type = "object", properties = list(
                 child = list(anyOf = list(list(`$ref` = "#/$defs/Node"), list(type = "null")))))))
