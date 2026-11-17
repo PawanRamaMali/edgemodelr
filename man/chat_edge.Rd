@@ -13,7 +13,9 @@ chat_edge(
   port = NULL,
   params = NULL,
   echo = "none",
-  embeddings = FALSE
+  embeddings = FALSE,
+  n_slots = 1L,
+  n_threads = NULL
 )
 }
 \arguments{
@@ -25,7 +27,8 @@ chat_edge(
 \item{base_url}{URL of a running \code{\link{edge_serve}} server, such as
 \code{"http://127.0.0.1:8080"}.}
 
-\item{n_ctx}{Context size for a server started here (default: 4096).}
+\item{n_ctx}{Context size of each slot for a server started here
+(default: 4096).}
 
 \item{n_gpu_layers}{GPU layers for a server started here (default: 0).}
 
@@ -43,6 +46,15 @@ keeps an output for every prompt token, which slows chat and takes more
 memory, and a chat model gives weaker embeddings than an embedding model.
 For embeddings inside R, \code{\link{embed_edge}} with an embedding
 model needs no server.}
+
+\item{n_slots}{Requests a server started here generates at once
+(default: 1). Set it above 1 for \code{ellmer::parallel_chat()} and
+packages built on it, such as mall and vitals. \code{n_slots * n_ctx}
+may be at most 32768.}
+
+\item{n_threads}{CPU threads for a server started here (default: NULL,
+the \code{EDGEMODELR_THREADS} environment variable or the number of
+physical cores).}
 }
 \value{
 An ellmer \code{Chat} object.
@@ -52,8 +64,9 @@ Returns an ellmer chat object backed by a local GGUF model, so the
 model works with ellmer's chat, streaming, tool calling and structured
 data functions. With \code{model_path}, the model is served by
 \code{\link{edge_serve}} in a background R process, which keeps running
-until the R session ends and is reused by later calls with the same
-model. With \code{base_url}, the chat connects to a server you started
+until \code{\link{chat_edge_stop}} is called, the package is unloaded or
+the R session ends, and is reused by later calls with the same model and
+settings. With \code{base_url}, the chat connects to a server you started
 yourself.
 }
 \details{
@@ -62,6 +75,13 @@ arguments may be strings, numbers, integers, booleans or enums, and the
 model makes one call per reply. Structured data works for flat objects
 of those types. Streamed replies arrive in one piece when
 generation ends (see \code{\link{edge_serve}}).
+
+With \code{n_slots = 1}, the requests that ellmer's
+\code{parallel_chat()} sends at once are answered one after another.
+With more slots they are generated together by continuous batching,
+which on a CPU gives more tokens per second in total, though each
+reply takes longer. Each slot holds its own \code{n_ctx} tokens, so the
+memory the context takes grows with \code{n_slots}.
 }
 \examples{
 \dontrun{
@@ -77,8 +97,13 @@ get_weather <- ellmer::tool(
 )
 chat$register_tool(get_weather)
 chat$chat("What is the weather in Paris?")
+
+# Answer several prompts at once with four slots
+chat4 <- chat_edge("gemma-3-1b-it-Q4_K_M.gguf", n_slots = 4)
+ellmer::parallel_chat_text(chat4, list("Name a fruit.", "Name a colour."))
+chat_edge_stop(chat4)
 }
 }
 \seealso{
-\code{\link{edge_serve}}
+\code{\link{chat_edge_stop}}, \code{\link{edge_serve}}
 }

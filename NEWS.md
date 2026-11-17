@@ -2,6 +2,11 @@
 
 ## New features
 
+* `chat_edge()` takes `n_slots`, so its server answers several requests at
+  once and `ellmer::parallel_chat()` (and mall and vitals) run in parallel,
+  and `n_threads`. The new `chat_edge_stop()` stops its background servers,
+  which also stop when the package is unloaded or R exits.
+
 # edgemodelr 0.7.0
 
 0.5.0 and 0.6.0 were not released on CRAN, so their changes (in their own

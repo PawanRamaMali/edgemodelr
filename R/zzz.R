@@ -55,6 +55,9 @@
     # Silently ignore cleanup errors during unload
   })
 
+  # Servers started by chat_edge() must not outlive the package.
+  try(chat_edge_stop(), silent = TRUE)
+
   # An engine thread must not run code from an unloaded DLL.
   try(edge_engine_stop_all_internal(), silent = TRUE)
   library.dynam.unload("edgemodelr", libpath)

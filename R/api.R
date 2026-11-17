@@ -5735,9 +5735,11 @@ edge_api <- function(model_path, n_slots = 8L, n_ctx = 2048L, n_threads = NULL,
   pr
 }
 
-# Servers started by chat_edge(), by model path, so a second chat on the
-# same model reuses the running server.
+# Servers started by chat_edge(), by model path, n_ctx, n_slots and
+# embeddings, so a second chat with the same settings reuses the running
+# server. Each entry holds the callr process and its URL.
 .edge_servers <- new.env(parent = emptyenv())
+.edge_servers_state <- new.env(parent = emptyenv())
 
 #' Chat with a local model through ellmer
 #'
@@ -5745,8 +5747,9 @@ edge_api <- function(model_path, n_slots = 8L, n_ctx = 2048L, n_threads = NULL,
 #' model works with ellmer's chat, streaming, tool calling and structured
 #' data functions. With \code{model_path}, the model is served by
 #' \code{\link{edge_serve}} in a background R process, which keeps running
-#' until the R session ends and is reused by later calls with the same
-#' model. With \code{base_url}, the chat connects to a server you started
+#' until \code{\link{chat_edge_stop}} is called, the package is unloaded or
+#' the R session ends, and is reused by later calls with the same model and
+#' settings. With \code{base_url}, the chat connects to a server you started
 #' yourself.
 #'
 #' @param model_path Path to a .gguf model file. Either this or
@@ -5754,7 +5757,8 @@ edge_api <- function(model_path, n_slots = 8L, n_ctx = 2048L, n_threads = NULL,
 #' @param system_prompt Optional system prompt for the chat.
 #' @param base_url URL of a running \code{\link{edge_serve}} server, such as
 #'   \code{"http://127.0.0.1:8080"}.
-#' @param n_ctx Context size for a server started here (default: 4096).
+#' @param n_ctx Context size of each slot for a server started here
+#'   (default: 4096).
 #' @param n_gpu_layers GPU layers for a server started here (default: 0).
 #' @param port Port for a server started here (default: a free one).
 #' @param params Optional \code{ellmer::params()} with sampling settings such
@@ -5767,6 +5771,13 @@ edge_api <- function(model_path, n_slots = 8L, n_ctx = 2048L, n_threads = NULL,
 #'   memory, and a chat model gives weaker embeddings than an embedding model.
 #'   For embeddings inside R, \code{\link{embed_edge}} with an embedding
 #'   model needs no server.
+#' @param n_slots Requests a server started here generates at once
+#'   (default: 1). Set it above 1 for \code{ellmer::parallel_chat()} and
+#'   packages built on it, such as mall and vitals. \code{n_slots * n_ctx}
+#'   may be at most 32768.
+#' @param n_threads CPU threads for a server started here (default: NULL,
+#'   the \code{EDGEMODELR_THREADS} environment variable or the number of
+#'   physical cores).
 #' @return An ellmer \code{Chat} object.
 #'
 #' @details
@@ -5775,6 +5786,13 @@ edge_api <- function(model_path, n_slots = 8L, n_ctx = 2048L, n_threads = NULL,
 #' model makes one call per reply. Structured data works for flat objects
 #' of those types. Streamed replies arrive in one piece when
 #' generation ends (see \code{\link{edge_serve}}).
+#'
+#' With \code{n_slots = 1}, the requests that ellmer's
+#' \code{parallel_chat()} sends at once are answered one after another.
+#' With more slots they are generated together by continuous batching,
+#' which on a CPU gives more tokens per second in total, though each
+#' reply takes longer. Each slot holds its own \code{n_ctx} tokens, so the
+#' memory the context takes grows with \code{n_slots}.
 #'
 #' @examples
 #' \dontrun{
@@ -5790,12 +5808,18 @@ edge_api <- function(model_path, n_slots = 8L, n_ctx = 2048L, n_threads = NULL,
 #' )
 #' chat$register_tool(get_weather)
 #' chat$chat("What is the weather in Paris?")
+#'
+#' # Answer several prompts at once with four slots
+#' chat4 <- chat_edge("gemma-3-1b-it-Q4_K_M.gguf", n_slots = 4)
+#' ellmer::parallel_chat_text(chat4, list("Name a fruit.", "Name a colour."))
+#' chat_edge_stop(chat4)
 #' }
-#' @seealso \code{\link{edge_serve}}
+#' @seealso \code{\link{chat_edge_stop}}, \code{\link{edge_serve}}
 #' @export
 chat_edge <- function(model_path = NULL, system_prompt = NULL, base_url = NULL,
                       n_ctx = 4096L, n_gpu_layers = 0L, port = NULL,
-                      params = NULL, echo = "none", embeddings = FALSE) {
+                      params = NULL, echo = "none", embeddings = FALSE,
+                      n_slots = 1L, n_threads = NULL) {
   if (!requireNamespace("ellmer", quietly = TRUE)) {
     stop("The 'ellmer' package is required for chat_edge().\n",
          "Install it with: install.packages('ellmer')")
@@ -5804,9 +5828,15 @@ chat_edge <- function(model_path = NULL, system_prompt = NULL, base_url = NULL,
     stop("give either model_path or base_url")
   }
   if (is.null(base_url)) {
+    .check_server_size(n_slots, n_ctx)
+    if (!is.null(n_threads) && (!is.numeric(n_threads) || length(n_threads) != 1L ||
+                                  is.na(n_threads) || n_threads < 1)) {
+      stop("n_threads must be NULL or a positive number")
+    }
     base_url <- .edge_start_server(model_path, n_ctx = n_ctx,
                                    n_gpu_layers = n_gpu_layers, port = port,
-                                   embeddings = isTRUE(embeddings))
+                                   embeddings = isTRUE(embeddings),
+                                   n_slots = n_slots, n_threads = n_threads)
   }
   base_url <- sub("/+$", "", base_url)
   base_url <- sub("/v1$", "", base_url)
@@ -5826,10 +5856,98 @@ chat_edge <- function(model_path = NULL, system_prompt = NULL, base_url = NULL,
   )
 }
 
+# Checks n_slots and n_ctx for a chat_edge() server before it starts, with
+# the limits of edge_api().
+.check_server_size <- function(n_slots, n_ctx) {
+  if (!is.numeric(n_slots) || length(n_slots) != 1L || is.na(n_slots) || n_slots < 1 ||
+      n_slots > 64 || n_slots != round(n_slots)) {
+    stop("n_slots must be a whole number from 1 to 64")
+  }
+  if (!is.numeric(n_ctx) || length(n_ctx) != 1L || is.na(n_ctx) || n_ctx < 128) {
+    stop("n_ctx must be at least 128")
+  }
+  if (n_slots * n_ctx > 32768) {
+    stop("n_slots * n_ctx is ", format(n_slots * n_ctx, scientific = FALSE),
+         " tokens, more than the 32768 a server can hold; with n_ctx = ", n_ctx,
+         " use at most n_slots = ", max(1, floor(32768 / n_ctx)), ", or lower n_ctx")
+  }
+  invisible(TRUE)
+}
+
+#' Stop model servers started by chat_edge()
+#'
+#' Stops the background R processes that \code{\link{chat_edge}} started to
+#' serve a model, which frees the memory they hold. Servers also stop on
+#' their own when the package is unloaded or the R session ends.
+#'
+#' @param chat A chat returned by \code{\link{chat_edge}}, or the URL of
+#'   its server. With \code{NULL} (the default), every server started by
+#'   \code{chat_edge()} in this session is stopped.
+#' @return Invisibly, the number of servers stopped. A chat whose server was
+#'   not started by \code{chat_edge()}, such as one given \code{base_url},
+#'   stops nothing and returns 0.
+#'
+#' @details
+#' Other chats that share the stopped server (made by \code{chat_edge()}
+#' with the same model and settings) stop working too. Calling
+#' \code{chat_edge()} again starts a new server.
+#'
+#' @examples
+#' \dontrun{
+#' chat <- chat_edge("gemma-3-1b-it-Q4_K_M.gguf")
+#' chat$chat("Hello!")
+#' chat_edge_stop(chat)
+#'
+#' # Stop every server chat_edge() started
+#' chat_edge_stop()
+#' }
+#' @seealso \code{\link{chat_edge}}
+#' @export
+chat_edge_stop <- function(chat = NULL) {
+  keys <- ls(.edge_servers, all.names = TRUE)
+  if (!is.null(chat)) {
+    url <- if (is.character(chat) && length(chat) == 1L && !is.na(chat)) {
+      chat
+    } else if (inherits(chat, "Chat")) {
+      chat$get_provider()@base_url
+    } else {
+      stop("chat must be a chat from chat_edge(), a server URL or NULL")
+    }
+    url <- sub("/v1$", "", sub("/+$", "", url))
+    keys <- keys[vapply(keys, function(k) identical(.edge_servers[[k]]$server_url, url),
+                        logical(1))]
+  }
+  for (k in keys) {
+    .stop_server_process(.edge_servers[[k]]$process)
+    rm(list = k, envir = .edge_servers)
+  }
+  invisible(length(keys))
+}
+
+# Kills a server process and any process it started.
+.stop_server_process <- function(process) {
+  if (is.null(process)) return(invisible(FALSE))
+  tryCatch(process$kill_tree(), error = function(e) {
+    tryCatch(process$kill(), error = function(e) NULL)
+  })
+  invisible(TRUE)
+}
+
+# Registers, once per session, a finalizer that stops every chat_edge()
+# server when R exits.
+.stop_servers_on_exit <- function() {
+  if (isTRUE(.edge_servers_state$exit_hook)) return(invisible())
+  reg.finalizer(.edge_servers_state, function(e) {
+    try(chat_edge_stop(), silent = TRUE)
+  }, onexit = TRUE)
+  .edge_servers_state$exit_hook <- TRUE
+  invisible()
+}
+
 # Starts edge_serve() in a background R process, or reuses the one already
-# serving this model, and waits until it answers /health.
+# serving this model with these settings, and waits until it answers /health.
 .edge_start_server <- function(model_path, n_ctx, n_gpu_layers, port,
-                               embeddings = FALSE) {
+                               embeddings = FALSE, n_slots = 1L, n_threads = NULL) {
   if (!requireNamespace("callr", quietly = TRUE)) {
     stop("The 'callr' package is required to start a server for chat_edge().\n",
          "Install it with: install.packages('callr'), or pass base_url.")
@@ -5840,18 +5958,27 @@ chat_edge <- function(model_path = NULL, system_prompt = NULL, base_url = NULL,
   }
   if (!file.exists(model_path)) stop("Model file not found: ", model_path)
   path <- normalizePath(model_path, winslash = "/")
-  key <- paste0(path, if (embeddings) " +embeddings")
+  key <- paste0(path, " n_ctx=", as.integer(n_ctx), " n_slots=", as.integer(n_slots),
+                if (embeddings) " +embeddings")
   running <- .edge_servers[[key]]
   if (!is.null(running) && running$process$is_alive()) return(running$server_url)
+  if (!is.null(running)) rm(list = key, envir = .edge_servers)
 
   if (is.null(port)) port <- httpuv::randomPort()
   server_url <- sprintf("http://127.0.0.1:%d", as.integer(port))
-  process <- callr::r_bg(function(model_path, port, n_ctx, n_gpu_layers, embeddings) {
+  # With supervise = TRUE, callr's supervisor kills the server if this R
+  # session dies without running its exit finalizers.
+  process <- callr::r_bg(function(model_path, port, n_ctx, n_gpu_layers, embeddings,
+                                  n_slots, n_threads) {
     edgemodelr::edge_serve(model_path, port = port, n_ctx = n_ctx,
-                           n_gpu_layers = n_gpu_layers, embeddings = embeddings)
+                           n_gpu_layers = n_gpu_layers, embeddings = embeddings,
+                           n_slots = n_slots, n_threads = n_threads)
   }, args = list(model_path = path, port = as.integer(port), n_ctx = as.integer(n_ctx),
-                 n_gpu_layers = as.integer(n_gpu_layers), embeddings = embeddings),
+                 n_gpu_layers = as.integer(n_gpu_layers), embeddings = embeddings,
+                 n_slots = as.integer(n_slots),
+                 n_threads = if (is.null(n_threads)) NULL else as.integer(n_threads)),
   supervise = TRUE)
+  .stop_servers_on_exit()
 
   deadline <- Sys.time() + 300
   repeat {
@@ -5861,7 +5988,7 @@ chat_edge <- function(model_path = NULL, system_prompt = NULL, base_url = NULL,
     }
     if (.server_answers(paste0(server_url, "/health"))) break
     if (Sys.time() > deadline) {
-      process$kill()
+      .stop_server_process(process)
       stop("The model server did not start within 5 minutes")
     }
     Sys.sleep(0.5)

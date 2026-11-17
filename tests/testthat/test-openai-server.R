@@ -106,3 +106,63 @@ test_that("chat_edge needs exactly one of model_path and base_url", {
   expect_error(chat_edge(), "either model_path or base_url")
   expect_error(chat_edge("a.gguf", base_url = "http://127.0.0.1:1"), "either model_path or base_url")
 })
+
+test_that("chat_edge checks n_slots, n_ctx and n_threads before starting a server", {
+  skip_if_not_installed("ellmer")
+  expect_error(chat_edge("a.gguf", n_slots = 0), "n_slots must be a whole number")
+  expect_error(chat_edge("a.gguf", n_slots = 1.5), "n_slots must be a whole number")
+  expect_error(chat_edge("a.gguf", n_slots = NA), "n_slots must be a whole number")
+  expect_error(chat_edge("a.gguf", n_slots = "2"), "n_slots must be a whole number")
+  expect_error(chat_edge("a.gguf", n_slots = 65, n_ctx = 128), "n_slots must be a whole number")
+  expect_error(chat_edge("a.gguf", n_ctx = 64), "n_ctx must be at least 128")
+  expect_error(chat_edge("a.gguf", n_slots = 9, n_ctx = 4096),
+               "n_slots \\* n_ctx is 36864 tokens.*at most n_slots = 8")
+  expect_error(chat_edge("a.gguf", n_threads = 0), "n_threads must be NULL")
+})
+
+test_that("chat_edge_stop stops nothing it did not start", {
+  skip_if_not_installed("ellmer")
+  expect_identical(chat_edge_stop("http://127.0.0.1:1"), 0L)
+  chat <- chat_edge(base_url = "http://127.0.0.1:1")
+  expect_identical(chat_edge_stop(chat), 0L)
+  expect_error(chat_edge_stop(42), "chat must be")
+})
+
+test_that("chat_edge serves two slots and chat_edge_stop ends the server", {
+  skip_on_cran()
+  skip_if_not_installed("ellmer")
+  skip_if_not_installed("callr")
+  skip_if_not_installed("plumber")
+  skip_if_not_installed("httpuv")
+  fname <- "tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf"
+  dirs <- c(Sys.getenv("EDGEMODELR_TEST_MODEL_DIR"),
+            file.path(tempdir(), "edgemodelr_integration_tests"),
+            file.path(Sys.getenv("RUNNER_TEMP"), "edgemodelr_models"),
+            tools::R_user_dir("edgemodelr", "cache"))
+  paths <- file.path(dirs[nzchar(dirs)], fname)
+  model <- paths[file.exists(paths)][1]
+  skip_if(is.na(model), "TinyLlama model not found")
+  port <- suppressWarnings(as.integer(Sys.getenv("EDGEMODELR_TEST_PORT")))
+  if (is.na(port)) port <- NULL
+
+  chat <- chat_edge(model, n_ctx = 512, n_slots = 2, n_threads = 2, port = port,
+                    params = ellmer::params(temperature = 0, max_tokens = 8))
+  on.exit(chat_edge_stop(), add = TRUE)
+  servers <- edgemodelr:::.edge_servers
+  key <- grep("n_slots=2", ls(servers), value = TRUE)
+  expect_length(key, 1L)
+  process <- servers[[key]]$process
+  expect_true(process$is_alive())
+
+  # The same model and settings reuse the server.
+  chat2 <- chat_edge(model, n_ctx = 512, n_slots = 2, n_threads = 2)
+  expect_identical(chat2$get_provider()@base_url, chat$get_provider()@base_url)
+
+  reply <- chat$chat("Say hello.")
+  expect_true(is.character(reply) && nzchar(reply))
+
+  expect_identical(chat_edge_stop(chat), 1L)
+  Sys.sleep(1)
+  expect_false(process$is_alive())
+  expect_length(ls(servers), 0L)
+})
