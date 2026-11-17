@@ -19,7 +19,7 @@ Computes the cosine similarity between two embedding vectors.
 }
 \examples{
 \dontrun{
-ctx <- edge_load_model("model.gguf")
+ctx <- edge_load_model("Qwen3-Embedding-0.6B-Q8_0.gguf", embeddings = TRUE)
 embs <- edge_embeddings(ctx, c("happy cat", "joyful kitten", "stock market"))
 
 edge_similarity(embs[1,], embs[2,])  # high (similar meaning)

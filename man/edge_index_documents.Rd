@@ -20,18 +20,28 @@ vector of text chunks to index directly.}
 
 \item{ctx}{Model context from edge_load_model() (used for embedding)}
 
-\item{chunk_size}{Approximate number of characters per chunk (default: 500)}
+\item{chunk_size}{Approximate number of characters per chunk (default: 500).
+Texts passed directly in \code{source} are split only when they are
+longer than twice \code{chunk_size}.}
 
 \item{chunk_overlap}{Number of characters of overlap between chunks (default: 50)}
 
-\item{file_pattern}{Glob pattern for files to read (default: "*.txt")}
+\item{file_pattern}{Glob pattern for files to read (default: "\emph{.txt").
+Other patterns such as "}.md" or "*.csv" work too.}
 
 \item{normalize}{Normalize embeddings (default: TRUE)}
 
 \item{progress}{Show progress messages (default: TRUE)}
 }
 \value{
-An \code{edge_index} object containing chunks, embeddings, and source metadata.
+An \code{edge_index} object (a list) containing:
+\itemize{
+\item \code{chunks}: character vector of text chunks
+\item \code{embeddings}: numeric matrix (n_chunks x n_embd)
+\item \code{sources}: character vector of source file paths (or NA for direct text)
+\item \code{n_chunks}: number of chunks
+\item \code{n_embd}: embedding dimension
+}
 }
 \description{
 Reads text files from a directory (or accepts text directly), splits into
@@ -40,7 +50,7 @@ and retrieval-augmented generation.
 }
 \examples{
 \dontrun{
-ctx <- edge_load_model("model.gguf")
+ctx <- edge_load_model("Qwen3-Embedding-0.6B-Q8_0.gguf", embeddings = TRUE)
 
 # Index a directory
 index <- edge_index_documents("./reports/", ctx)

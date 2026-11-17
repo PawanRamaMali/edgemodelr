@@ -19,7 +19,7 @@ vectors using normalized matrix multiplication.
 }
 \examples{
 \dontrun{
-ctx <- edge_load_model("model.gguf")
+ctx <- edge_load_model("Qwen3-Embedding-0.6B-Q8_0.gguf", embeddings = TRUE)
 embs <- edge_embeddings(ctx, c("cat", "kitten", "car", "automobile"))
 sim_mat <- edge_similarity_matrix(embs)
 # sim_mat[1,2] high (cat~kitten), sim_mat[1,3] low (cat~car)

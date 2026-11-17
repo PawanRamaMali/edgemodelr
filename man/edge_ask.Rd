@@ -12,11 +12,14 @@ edge_ask(
   n_predict = 256L,
   temperature = 0.3,
   system_prompt = NULL,
-  return_context = FALSE
+  return_context = FALSE,
+  chat_ctx = ctx
 )
 }
 \arguments{
-\item{ctx}{Model context from edge_load_model()}
+\item{ctx}{Model context from edge_load_model(), the same model that built
+the index. It is used for the search, and for the answer unless
+\code{chat_ctx} is given.}
 
 \item{question}{The question to answer}
 
@@ -31,6 +34,10 @@ edge_ask(
 \item{system_prompt}{Optional system-level instruction for the model}
 
 \item{return_context}{If TRUE, return both answer and retrieved context (default: FALSE)}
+
+\item{chat_ctx}{Optional context of a model that writes the answer
+(default: \code{ctx}). Use it when the index was built with an
+embedding-only model, such as Qwen3-Embedding, which cannot generate text.}
 }
 \value{
 If \code{return_context = FALSE}: a character string with the answer.
@@ -43,11 +50,18 @@ This is the core RAG (Retrieval-Augmented Generation) function.
 }
 \examples{
 \dontrun{
-ctx <- edge_load_model("model.gguf")
+# One chat model, loaded with embeddings on, both searches and answers
+ctx <- edge_load_model("model.gguf", embeddings = TRUE)
 index <- edge_index_documents("./reports/", ctx)
 
 answer <- edge_ask(ctx, "What were Q3 revenues?", index)
 cat(answer)
+
+# Search with an embedding model and answer with a chat model
+emb <- edge_load_model("Qwen3-Embedding-0.6B-Q8_0.gguf", embeddings = TRUE)
+chat <- edge_load_model("gemma-3-1b-it-Q4_K_M.gguf")
+index <- edge_index_documents("./reports/", emb)
+answer <- edge_ask(emb, "What were Q3 revenues?", index, chat_ctx = chat)
 
 # With context for debugging
 result <- edge_ask(ctx, "What were Q3 revenues?", index,

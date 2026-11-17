@@ -1079,6 +1079,9 @@ edge_resolve_model_name <- function(model_name, models = NULL) {
 
 #' List popular pre-configured models
 #'
+#' Models are downloaded from Hugging Face or the GPT4All CDN. Neither needs
+#' an account.
+#'
 #' @return Data frame with model information
 #' @export
 edge_list_models <- function() {
@@ -3448,16 +3451,19 @@ edge_classify <- function(ctx, text, categories, instruction = NULL,
 #'   is the embedding vector for the corresponding input text.
 #'
 #' @details
-#' For best results, use a model designed for embeddings (e.g., nomic-embed-text).
-#' However, generative models can also produce useful embeddings from their
-#' hidden states.
+#' Load the model with \code{edge_load_model(..., embeddings = TRUE)};
+#' without it the model keeps no embeddings and this function warns and
+#' returns zeros. For best results, use a model designed for embeddings
+#' (e.g., Qwen3-Embedding or nomic-embed-text). However, generative models
+#' can also produce useful embeddings from their hidden states.
 #'
-#' The embedding dimension depends on the model architecture. Use
+#' The embedding dimension depends on the model architecture (e.g., 768 for
+#' small models, 4096 or more for larger ones). Use
 #' \code{edge_model_n_embd()} to query the dimension.
 #'
 #' @examples
 #' \dontrun{
-#' ctx <- edge_load_model("model.gguf")
+#' ctx <- edge_load_model("Qwen3-Embedding-0.6B-Q8_0.gguf", embeddings = TRUE)
 #'
 #' # Single embedding
 #' emb <- edge_embeddings(ctx, "The cat sat on the mat")
@@ -3508,7 +3514,7 @@ edge_embeddings <- function(ctx, texts, normalize = TRUE) {
 #'
 #' @examples
 #' \dontrun{
-#' ctx <- edge_load_model("model.gguf")
+#' ctx <- edge_load_model("Qwen3-Embedding-0.6B-Q8_0.gguf", embeddings = TRUE)
 #' embs <- edge_embeddings(ctx, c("happy cat", "joyful kitten", "stock market"))
 #'
 #' edge_similarity(embs[1,], embs[2,])  # high (similar meaning)
@@ -3595,7 +3601,7 @@ edge_tokenize <- function(ctx, text, add_special = TRUE) {
 #'
 #' @examples
 #' \dontrun{
-#' ctx <- edge_load_model("model.gguf")
+#' ctx <- edge_load_model("Qwen3-Embedding-0.6B-Q8_0.gguf", embeddings = TRUE)
 #' embs <- edge_embeddings(ctx, c("cat", "kitten", "car", "automobile"))
 #' sim_mat <- edge_similarity_matrix(embs)
 #' # sim_mat[1,2] high (cat~kitten), sim_mat[1,3] low (cat~car)
@@ -4462,14 +4468,22 @@ edge_verify_narrative <- function(ctx, narrative, expected, schema = NULL,
 #'   Texts passed directly in \code{source} are split only when they are
 #'   longer than twice \code{chunk_size}.
 #' @param chunk_overlap Number of characters of overlap between chunks (default: 50)
-#' @param file_pattern Glob pattern for files to read (default: "*.txt")
+#' @param file_pattern Glob pattern for files to read (default: "*.txt").
+#'   Other patterns such as "*.md" or "*.csv" work too.
 #' @param normalize Normalize embeddings (default: TRUE)
 #' @param progress Show progress messages (default: TRUE)
-#' @return An \code{edge_index} object containing chunks, embeddings, and source metadata.
+#' @return An \code{edge_index} object (a list) containing:
+#'   \itemize{
+#'     \item \code{chunks}: character vector of text chunks
+#'     \item \code{embeddings}: numeric matrix (n_chunks x n_embd)
+#'     \item \code{sources}: character vector of source file paths (or NA for direct text)
+#'     \item \code{n_chunks}: number of chunks
+#'     \item \code{n_embd}: embedding dimension
+#'   }
 #'
 #' @examples
 #' \dontrun{
-#' ctx <- edge_load_model("model.gguf")
+#' ctx <- edge_load_model("Qwen3-Embedding-0.6B-Q8_0.gguf", embeddings = TRUE)
 #'
 #' # Index a directory
 #' index <- edge_index_documents("./reports/", ctx)
@@ -4605,7 +4619,7 @@ edge_index_documents <- function(source, ctx, chunk_size = 500L,
 #'
 #' @examples
 #' \dontrun{
-#' ctx <- edge_load_model("model.gguf")
+#' ctx <- edge_load_model("Qwen3-Embedding-0.6B-Q8_0.gguf", embeddings = TRUE)
 #' index <- edge_index_documents("./docs/", ctx)
 #' results <- edge_search(index, ctx, "quarterly revenue")
 #' reranker <- edge_load_model("bge-reranker-v2-m3-Q4_K_M.gguf", reranking = TRUE)
@@ -4686,7 +4700,8 @@ edge_search <- function(index, ctx, query, top_k = 5L, rerank = NULL) {
 #'
 #' @examples
 #' \dontrun{
-#' ctx <- edge_load_model("model.gguf")
+#' # One chat model, loaded with embeddings on, both searches and answers
+#' ctx <- edge_load_model("model.gguf", embeddings = TRUE)
 #' index <- edge_index_documents("./reports/", ctx)
 #'
 #' answer <- edge_ask(ctx, "What were Q3 revenues?", index)

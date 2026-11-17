@@ -15,7 +15,8 @@ chat_edge(
   echo = "none",
   embeddings = FALSE,
   n_slots = 1L,
-  n_threads = NULL
+  n_threads = NULL,
+  api_key = NULL
 )
 }
 \arguments{
@@ -55,6 +56,10 @@ may be at most 32768.}
 \item{n_threads}{CPU threads for a server started here (default: NULL,
 the \code{EDGEMODELR_THREADS} environment variable or the number of
 physical cores).}
+
+\item{api_key}{Key for a server at \code{base_url} that was started with
+an \code{api_key} (default: NULL, the \code{EDGEMODELR_API_KEY}
+environment variable if set). It is sent as a Bearer token.}
 }
 \value{
 An ellmer \code{Chat} object.

@@ -10,5 +10,6 @@ edge_list_models()
 Data frame with model information
 }
 \description{
-List popular pre-configured models
+Models are downloaded from Hugging Face or the GPT4All CDN. Neither needs
+an account.
 }

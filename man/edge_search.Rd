@@ -31,7 +31,7 @@ over the embedding index.
 }
 \examples{
 \dontrun{
-ctx <- edge_load_model("model.gguf")
+ctx <- edge_load_model("Qwen3-Embedding-0.6B-Q8_0.gguf", embeddings = TRUE)
 index <- edge_index_documents("./docs/", ctx)
 results <- edge_search(index, ctx, "quarterly revenue")
 reranker <- edge_load_model("bge-reranker-v2-m3-Q4_K_M.gguf", reranking = TRUE)
